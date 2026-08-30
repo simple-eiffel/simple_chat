@@ -35,8 +35,9 @@ feature -- Basic operations
 			format: (create {CHAT_USER_RULES}).is_pbkdf2 (Result)
 			floor: iterations_of (Result) >= Minimum_iterations
 			salted: salt_of (Result).count = 32
-			never_plaintext: not Result.has_substring (utf8 (a_password))
-				-- probabilistic: a password of >= 8 characters appearing by chance in 96 random hex digits is a 1-in-2^32 event
+			never_plaintext: not utf8 (a_password).has ('$') implies not Result.has_substring (utf8 (a_password))
+				-- probabilistic: a password of >= 8 characters appearing by chance in 96 random hex digits is a 1-in-2^32 event;
+				-- a password containing "$" may legitimately match the public "$iterations$" field, so it is not claimed
 		end
 
 	verify (a_password: READABLE_STRING_GENERAL; a_stored: READABLE_STRING_8): BOOLEAN

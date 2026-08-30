@@ -162,19 +162,31 @@ feature -- Encoding
 feature -- Decoding
 
 	object_from_bytes (a_bytes: READABLE_STRING_8): detachable SIMPLE_JSON_OBJECT
-			-- The JSON object `a_bytes' (UTF-8) encodes, or Void.
+			-- The JSON object `a_bytes' (UTF-8) encodes, or Void - also Void for empty
+			-- bytes (the parser requires text) and for nesting deeper than
+			-- `Nesting_maximum' (a recursive parser's stack is nobody's contract).
 		do
-			if attached parser.parse_message ({UTF_CONVERTER}.utf_8_string_8_to_string_32 (a_bytes)) as v and then v.is_object then
+			if not a_bytes.is_empty and then max_nesting (a_bytes) <= Nesting_maximum
+				and then attached parser.parse_message ({UTF_CONVERTER}.utf_8_string_8_to_string_32 (a_bytes)) as v and then v.is_object
+			then
 				Result := v.as_object
 			end
+		ensure
+			empty_is_void: a_bytes.is_empty implies Result = Void
+			shallow: attached Result implies max_nesting (a_bytes) <= Nesting_maximum
 		end
 
 	array_from_bytes (a_bytes: READABLE_STRING_8): detachable SIMPLE_JSON_ARRAY
-			-- The JSON array `a_bytes' (UTF-8) encodes, or Void.
+			-- The JSON array `a_bytes' (UTF-8) encodes, or Void - Void too for empty bytes and deep nesting.
 		do
-			if attached parser.parse_message ({UTF_CONVERTER}.utf_8_string_8_to_string_32 (a_bytes)) as v and then v.is_array then
+			if not a_bytes.is_empty and then max_nesting (a_bytes) <= Nesting_maximum
+				and then attached parser.parse_message ({UTF_CONVERTER}.utf_8_string_8_to_string_32 (a_bytes)) as v and then v.is_array
+			then
 				Result := v.as_array
 			end
+		ensure
+			empty_is_void: a_bytes.is_empty implies Result = Void
+			shallow: attached Result implies max_nesting (a_bytes) <= Nesting_maximum
 		end
 
 	event_from_json (a_object: SIMPLE_JSON_OBJECT): detachable CHAT_EVENT
@@ -402,7 +414,9 @@ feature -- Validation (contract support)
 		end
 
 	is_iso8601 (a_text: READABLE_STRING_8): BOOLEAN
-			-- yyyy-mm-ddThh:mm:ss, optionally followed by Z - the shape SIMPLE_DATE_TIME writes and reads.
+			-- yyyy-mm-ddThh:mm:ss, optionally followed by Z - the shape SIMPLE_DATE_TIME
+			-- writes and reads - AND a date-time that exists (no February 30, no 24:00,
+			-- a year from 1970 on), so that building the date cannot raise.
 		local
 			i: INTEGER
 			c: CHARACTER_8
@@ -425,6 +439,85 @@ feature -- Validation (contract support)
 				end
 				i := i + 1
 			end
+			if Result then
+				Result := is_valid_date_time (a_text.substring (1, 4).to_integer, a_text.substring (6, 7).to_integer, a_text.substring (9, 10).to_integer,
+					a_text.substring (12, 13).to_integer, a_text.substring (15, 16).to_integer, a_text.substring (18, 19).to_integer)
+			end
+		ensure
+			shaped: Result implies (a_text.count = 19 or a_text.count = 20)
+		end
+
+	is_valid_date_time (a_year, a_month, a_day, a_hour, a_minute, a_second: INTEGER): BOOLEAN
+			-- A calendar date from 1970 to 9999 and a time of day that exist?
+		do
+			Result := a_year >= 1970 and a_year <= 9999 and a_month >= 1 and a_month <= 12
+				and a_day >= 1 and then a_day <= days_in_month (a_year, a_month)
+				and a_hour >= 0 and a_hour <= 23 and a_minute >= 0 and a_minute <= 59 and a_second >= 0 and a_second <= 59
+		ensure
+			day_in_month: Result implies (a_day >= 1 and a_day <= days_in_month (a_year, a_month))
+			time_of_day: Result implies (a_hour <= 23 and a_minute <= 59 and a_second <= 59)
+		end
+
+	days_in_month (a_year, a_month: INTEGER): INTEGER
+		require
+			month_in_range: a_month >= 1 and a_month <= 12
+		do
+			inspect a_month
+			when 4, 6, 9, 11 then
+				Result := 30
+			when 2 then
+				if is_leap_year (a_year) then
+					Result := 29
+				else
+					Result := 28
+				end
+			else
+				Result := 31
+			end
+		ensure
+			in_range: Result >= 28 and Result <= 31
+		end
+
+	is_leap_year (a_year: INTEGER): BOOLEAN
+		do
+			Result := (a_year \\ 4 = 0 and a_year \\ 100 /= 0) or a_year \\ 400 = 0
+		end
+
+	max_nesting (a_bytes: READABLE_STRING_8): INTEGER
+			-- The deepest bracket nesting in `a_bytes', brackets inside string
+			-- literals not counted (a backslash escapes the next byte).
+		local
+			i, l_depth: INTEGER
+			l_in_string, l_escaped: BOOLEAN
+			c: CHARACTER_8
+		do
+			from
+				i := 1
+			until
+				i > a_bytes.count
+			loop
+				c := a_bytes [i]
+				if l_in_string then
+					if l_escaped then
+						l_escaped := False
+					elseif c = '%/92/' then
+						l_escaped := True
+					elseif c = '"' then
+						l_in_string := False
+					end
+				elseif c = '"' then
+					l_in_string := True
+				elseif c = '{' or c = '[' then
+					l_depth := l_depth + 1
+					Result := Result.max (l_depth)
+				elseif c = '}' or c = ']' then
+					l_depth := l_depth - 1
+				end
+				i := i + 1
+			end
+		ensure
+			non_negative: Result >= 0
+			bounded_by_length: Result <= a_bytes.count
 		end
 
 feature {NONE} -- Decoding helpers
@@ -464,6 +557,9 @@ feature -- Constants (wire keys)
 	Key_token: STRING_32 = "token"
 	Key_member: STRING_32 = "member"
 	Key_code: STRING_32 = "code"
+
+	Nesting_maximum: INTEGER = 32
+			-- Deeper JSON is refused before parsing: nothing on the wire nests past four.
 	Key_message: STRING_32 = "message"
 
 feature {NONE} -- Implementation

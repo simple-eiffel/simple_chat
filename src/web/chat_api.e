@@ -449,7 +449,7 @@ feature {PARTICIPANT_DISPATCHER} -- The dispatcher's processor
 			end
 		ensure
 			granted_when_allowed: Result = old service.limits.is_allowed (local_8 (a_key))
-			recorded: Result implies service.limits.count (local_8 (a_key)) = old service.limits.count (local_8 (a_key)) + 1
+			recorded: Result implies service.limits.total (local_8 (a_key)) = old service.limits.total (local_8 (a_key)) + 1
 			nothing_when_refused: not Result implies service.limits.counts_model |=| old service.limits.counts_model
 		end
 

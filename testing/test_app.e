@@ -93,6 +93,11 @@ feature {NONE} -- Initialization
 			run_test (agent (create {OPS_ASSAULT}).test_duckdns_url_masks_the_token, "duckdns_url_masks_the_token")
 			run_test (agent (create {OPS_ASSAULT}).test_config_lists_are_copies, "config_lists_are_copies")
 
+			print ("=== SERVICE (Phase 1c) ===%N")
+			run_test (agent (create {CHAT_ASSAULT}).test_log_never_contains_secrets, "log_never_contains_secrets")
+			run_test (agent (create {CHAT_ASSAULT}).test_limiter_prefixes_windows_and_totals, "limiter_prefixes_windows_and_totals")
+			run_test (agent (create {CHAT_ASSAULT}).test_json_refuses_empty_deep_and_impossible_dates, "json_refuses_empty_deep_and_impossible_dates")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 
@@ -124,7 +129,6 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_sse_replays_since_then_live, "sse_replays_since_then_live (skeletal)")
 			run_test (agent t.test_long_poll_returns_within_deadline, "long_poll_returns_within_deadline (skeletal)")
 			run_test (agent t.test_sw_view_renders_hebrew_and_marker, "sw_view_renders_hebrew_and_marker (skeletal)")
-			run_test (agent t.test_log_never_contains_secrets, "log_never_contains_secrets (skeletal)")
 
 			print ("%N========================%N")
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")

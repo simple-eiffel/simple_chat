@@ -41,8 +41,30 @@ feature {NONE} -- Initialization
 			create hasher.make
 			create issuer.make
 			create crypto.make
+			configure_limits
 		ensure
 			set: store = a_store and bus = a_bus and limits = a_limits and config = a_config and log = a_log
+			posts_limited: limits.limit_for (post_key (1)) = a_config.posts_per_minute and limits.window_for (post_key (1)) = Minute_seconds
+			logins_limited: limits.limit_for (login_ip_key ("0")) = a_config.login_failures_per_10_minutes and limits.window_for (login_ip_key ("0")) = Ten_minutes_seconds
+				and limits.limit_for (login_user_key ("x")) = a_config.login_failures_per_10_minutes and limits.window_for (login_user_key ("x")) = Ten_minutes_seconds
+			participants_limited: across a_config.participants as p all
+				limits.limit_for (participant_prefix (p.handle) + "1") = p.requests_per_hour and limits.window_for (participant_prefix (p.handle) + "1") = Hour_seconds end
+		end
+
+	configure_limits
+			-- The configuration's limits become the limiter's rules: posts per minute,
+			-- login failures per ten minutes (per user and per address), and each
+			-- participant's requests per hour under its own "p:<handle>:" prefix.
+		do
+			limits.set_limit (Post_prefix, config.posts_per_minute, Minute_seconds)
+			limits.set_limit (Login_user_prefix, config.login_failures_per_10_minutes, Ten_minutes_seconds)
+			limits.set_limit (Login_ip_prefix, config.login_failures_per_10_minutes, Ten_minutes_seconds)
+			across config.participants as p loop
+				limits.set_limit (participant_prefix (p.handle), p.requests_per_hour, Hour_seconds)
+			end
+		ensure
+			rules: limits.has_rule_for (post_key (1)) and limits.has_rule_for (login_user_key ("x")) and limits.has_rule_for (login_ip_key ("0"))
+			counts_unchanged: limits.counts_model |=| old limits.counts_model
 		end
 
 feature -- Access (the parts the contracts speak of)
@@ -70,9 +92,15 @@ feature -- Authentication
 			success_has_session: Result.is_success implies attached Result.value
 			session_is_fresh: (Result.is_success and then attached Result.value as s) implies s.created_at < s.expires_at
 			locked_out_stays_out: (old not limits.is_allowed (login_user_key (a_username))) implies not Result.is_success
-			failure_counted: (not Result.is_success and old limits.is_allowed (login_user_key (a_username))) implies limits.count (login_user_key (a_username)) = old limits.count (login_user_key (a_username)) + 1
+			failure_counted: (not Result.is_success and is_known_person (a_username) and old limits.is_allowed (login_user_key (a_username)))
+				implies limits.total (login_user_key (a_username)) = old limits.total (login_user_key (a_username)) + 1
+			unknown_names_uncounted: not is_known_person (a_username) implies limits.total (login_user_key (a_username)) = old limits.total (login_user_key (a_username))
+				-- an attacker's made-up names are counted under the address only, so they cannot fill the limiter with keys
 			ip_locked_out_stays_out: (old not limits.is_allowed (login_ip_key (a_client_ip))) implies not Result.is_success
-			ip_failure_counted: (not Result.is_success and old limits.is_allowed (login_ip_key (a_client_ip))) implies limits.count (login_ip_key (a_client_ip)) = old limits.count (login_ip_key (a_client_ip)) + 1
+			ip_failure_counted: (not Result.is_success and old limits.is_allowed (login_ip_key (a_client_ip)))
+				implies limits.total (login_ip_key (a_client_ip)) = old limits.total (login_ip_key (a_client_ip)) + 1
+			success_uncounted: Result.is_success implies (limits.total (login_user_key (a_username)) = old limits.total (login_user_key (a_username))
+				and limits.total (login_ip_key (a_client_ip)) = old limits.total (login_ip_key (a_client_ip)))
 			no_session_on_failure: not Result.is_success implies Result.value = Void
 			invalid_username_refused: not is_plausible_username (a_username) implies not Result.is_success
 			bots_and_inactive_refused: (is_plausible_username (a_username) and then attached store.user_by_username (a_username.to_string_8) as u and then (u.is_bot or not u.is_active)) implies not Result.is_success
@@ -104,6 +132,7 @@ feature -- Posting
 			active_sender: a_sender.is_active
 			sender_stored: a_sender.is_stored
 			room_stored: a_room.is_stored
+			room_known: store.has_room (a_room.id)
 			member: store.is_member (a_sender.id, a_room.id)
 			body_given: not a_body.is_empty
 			within_limit: a_body.count <= config.message_characters
@@ -117,8 +146,11 @@ feature -- Posting
 			marker_enforced: (Result.is_success and a_sender.is_bot and then attached Result.value as e) implies e.body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker)
 			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
 			rate_limited: (old not limits.is_allowed (post_key (a_sender.id))) implies not Result.is_success
-			recorded_on_success: Result.is_success implies limits.count (post_key (a_sender.id)) >= 1
+			recorded_on_success: Result.is_success implies limits.total (post_key (a_sender.id)) = old limits.total (post_key (a_sender.id)) + 1
+			unrecorded_on_failure: not Result.is_success implies limits.total (post_key (a_sender.id)) = old limits.total (post_key (a_sender.id))
 			right_event: (Result.is_success and then attached Result.value as e) implies (e.room_id = a_room.id and e.sender_id = a_sender.id and e.is_message and e.is_bot_authored = a_sender.is_bot)
+			body_kept: (Result.is_success and not a_sender.is_bot and then attached Result.value as e) implies e.body.same_string_general (a_body)
+			bot_body_kept: (Result.is_success and a_sender.is_bot and then attached Result.value as e) implies e.body.ends_with_general (a_body)
 			humans_unmarked: (Result.is_success and not a_sender.is_bot and then attached Result.value as e) implies not e.body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker)
 		end
 
@@ -127,8 +159,9 @@ feature -- Posting
 			active_sender: a_sender.is_active
 			sender_stored: a_sender.is_stored
 			room_stored: a_room.is_stored
+			room_known: store.has_room (a_room.id)
 			member: store.is_member (a_sender.id, a_room.id)
-			attachment_stored: a_attachment.id > 0
+			attachment_stored: store.has_attachment (a_attachment.id)
 			own_upload: a_attachment.uploader_id = a_sender.id
 			caption_within_limit: a_caption.count <= config.message_characters
 		do
@@ -138,10 +171,13 @@ feature -- Posting
 			never_void: Result /= Void
 			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
 			rung_on_success: Result.is_success implies bus.ring_count = old bus.ring_count + 1
-			image_kind: (Result.is_success and then attached Result.value as e) implies e.is_image and e.attachment = a_attachment
+			image_kind: (Result.is_success and then attached Result.value as e) implies (e.is_image and then attached e.attachment as ea and then ea.id = a_attachment.id)
 			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
 			rate_limited: (old not limits.is_allowed (post_key (a_sender.id))) implies not Result.is_success
+			recorded_on_success: Result.is_success implies limits.total (post_key (a_sender.id)) = old limits.total (post_key (a_sender.id)) + 1
+			unrecorded_on_failure: not Result.is_success implies limits.total (post_key (a_sender.id)) = old limits.total (post_key (a_sender.id))
 			right_event: (Result.is_success and then attached Result.value as e) implies (e.room_id = a_room.id and e.sender_id = a_sender.id and e.is_bot_authored = a_sender.is_bot)
+			caption_kept: (Result.is_success and then attached Result.value as e) implies e.body.ends_with_general (a_caption)
 		end
 
 	post_system (a_room: CHAT_ROOM; a_text: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
@@ -226,6 +262,7 @@ feature -- Uploads
 		require
 			active: a_uploader.is_active and a_uploader.is_stored
 			has_bytes: a_bytes.count > 0
+			valid_name: (create {CHAT_ATTACHMENT_RULES}).is_valid_name (a_original_name)
 		do
 			create Result.make_error (not_implemented_error)
 			-- Implementation in Phase 4
@@ -233,9 +270,12 @@ feature -- Uploads
 			never_void: Result /= Void
 			limited: a_bytes.count > config.upload_bytes implies not Result.is_success
 			typed: not is_image_signature (a_bytes) implies not Result.is_success
-			stored_on_success: (Result.is_success and then attached Result.value as a) implies a.id > 0 and a.uploader_id = a_uploader.id
+			stored_on_success: (Result.is_success and then attached Result.value as a) implies (a.id > 0 and a.uploader_id = a_uploader.id and store.has_attachment (a.id))
 			sized: (Result.is_success and then attached Result.value as a2) implies a2.size = a_bytes.count
 			typed_mime: (Result.is_success and then attached Result.value as a3) implies (a3.mime.same_string ({CHAT_ATTACHMENT}.Mime_png) = is_png_signature (a_bytes))
+			hashed: (Result.is_success and then attached Result.value as a4) implies a4.sha256.same_string (sha256_hex_of (a_bytes))
+			named: (Result.is_success and then attached Result.value as a5) implies a5.original_name.same_string_general (a_original_name)
+			nothing_on_failure: not Result.is_success implies store.attachment_count = old store.attachment_count
 		end
 
 feature -- Administration
@@ -268,6 +308,7 @@ feature -- Administration
 		ensure
 			never_void: Result /= Void
 			refused_when_admin_exists: old store.has_admin implies not Result.is_success
+			duplicate_refused: old store.has_username (a_username) implies not Result.is_success
 			admin_on_success: (Result.is_success and then attached Result.value as u) implies (u.is_admin and store.has_admin)
 		end
 
@@ -297,7 +338,7 @@ feature -- Administration
 			-- Implementation in Phase 4: hash, update_user, remove_sessions_of
 		ensure
 			never_void: Result /= Void
-			verifiable: Result.is_success implies hasher.verify (a_password, a_user.password_hash)
+			verifiable: Result.is_success implies (attached store.user (a_user.id) as u and then hasher.verify (a_password, u.password_hash))
 			sessions_revoked: Result.is_success implies not store.has_session_of (a_user.id)
 		end
 
@@ -313,7 +354,7 @@ feature -- Administration
 		ensure
 			never_void: Result /= Void
 			old_required: not (old hasher.verify (a_old, a_user.password_hash)) implies not Result.is_success
-			verifiable: Result.is_success implies hasher.verify (a_new, a_user.password_hash)
+			verifiable: Result.is_success implies (attached store.user (a_user.id) as u and then hasher.verify (a_new, u.password_hash))
 		end
 
 	revoke_bot_token (a_bot: CHAT_USER)
@@ -351,13 +392,55 @@ feature -- Access (contract support)
 
 	login_user_key (a_username: READABLE_STRING_GENERAL): STRING_8
 		do
-			Result := "login:user:" + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_username.as_lower)
+			Result := Login_user_prefix + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_username.as_lower)
+		ensure
+			prefixed: Result.starts_with (Login_user_prefix)
 		end
 
 	login_ip_key (a_ip: READABLE_STRING_8): STRING_8
 		do
-			Result := "login:ip:" + a_ip.to_string_8
+			Result := Login_ip_prefix + a_ip.to_string_8
+		ensure
+			prefixed: Result.starts_with (Login_ip_prefix)
 		end
+
+	participant_prefix (a_handle: READABLE_STRING_GENERAL): STRING_8
+			-- The limiter prefix of every asker's key for the participant `a_handle' (PARTICIPANT.limit_key).
+		do
+			Result := "p:" + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_handle) + ":"
+		ensure
+			shape: Result.starts_with ("p:") and Result.ends_with (":")
+		end
+
+	is_known_person (a_username: READABLE_STRING_GENERAL): BOOLEAN
+			-- A plausible username that names a stored user?
+		do
+			Result := is_plausible_username (a_username) and then store.has_username (a_username.to_string_8)
+		end
+
+	sha256_hex_of (a_bytes: SPECIAL [NATURAL_8]): STRING_8
+			-- The SHA-256 of `a_bytes' as 64 lowercase hex digits.
+		local
+			l_data: STRING_8
+			i: INTEGER
+		do
+			create l_data.make (a_bytes.count)
+			from i := 0 until i >= a_bytes.count loop
+				l_data.append_code (a_bytes [i])
+				i := i + 1
+			end
+			Result := crypto.sha256 (l_data).as_lower
+		ensure
+			shape: Result.count = 64
+		end
+
+	Post_prefix: STRING_8 = "post:"
+	Login_user_prefix: STRING_8 = "login:user:"
+	Login_ip_prefix: STRING_8 = "login:ip:"
+
+	Minute_seconds: INTEGER = 60
+	Ten_minutes_seconds: INTEGER = 600
+	Hour_seconds: INTEGER = 3600
 
 	is_plausible_username (a_username: READABLE_STRING_GENERAL): BOOLEAN
 			-- ASCII and within the username rules - the only names a lookup may be attempted for.

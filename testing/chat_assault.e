@@ -359,8 +359,74 @@ feature -- TODO: Phase 5
 		end
 
 	test_log_never_contains_secrets
+		local
+			l_logger: SIMPLE_LOGGER
+			l_log: CHAT_LOG
 		do
-			-- TODO: Phase 5
+			create l_logger.make
+			create l_log.make (l_logger)
+			l_log.info ({STRING_32} "login larry password=hunter2 token=" + hex64.to_string_32 + {STRING_32} " ok")
+			assert ("one line", l_log.lines_written = 1)
+			assert ("password masked", not l_log.last_line.has_substring ({STRING_32} "hunter2") and l_log.last_line.has_substring ({STRING_32} "password=****"))
+			assert ("token masked", not l_log.last_line.has_substring (hex64.to_string_32) and l_log.last_line.ends_with ({STRING_32} " ok"))
+			l_log.warn ({STRING_32} "{%"password%": %"pa ss%", %"hash%":%"" + hex64.to_string_32 + {STRING_32} "%"} Authorization: Bearer abc.def rest")
+			assert ("json and bearer forms masked", not l_log.last_line.has_substring ({STRING_32} "pa ss") and not l_log.last_line.has_substring (hex64.to_string_32)
+				and not l_log.last_line.has_substring ({STRING_32} "abc.def") and l_log.last_line.ends_with ({STRING_32} " rest"))
+			assert ("nothing secret left", not l_log.has_secret_field (l_log.last_line) and l_log.lines_written = 2)
+			l_log.error ("plain text stays, sha " + hex32)
+			assert ("plain text unchanged", l_log.last_line.same_string ({STRING_32} "plain text stays, sha " + hex32.to_string_32) and l_log.lines_written = 3)
+		end
+
+	test_limiter_prefixes_windows_and_totals
+		local
+			l: RATE_LIMITER
+		do
+			create l.make (3600)
+			l.set_limit ("post:", 2, 60)
+			l.set_limit ("login:ip:", 3, 600)
+			l.set_limit ("login:", 1, 10)
+			assert ("longest prefix wins", l.limit_for ("login:ip:1.2.3.4") = 3 and l.window_for ("login:ip:1.2.3.4") = 600)
+			assert ("shorter prefix for the rest", l.limit_for ("login:user:larry") = 1 and l.window_for ("login:user:larry") = 10)
+			assert ("unconfigured is the default", l.limit_for ("other:x") = {RATE_LIMITER}.Default_limit and not l.has_rule_for ("other:x") and l.window_for ("other:x") = 3600)
+			l.record ("post:5")
+			l.record ("post:5")
+			assert ("two posts fill the minute", not l.is_allowed ("post:5") and l.count ("post:5") = 2 and l.total ("post:5") = 2 and l.live_count ("post:5") = 2)
+			assert ("another key is free", l.is_allowed ("post:6") and l.count ("post:6") = 0)
+			l.advance (61)
+			assert ("the minute passed", l.is_allowed ("post:5") and l.live_count ("post:5") = 0 and l.count ("post:5") = 2)
+			l.record ("post:5")
+			assert ("record pruned the expired two", l.last_pruned = 2 and l.count ("post:5") = 1 and l.total ("post:5") = 3 and l.records = 3)
+			l.record ("login:ip:9.9.9.9")
+			l.advance (601)
+			l.prune
+			assert ("a sweep forgets idle keys", l.count ("login:ip:9.9.9.9") = 0 and l.total ("login:ip:9.9.9.9") = 0 and l.count ("post:5") = 0 and l.counts_model.is_empty)
+		end
+
+	test_json_refuses_empty_deep_and_impossible_dates
+		local
+			j: CHAT_JSON
+			l_deep: STRING_8
+			i: INTEGER
+		do
+			create j.make
+			assert ("empty bytes are void, not an exception", j.object_from_bytes ("") = Void and j.array_from_bytes ("") = Void
+				and j.error_from_bytes ("", 502) = Void and j.page_from_bytes ("") = Void and j.members_from_bytes ("") = Void)
+			create l_deep.make (100)
+			from i := 1 until i > 40 loop
+				l_deep.append_character ('[')
+				i := i + 1
+			end
+			from i := 1 until i > 40 loop
+				l_deep.append_character (']')
+				i := i + 1
+			end
+			assert ("forty deep is refused", j.array_from_bytes (l_deep) = Void and j.max_nesting (l_deep) = 40)
+			assert ("brackets inside strings do not count", j.max_nesting ("{%"body%":%"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[ \%" [[%"}") = 1)
+			assert ("four deep is fine", attached j.object_from_bytes ("{%"a%":[{%"b%":[1]}]}"))
+			assert ("impossible dates refused", not j.is_iso8601 ("2026-02-30T00:00:00") and not j.is_iso8601 ("2026-13-01T00:00:00")
+				and not j.is_iso8601 ("2026-08-29T24:00:00") and not j.is_iso8601 ("0000-01-01T00:00:00Z") and not j.is_iso8601 ("2027-02-29T00:00:00"))
+			assert ("real dates accepted", j.is_iso8601 ("2028-02-29T23:59:59Z") and j.is_iso8601 ("2026-08-29T12:00:00"))
+			assert ("an impossible created_at refuses the event", j.event_from_bytes ("{%"id%":1,%"room_id%":1,%"sender_id%":9,%"kind%":%"message%",%"created_at%":%"2026-02-30T00:00:00%",%"body%":%"x%"}") = Void)
 		end
 
 	test_long_poll_returns_within_deadline
