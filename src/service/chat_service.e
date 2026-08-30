@@ -74,6 +74,8 @@ feature -- Authentication
 			ip_locked_out_stays_out: (old not limits.is_allowed (login_ip_key (a_client_ip))) implies not Result.is_success
 			ip_failure_counted: (not Result.is_success and old limits.is_allowed (login_ip_key (a_client_ip))) implies limits.count (login_ip_key (a_client_ip)) = old limits.count (login_ip_key (a_client_ip)) + 1
 			no_session_on_failure: not Result.is_success implies Result.value = Void
+			invalid_username_refused: not is_plausible_username (a_username) implies not Result.is_success
+			bots_and_inactive_refused: (is_plausible_username (a_username) and then attached store.user_by_username (a_username.to_string_8) as u and then (u.is_bot or not u.is_active)) implies not Result.is_success
 		end
 
 	session_for_token (a_token: READABLE_STRING_8): detachable CHAT_SESSION
@@ -84,6 +86,7 @@ feature -- Authentication
 			-- Implementation in Phase 4: store.session_by_hash (issuer.hash_of (a_token)), expiry checked
 		ensure
 			not_expired: attached Result as s implies not s.is_expired_at (now)
+			right_one: attached Result as s2 implies s2.token_hash.same_string (token_hash_of (a_token))
 		end
 
 	revoke (a_session: CHAT_SESSION)
@@ -142,23 +145,30 @@ feature -- Posting
 		end
 
 	post_system (a_room: CHAT_ROOM; a_text: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
-			-- A notice from the server itself.
+			-- A notice from the server itself (sender 0).
 		require
 			room_stored: a_room.is_stored
+			room_known: store.has_room (a_room.id)
 			text_given: not a_text.is_empty
 		do
 			create Result.make_error (not_implemented_error)
 			-- Implementation in Phase 4
 		ensure
 			never_void: Result /= Void
-			system_kind: (Result.is_success and then attached Result.value as e) implies e.is_system
+			system_kind: (Result.is_success and then attached Result.value as e) implies (e.is_system and e.sender_id = 0 and e.room_id = a_room.id)
+			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
+			rung_on_success: Result.is_success implies bus.ring_count = old bus.ring_count + 1
+			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
 		end
 
 	publish_status (a_room: CHAT_ROOM; a_from: CHAT_USER; a_text: READABLE_STRING_GENERAL)
 			-- An ephemeral notice on the stream; never stored (DR-009).
 		require
 			room_stored: a_room.is_stored
+			room_known: store.has_room (a_room.id)
+			from_stored: a_from.is_stored
 			text_given: not a_text.is_empty
+			text_bounded: a_text.count <= {CHAT_STATUS}.Text_maximum
 		do
 			-- Implementation in Phase 4: bus.ring_status (create {CHAT_STATUS}.make (...))
 		ensure
@@ -171,6 +181,7 @@ feature -- Reading
 	events_since (a_room: CHAT_ROOM; a_since_id: INTEGER_64; a_limit: INTEGER): ARRAYED_LIST [CHAT_EVENT]
 		require
 			room_stored: a_room.is_stored
+			room_known: store.has_room (a_room.id)
 			since_non_negative: a_since_id >= 0
 			limit_in_range: a_limit > 0 and a_limit <= Page_maximum
 		do
@@ -183,6 +194,7 @@ feature -- Reading
 	events_before (a_room: CHAT_ROOM; a_before_id: INTEGER_64; a_limit: INTEGER): ARRAYED_LIST [CHAT_EVENT]
 		require
 			room_stored: a_room.is_stored
+			room_known: store.has_room (a_room.id)
 			before_positive: a_before_id > 0
 			limit_in_range: a_limit > 0 and a_limit <= Page_maximum
 		do
@@ -222,6 +234,8 @@ feature -- Uploads
 			limited: a_bytes.count > config.upload_bytes implies not Result.is_success
 			typed: not is_image_signature (a_bytes) implies not Result.is_success
 			stored_on_success: (Result.is_success and then attached Result.value as a) implies a.id > 0 and a.uploader_id = a_uploader.id
+			sized: (Result.is_success and then attached Result.value as a2) implies a2.size = a_bytes.count
+			typed_mime: (Result.is_success and then attached Result.value as a3) implies (a3.mime.same_string ({CHAT_ATTACHMENT}.Mime_png) = is_png_signature (a_bytes))
 		end
 
 feature -- Administration
@@ -240,6 +254,21 @@ feature -- Administration
 			success_is_fresh: Result.is_success implies not (old store.has_username (a_username))
 			hashed_properly: (Result.is_success and then attached Result.value as u) implies hasher.iterations_of (u.password_hash) >= {PASSWORD_HASHER}.Minimum_iterations
 			joined_default_room: (Result.is_success and then attached Result.value as u and then attached store.default_room as r) implies store.is_member (u.id, r.id)
+		end
+
+	create_first_admin (a_username: READABLE_STRING_8; a_display_name, a_password: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_USER]
+			-- The one way the first admin comes to exist (`--create-admin'); refused once any admin exists.
+		require
+			valid_username: (create {CHAT_USER_RULES}).is_valid_username (a_username)
+			valid_display: (create {CHAT_USER_RULES}).is_valid_display_name (a_display_name)
+			password_long_enough: a_password.count >= config.password_minimum
+		do
+			create Result.make_error (not_implemented_error)
+			-- Implementation in Phase 4: if not store.has_admin then create_user (..., True)
+		ensure
+			never_void: Result /= Void
+			refused_when_admin_exists: old store.has_admin implies not Result.is_success
+			admin_on_success: (Result.is_success and then attached Result.value as u) implies (u.is_admin and store.has_admin)
 		end
 
 	create_bot (a_username: READABLE_STRING_8; a_display_name: READABLE_STRING_GENERAL): CHAT_RESULT [TUPLE [bot: CHAT_USER; token: STRING_8]]
@@ -312,6 +341,14 @@ feature -- Access (contract support)
 			create Result.make_now
 		end
 
+	token_hash_of (a_token: READABLE_STRING_8): STRING_8
+			-- What the store keeps for `a_token' (its SHA-256, hex).
+		do
+			Result := issuer.hash_of (a_token)
+		ensure
+			shape: Result.count = 64
+		end
+
 	login_user_key (a_username: READABLE_STRING_GENERAL): STRING_8
 		do
 			Result := "login:user:" + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_username.as_lower)
@@ -322,18 +359,34 @@ feature -- Access (contract support)
 			Result := "login:ip:" + a_ip.to_string_8
 		end
 
+	is_plausible_username (a_username: READABLE_STRING_GENERAL): BOOLEAN
+			-- ASCII and within the username rules - the only names a lookup may be attempted for.
+		do
+			Result := a_username.is_valid_as_string_8 and then (create {CHAT_USER_RULES}).is_valid_username (a_username.to_string_8)
+		end
+
 	post_key (a_user_id: INTEGER_64): STRING_8
 		do
 			Result := "post:" + a_user_id.out
 		end
 
 	is_image_signature (a_bytes: SPECIAL [NATURAL_8]): BOOLEAN
-			-- PNG (89 50 4E 47 0D 0A 1A 0A) or JPEG (FF D8 FF)?
+			-- PNG or JPEG by signature?
 		do
-			if a_bytes.count >= 8 then
-				Result := (a_bytes [0] = 0x89 and a_bytes [1] = 0x50 and a_bytes [2] = 0x4E and a_bytes [3] = 0x47)
-					or (a_bytes [0] = 0xFF and a_bytes [1] = 0xD8 and a_bytes [2] = 0xFF)
-			end
+			Result := is_png_signature (a_bytes) or is_jpeg_signature (a_bytes)
+		end
+
+	is_png_signature (a_bytes: SPECIAL [NATURAL_8]): BOOLEAN
+			-- 89 50 4E 47 0D 0A 1A 0A - all eight bytes.
+		do
+			Result := a_bytes.count >= 8 and then (a_bytes [0] = 0x89 and a_bytes [1] = 0x50 and a_bytes [2] = 0x4E and a_bytes [3] = 0x47
+				and a_bytes [4] = 0x0D and a_bytes [5] = 0x0A and a_bytes [6] = 0x1A and a_bytes [7] = 0x0A)
+		end
+
+	is_jpeg_signature (a_bytes: SPECIAL [NATURAL_8]): BOOLEAN
+			-- FF D8 FF.
+		do
+			Result := a_bytes.count >= 3 and then (a_bytes [0] = 0xFF and a_bytes [1] = 0xD8 and a_bytes [2] = 0xFF)
 		end
 
 feature -- Constants

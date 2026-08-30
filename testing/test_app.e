@@ -50,6 +50,16 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_presenter_unread_and_foreground_law, "presenter_unread_and_foreground_law")
 			run_test (agent t.test_locator_prefers_live_local_then_standby, "locator_prefers_live_local_then_standby")
 
+			print ("=== STORE AND DOMAIN (Phase 1b) ===%N")
+			run_test (agent (create {STORE_ASSAULT}).test_events_are_gapless_and_pages_are_newest, "events_are_gapless_and_pages_are_newest")
+			run_test (agent (create {STORE_ASSAULT}).test_oracle_returns_copies, "oracle_returns_copies")
+			run_test (agent (create {STORE_ASSAULT}).test_marker_authenticates, "marker_authenticates")
+			run_test (agent (create {STORE_ASSAULT}).test_membership_and_default_room, "membership_and_default_room")
+			run_test (agent (create {STORE_ASSAULT}).test_sessions_and_revocation, "sessions_and_revocation")
+			run_test (agent (create {STORE_ASSAULT}).test_attachment_path_is_pinned_to_its_hash, "attachment_path_is_pinned_to_its_hash")
+			run_test (agent (create {STORE_ASSAULT}).test_user_rules, "user_rules")
+			run_test (agent (create {STORE_ASSAULT}).test_decoder_refuses_hostile_fields, "decoder_refuses_hostile_fields")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 

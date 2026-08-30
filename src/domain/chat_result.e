@@ -8,7 +8,7 @@ note
 	author: "Larry Rix"
 
 class
-	CHAT_RESULT [G]
+	CHAT_RESULT [G -> ANY]
 
 create
 	make_success,

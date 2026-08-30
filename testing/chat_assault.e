@@ -306,7 +306,7 @@ feature -- Thick client stack (intent-v3): real tests against the scripted trans
 			else
 				assert ("message decodes", False)
 			end
-			create a.make (3, 99, {STRING_32} "meme.png", {CHAT_ATTACHMENT}.Mime_png, 2048, hex64, "uploads/" + hex64 + ".png", l_now)
+			create a.make (3, 99, {STRING_32} "meme.png", {CHAT_ATTACHMENT}.Mime_png, 2048, hex64, l_now)
 			create e.make (8, 1, 99, {CHAT_EVENT_KINDS}.Kind_image, l_now, {STRING_32} "caption", a, l_payload, False)
 			if attached j.event_from_bytes (j.bytes_of (e.to_json)) as b and then attached b.attachment as ba then
 				assert ("image kind", b.is_image)
@@ -532,7 +532,7 @@ feature {NONE} -- Fixtures
 			l_now: SIMPLE_DATE_TIME
 		do
 			create l_now.make_now
-			create Result.make (0, a_username, a_display, "aa$600000$" + hex64, False, False, l_now)
+			create Result.make (0, a_username, a_display, hex32 + "$600000$" + hex64, False, False, l_now)
 		end
 
 	bot (a_username: STRING_8; a_display: STRING_32): CHAT_USER
@@ -547,6 +547,11 @@ feature {NONE} -- Fixtures
 	hex64: STRING_8
 		do
 			Result := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		end
+
+	hex32: STRING_8
+		do
+			Result := "0123456789abcdef0123456789abcdef"
 		end
 
 end

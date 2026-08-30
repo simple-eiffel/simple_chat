@@ -6,8 +6,11 @@ note
 		replies) free of schema changes. Immutable once appended, and ids
 		are strictly increasing across the whole store (DR-001).
 
-		A bot-authored message begins with the marker (DR-002): that is an
-		invariant here, so no path through the system can post one without it.
+		A bot-authored message begins with the marker (DR-002) and, since
+		D4, the store refuses a draft whose bot flag disagrees with its
+		sender - so the marker authenticates, not merely decorates. System
+		events have sender 0 and nothing else does; an attachment rides
+		only on an image event and is always a stored one.
 	]"
 	author: "Larry Rix"
 
@@ -25,9 +28,11 @@ feature {NONE} -- Initialization
 			positive_id: a_id > 0
 			positive_room: a_room_id > 0
 			known_kind: is_known_kind (a_kind)
-			sender_or_system: a_sender_id > 0 or a_kind.same_string (Kind_system)
+			sender_or_system: a_sender_id > 0 or (a_sender_id = 0 and a_kind.same_string (Kind_system))
 			message_has_body: a_kind.same_string (Kind_message) implies not a_body.is_empty
 			image_has_attachment: a_kind.same_string (Kind_image) implies a_attachment /= Void
+			attachment_only_on_images: a_attachment /= Void implies a_kind.same_string (Kind_image)
+			attachment_stored: attached a_attachment as a implies a.is_stored
 			bot_marked: (a_bot and a_kind.same_string (Kind_message)) implies a_body.to_string_32.starts_with (Bot_marker)
 		do
 			id := a_id
@@ -44,6 +49,9 @@ feature {NONE} -- Initialization
 			kind_set: kind.same_string (a_kind)
 			body_set: body.same_string_general (a_body)
 			bot_set: is_bot_authored = a_bot
+			created_set: created_at = a_created_at
+			attachment_set: attachment = a_attachment
+			payload_set: payload = a_payload
 		end
 
 feature -- Access
@@ -51,7 +59,7 @@ feature -- Access
 	id: INTEGER_64
 	room_id: INTEGER_64
 	sender_id: INTEGER_64
-			-- 0 only for system events.
+			-- 0 for system events, and only for them.
 	kind: STRING_8
 	created_at: SIMPLE_DATE_TIME
 	body: STRING_32
@@ -80,7 +88,7 @@ feature -- Conversion
 
 	to_json: SIMPLE_JSON_OBJECT
 			-- The wire form: id, room_id, kind, sender_id, created_at, body,
-			-- attachment (id, mime, size) or null, payload, is_bot.
+			-- attachment (id, mime, size, name, sha256) or null, payload, is_bot.
 		do
 			Result := (create {CHAT_JSON}.make).event_to_json (Current)
 		ensure
@@ -108,9 +116,12 @@ invariant
 	positive_id: id > 0
 	positive_room: room_id > 0
 	known_kind: is_known_kind (kind)
+	sender_non_negative: sender_id >= 0
 	sender_or_system: sender_id > 0 or is_system
 	message_has_body: is_message implies not body.is_empty
 	image_has_attachment: is_image implies attachment /= Void
+	attachment_only_on_images: attachment /= Void implies is_image
+	attachment_stored: attached attachment as a implies a.is_stored
 	marked_when_bot: (is_bot_authored and is_message) implies body.starts_with (Bot_marker)
 
 end

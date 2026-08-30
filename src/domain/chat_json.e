@@ -7,7 +7,11 @@ note
 		(STRING_8) and lives as STRING_32 on either side.
 
 		Decoding never raises on bad input: every `*_from_*' returns Void
-		for anything that is not the expected shape.
+		for anything that is not the expected shape - including a field
+		that ought to be ASCII but is not (kind, mime, sha256, username,
+		token, code), a timestamp that is not ISO 8601, an attachment on a
+		non-image event, an unstored attachment, or an error whose status
+		is not an error status.
 	]"
 	author: "Larry Rix"
 
@@ -125,17 +129,9 @@ feature -- Encoding
 			statuses_kept: attached Result.array_item (Key_statuses) as sarr and then sarr.count = a_statuses.count
 		end
 
-	bytes_of_array (a_array: SIMPLE_JSON_ARRAY): STRING_8
-			-- UTF-8 for the wire.
-		do
-			Result := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_array.to_json_string)
-		ensure
-			array_text: Result.starts_with ("[") and Result.ends_with ("]")
-		end
-
 	login_to_json (a_token: READABLE_STRING_8; a_member: CHAT_MEMBER): SIMPLE_JSON_OBJECT
 		require
-			token_shape: a_token.count = 64
+			token_shape: is_hex_64 (a_token)
 		do
 			create Result.make
 			Result.put_string (a_token.to_string_32, Key_token).do_nothing
@@ -153,6 +149,14 @@ feature -- Encoding
 			-- UTF-8 for the wire.
 		do
 			Result := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_object.to_json_string)
+		end
+
+	bytes_of_array (a_array: SIMPLE_JSON_ARRAY): STRING_8
+			-- UTF-8 for the wire.
+		do
+			Result := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_array.to_json_string)
+		ensure
+			array_text: Result.starts_with ("[") and Result.ends_with ("]")
 		end
 
 feature -- Decoding
@@ -174,7 +178,7 @@ feature -- Decoding
 		end
 
 	event_from_json (a_object: SIMPLE_JSON_OBJECT): detachable CHAT_EVENT
-			-- Void unless every required field is present and CHAT_EVENT's rules hold.
+			-- Void unless every required field is present, ASCII where it must be, and CHAT_EVENT's rules hold.
 		local
 			l_kind: STRING_8
 			l_at: SIMPLE_DATE_TIME
@@ -183,6 +187,7 @@ feature -- Decoding
 			l_attachment: detachable CHAT_ATTACHMENT
 			l_payload: SIMPLE_JSON_OBJECT
 			l_bot: BOOLEAN
+			l_ok: BOOLEAN
 			l_rules: CHAT_EVENT_KINDS
 		do
 			create l_rules
@@ -190,21 +195,25 @@ feature -- Decoding
 			l_room := a_object.integer_item (Key_room_id)
 			l_sender := a_object.integer_item (Key_sender_id)
 			l_bot := a_object.boolean_item (Key_is_bot)
-			if attached a_object.string_item (Key_kind) as k and then l_rules.is_known_kind (k.to_string_8)
-				and then attached a_object.string_item (Key_created_at) as t and then attached a_object.string_item (Key_body) as b
+			if attached ascii_item (a_object, Key_kind) as k and then l_rules.is_known_kind (k)
+				and then attached ascii_item (a_object, Key_created_at) as t and then is_iso8601 (t)
+				and then attached a_object.string_item (Key_body) as b
 			then
-				l_kind := k.to_string_8
+				l_kind := k
 				l_body := b
-				create l_at.make_from_iso8601 (t.to_string_8)
+				create l_at.make_from_iso8601 (t)
+				l_ok := True
 				if attached a_object.object_item (Key_attachment) as ao then
 					l_attachment := attachment_from_json (ao, l_sender, l_at)
+					l_ok := l_attachment /= Void and l_kind.same_string ({CHAT_EVENT_KINDS}.Kind_image)
 				end
 				if attached a_object.object_item (Key_payload) as po then
 					l_payload := po
 				else
 					create l_payload.make
 				end
-				if l_id > 0 and l_room > 0 and (l_sender > 0 or l_kind.same_string ({CHAT_EVENT_KINDS}.Kind_system))
+				if l_ok and l_id > 0 and l_room > 0
+					and (l_sender > 0 or (l_sender = 0 and l_kind.same_string ({CHAT_EVENT_KINDS}.Kind_system)))
 					and (not l_kind.same_string ({CHAT_EVENT_KINDS}.Kind_message) or not l_body.is_empty)
 					and (not l_kind.same_string ({CHAT_EVENT_KINDS}.Kind_image) or l_attachment /= Void)
 					and (not (l_bot and l_kind.same_string ({CHAT_EVENT_KINDS}.Kind_message)) or l_body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker))
@@ -217,28 +226,26 @@ feature -- Decoding
 		end
 
 	attachment_from_json (a_object: SIMPLE_JSON_OBJECT; a_uploader_id: INTEGER_64; a_created_at: SIMPLE_DATE_TIME): detachable CHAT_ATTACHMENT
-			-- The stored path is rebuilt from the hash and the mime type (uploads/<sha256>.<ext>).
+			-- A stored attachment (id > 0, hex sha256, allowed mime, valid name); its path is rebuilt, never read.
 		local
-			l_mime: STRING_8
-			l_sha: STRING_8
-			l_relpath: STRING_8
 			l_name: STRING_32
 			l_probe: CHAT_ATTACHMENT_RULES
 		do
 			create l_probe
-			if attached a_object.string_item (Key_mime) as m and then attached a_object.string_item (Key_sha256) as h then
-				l_mime := m.to_string_8
-				l_sha := h.to_string_8
+			if attached ascii_item (a_object, Key_mime) as m and then l_probe.is_allowed_mime (m)
+				and then attached ascii_item (a_object, Key_sha256) as h and then l_probe.is_sha256_hex (h)
+			then
 				if attached a_object.string_item (Key_name) as n then
 					l_name := n
 				else
-					create l_name.make_empty
+					create l_name.make_from_string ("image")
 				end
-				if l_probe.is_allowed_mime (l_mime) and l_sha.count = 64 and a_uploader_id > 0 and a_object.integer_item (Key_size) > 0 and a_object.integer_item (Key_id) >= 0 then
-					l_relpath := {CHAT_ATTACHMENT}.Uploads_prefix + l_sha + l_probe.extension_of (l_mime)
-					create Result.make (a_object.integer_item (Key_id), a_uploader_id, l_name, l_mime, a_object.integer_item (Key_size), l_sha, l_relpath, a_created_at)
+				if a_uploader_id > 0 and a_object.integer_item (Key_size) > 0 and a_object.integer_item (Key_id) > 0 and l_probe.is_valid_name (l_name) then
+					create Result.make (a_object.integer_item (Key_id), a_uploader_id, l_name, m, a_object.integer_item (Key_size), h, a_created_at)
 				end
 			end
+		ensure
+			stored: attached Result as a implies a.is_stored
 		end
 
 	member_from_json (a_object: SIMPLE_JSON_OBJECT): detachable CHAT_MEMBER
@@ -246,24 +253,27 @@ feature -- Decoding
 			l_rules: CHAT_USER_RULES
 		do
 			create l_rules
-			if attached a_object.string_item (Key_username) as u and then attached a_object.string_item (Key_display_name) as d
-				and then a_object.integer_item (Key_id) > 0 and then l_rules.is_valid_username (u.to_string_8) and then l_rules.is_valid_display_name (d)
+			if attached ascii_item (a_object, Key_username) as u and then l_rules.is_valid_username (u)
+				and then attached a_object.string_item (Key_display_name) as d and then l_rules.is_valid_display_name (d)
+				and then a_object.integer_item (Key_id) > 0
 			then
-				create Result.make (a_object.integer_item (Key_id), u.to_string_8, d, a_object.boolean_item (Key_is_admin), a_object.boolean_item (Key_is_bot))
+				create Result.make (a_object.integer_item (Key_id), u, d, a_object.boolean_item (Key_is_admin), a_object.boolean_item (Key_is_bot))
 			end
 		end
 
 	status_from_json (a_object: SIMPLE_JSON_OBJECT): detachable CHAT_STATUS
 		do
-			if a_object.integer_item (Key_room_id) > 0 and then attached a_object.string_item (Key_from) as f and then not f.is_empty
-				and then attached a_object.string_item (Key_text) as t and then not t.is_empty
+			if a_object.integer_item (Key_room_id) > 0 and then attached a_object.string_item (Key_from) as f
+				and then attached a_object.string_item (Key_text) as t
+				and then (not f.is_empty and f.count <= {CHAT_USER}.Display_name_maximum)
+				and then (not t.is_empty and t.count <= {CHAT_STATUS}.Text_maximum)
 			then
 				create Result.make (a_object.integer_item (Key_room_id), f, t)
 			end
 		end
 
 	page_from_bytes (a_bytes: READABLE_STRING_8): detachable CHAT_PAGE
-			-- Events (ascending) and statuses; Void when the shape is wrong or any event is malformed.
+			-- Events (strictly ascending) and statuses; Void when the shape is wrong or any event is malformed.
 		local
 			l_events: ARRAYED_LIST [CHAT_EVENT]
 			l_statuses: ARRAYED_LIST [CHAT_STATUS]
@@ -273,7 +283,11 @@ feature -- Decoding
 			if attached object_from_bytes (a_bytes) as o and then attached o.array_item (Key_events) as arr then
 				l_ok := True
 				create l_events.make (arr.count)
-				from i := 1 until i > arr.count or not l_ok loop
+				from
+					i := 1
+				until
+					i > arr.count or not l_ok
+				loop
 					if attached arr.object_item (i) as eo and then attached event_from_json (eo) as e and then (l_events.is_empty or else e.id > l_events.last.id) then
 						l_events.extend (e)
 					else
@@ -283,7 +297,11 @@ feature -- Decoding
 				end
 				create l_statuses.make (2)
 				if attached o.array_item (Key_statuses) as sarr then
-					from i := 1 until i > sarr.count loop
+					from
+						i := 1
+					until
+						i > sarr.count
+					loop
 						if attached sarr.object_item (i) as so and then attached status_from_json (so) as s then
 							l_statuses.extend (s)
 						end
@@ -312,7 +330,11 @@ feature -- Decoding
 			if attached object_from_bytes (a_bytes) as o and then attached o.array_item (Key_members) as arr then
 				l_ok := True
 				create Result.make (arr.count)
-				from i := 1 until i > arr.count or not l_ok loop
+				from
+					i := 1
+				until
+					i > arr.count or not l_ok
+				loop
 					if attached arr.object_item (i) as mo and then attached member_from_json (mo) as m then
 						Result.extend (m)
 					else
@@ -327,22 +349,91 @@ feature -- Decoding
 		end
 
 	login_from_bytes (a_bytes: READABLE_STRING_8): detachable TUPLE [token: STRING_8; member: CHAT_MEMBER]
+			-- A 64-hex token and a member, or Void.
 		do
-			if attached object_from_bytes (a_bytes) as o and then attached o.string_item (Key_token) as t and then t.count = 64
+			if attached object_from_bytes (a_bytes) as o and then attached ascii_item (o, Key_token) as t and then is_hex_64 (t)
 				and then attached o.object_item (Key_member) as mo and then attached member_from_json (mo) as m
 			then
-				Result := [t.to_string_8, m]
+				Result := [t, m]
 			end
 		ensure
-			token_shape: attached Result as r implies r.token.count = 64
+			token_shape: attached Result as r implies is_hex_64 (r.token)
 		end
 
 	error_from_bytes (a_bytes: READABLE_STRING_8; a_http_status: INTEGER): detachable CHAT_ERROR
+			-- The server's error, when `a_http_status' is an error status and the body names a known code with a message.
+		local
+			l_code: STRING_8
 		do
-			if attached object_from_bytes (a_bytes) as o and then attached o.string_item (Key_code) as c and then not c.is_empty
-				and then attached o.string_item (Key_message) as m
+			if a_http_status >= 400 and a_http_status <= 599 and then attached object_from_bytes (a_bytes) as o
+				and then attached ascii_item (o, Key_code) as c and then not c.is_empty
+				and then attached o.string_item (Key_message) as m and then not m.is_empty
 			then
-				create Result.make (c.to_string_8, m, a_http_status)
+				if (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "probe", 503)).is_known_code (c) then
+					l_code := c
+				else
+					l_code := {CHAT_ERROR}.Code_unavailable
+				end
+				create Result.make (l_code, m, a_http_status)
+			end
+		ensure
+			only_error_statuses: (a_http_status < 400 or a_http_status > 599) implies Result = Void
+			status_kept: attached Result as e implies e.http_status = a_http_status
+		end
+
+feature -- Validation (contract support)
+
+	is_hex_64 (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- Exactly 64 lowercase hexadecimal characters?
+		local
+			i: INTEGER
+			c: NATURAL_32
+		do
+			Result := a_text.count = 64
+			from
+				i := 1
+			until
+				i > a_text.count or not Result
+			loop
+				c := a_text.code (i)
+				Result := (c >= 48 and c <= 57) or (c >= 97 and c <= 102)
+				i := i + 1
+			end
+		end
+
+	is_iso8601 (a_text: READABLE_STRING_8): BOOLEAN
+			-- yyyy-mm-ddThh:mm:ss, optionally followed by Z - the shape SIMPLE_DATE_TIME writes and reads.
+		local
+			i: INTEGER
+			c: CHARACTER_8
+		do
+			Result := a_text.count = 19 or (a_text.count = 20 and then a_text [20] = 'Z')
+			from
+				i := 1
+			until
+				i > 19 or not Result
+			loop
+				c := a_text [i]
+				if i = 5 or i = 8 then
+					Result := c = '-'
+				elseif i = 11 then
+					Result := c = 'T'
+				elseif i = 14 or i = 17 then
+					Result := c = ':'
+				else
+					Result := c >= '0' and c <= '9'
+				end
+				i := i + 1
+			end
+		end
+
+feature {NONE} -- Decoding helpers
+
+	ascii_item (a_object: SIMPLE_JSON_OBJECT; a_key: STRING_32): detachable STRING_8
+			-- The string under `a_key' when it is plain ASCII; Void otherwise (never a precondition on `to_string_8').
+		do
+			if attached a_object.string_item (a_key) as s and then across s as c all c.natural_32_code < 128 end then
+				Result := s.to_string_8
 			end
 		end
 

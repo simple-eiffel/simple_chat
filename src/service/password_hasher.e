@@ -18,6 +18,7 @@ feature {NONE} -- Initialization
 	make
 		do
 			create crypto.make
+			crypto.set_pbkdf2_iterations (Minimum_iterations.max (crypto.pbkdf2_iterations))
 		ensure
 			floor_applied: crypto.pbkdf2_iterations >= Minimum_iterations
 		end
@@ -27,14 +28,15 @@ feature -- Basic operations
 	hash (a_password: READABLE_STRING_GENERAL): STRING_8
 			-- A fresh salted PBKDF2 hash of `a_password' (UTF-8 bytes).
 		require
-			not_empty: not a_password.is_empty
+			long_enough: a_password.count >= Minimum_characters
 		do
 			Result := crypto.hash_password (utf8 (a_password))
 		ensure
-			format: Result.occurrences ('$') = 2
+			format: (create {CHAT_USER_RULES}).is_pbkdf2 (Result)
 			floor: iterations_of (Result) >= Minimum_iterations
 			salted: salt_of (Result).count = 32
 			never_plaintext: not Result.has_substring (utf8 (a_password))
+				-- probabilistic: a password of >= 8 characters appearing by chance in 96 random hex digits is a 1-in-2^32 event
 		end
 
 	verify (a_password: READABLE_STRING_GENERAL; a_stored: READABLE_STRING_8): BOOLEAN
@@ -77,6 +79,9 @@ feature -- Access (contract support)
 feature -- Constants
 
 	Minimum_iterations: INTEGER = 600000
+
+	Minimum_characters: INTEGER = 8
+			-- The shortest password this hasher accepts (SERVER_CONFIG.password_minimum is never lower).
 			-- OWASP: PBKDF2-HMAC-SHA256 at 600,000 iterations or more.
 
 feature {NONE} -- Implementation

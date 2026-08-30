@@ -18,6 +18,7 @@ feature {NONE} -- Initialization
 			-- Error `a_code' with `a_message' answered as `a_http_status'.
 		require
 			code_given: not a_code.is_empty
+			known: is_known_code (a_code)
 			message_given: not a_message.is_empty
 			is_error_status: a_http_status >= 400 and a_http_status <= 599
 		do
@@ -43,6 +44,17 @@ feature -- Access
 	http_status: INTEGER
 			-- What the web layer answers.
 
+feature -- Validation (contract support)
+
+	is_known_code (a_code: READABLE_STRING_8): BOOLEAN
+			-- One of the Code_* constants?
+		do
+			Result := a_code.same_string (Code_not_member) or a_code.same_string (Code_too_long) or a_code.same_string (Code_rate_limited)
+				or a_code.same_string (Code_bad_credentials) or a_code.same_string (Code_locked_out) or a_code.same_string (Code_exists)
+				or a_code.same_string (Code_too_large) or a_code.same_string (Code_bad_type) or a_code.same_string (Code_unavailable)
+				or a_code.same_string (Code_not_implemented) or a_code.same_string (Code_refused)
+		end
+
 feature -- Constants
 
 	Code_not_member: STRING_8 = "not_member"
@@ -58,6 +70,7 @@ feature -- Constants
 	Code_refused: STRING_8 = "refused"
 
 invariant
+	known_code: is_known_code (code)
 	code_given: not code.is_empty
 	message_given: not message.is_empty
 	status_is_error: http_status >= 400 and http_status <= 599

@@ -1,7 +1,7 @@
 note
 	description: "[
 		CHAT_STORE over simple_sql: one SQLite file opened in WAL mode, one
-		connection, every feature serialized through `lock' so correctness
+		connection; one caller at a time by construction (D1: the store lives on the API's processor), so correctness
 		never depends on the SQLite build's threading mode (RISK-010).
 		Images are files under data/uploads; only their rows live here.
 	]"
@@ -24,7 +24,6 @@ feature {NONE} -- Initialization
 			path_given: not a_path.is_empty
 		do
 			path := a_path.to_string_32
-			create lock.make
 			create schema.make
 		ensure
 			path_set: path.same_string_general (a_path)
@@ -218,18 +217,62 @@ feature -- Sessions
 			-- Implementation in Phase 4
 		end
 
+feature -- Counts (Phase 4)
+
+	user_count: INTEGER
+		do
+			-- Implementation in Phase 4 (SELECT COUNT(*) FROM user)
+		end
+
+	room_count: INTEGER
+		do
+			-- Implementation in Phase 4
+		end
+
+	session_count: INTEGER
+		do
+			-- Implementation in Phase 4
+		end
+
+	attachment_count: INTEGER
+		do
+			-- Implementation in Phase 4
+		end
+
+	count_before (a_room_id, a_before_id: INTEGER_64): INTEGER_64
+		do
+			-- Implementation in Phase 4 (SELECT COUNT(*) FROM event WHERE room_id = ? AND id < ?)
+		end
+
+	has_admin: BOOLEAN
+		do
+			-- Implementation in Phase 4 (SELECT 1 FROM user WHERE is_admin AND is_active AND NOT is_bot)
+		end
+
+	default_room_id: INTEGER_64
+		do
+			-- Implementation in Phase 4 (SELECT MIN(id) FROM room)
+		end
+
+	membership (a_user_id, a_room_id: INTEGER_64): detachable CHAT_MEMBERSHIP
+		do
+			-- Implementation in Phase 4
+		end
+
+	has_attachment (a_attachment_id: INTEGER_64): BOOLEAN
+		do
+			-- Implementation in Phase 4
+		end
+
 feature {NONE} -- Implementation
 
 	db: detachable SIMPLE_SQL_DATABASE
 			-- The one connection; attached while open.
 
-	lock: MUTEX
-			-- Serializes every feature (innermost lock in the system).
 
 	schema: CHAT_SCHEMA
 
 invariant
-	lock_attached: lock /= Void
 	path_given: not path.is_empty
 
 end

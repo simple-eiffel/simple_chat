@@ -1,9 +1,10 @@
 note
 	description: "[
 		A participant known to the server - a person or a bot. People have
-		a password hash in PBKDF2 form (salt$iterations$hash); bots have
-		none and authenticate with tokens. `id' is 0 until the store has
-		assigned one.
+		a password hash in PBKDF2 form (salt$iterations$hash, checked by
+		CHAT_USER_RULES.is_pbkdf2); bots have none and authenticate with
+		tokens. `id' is 0 until the store has assigned one. The rules live
+		in CHAT_USER_RULES; this class only delegates to them.
 	]"
 	author: "Larry Rix"
 
@@ -22,7 +23,7 @@ feature {NONE} -- Initialization
 			id_non_negative: a_id >= 0
 			valid_username: is_valid_username (a_username)
 			valid_display_name: is_valid_display_name (a_display_name)
-			people_have_hashes: not a_is_bot implies a_password_hash.occurrences ('$') = 2
+			people_have_hashes: not a_is_bot implies rules.is_pbkdf2 (a_password_hash)
 			bots_have_none: a_is_bot implies a_password_hash.is_empty
 		do
 			id := a_id
@@ -39,6 +40,7 @@ feature {NONE} -- Initialization
 			display_set: display_name.same_string_general (a_display_name)
 			hash_set: password_hash.same_string (a_password_hash)
 			flags_set: is_admin = a_is_admin and is_bot = a_is_bot
+			created_set: created_at = a_created_at
 			active: is_active
 		end
 
@@ -48,10 +50,10 @@ feature -- Access
 			-- Store identifier; 0 until stored.
 
 	username: STRING_8
-			-- Login name: lowercase ASCII letters, digits, underscore; 1..32.
+			-- Login name: lowercase ASCII letters, digits, underscore; 1..32. Immutable.
 
 	display_name: STRING_32
-			-- What the room shows; 1..40, no bidi control characters.
+			-- What the room shows; 1..40, visible, no controls or format characters.
 
 	password_hash: STRING_8
 			-- PBKDF2 `salt$iterations$hash' for people; empty for bots.
@@ -80,17 +82,19 @@ feature -- Element change
 			is_active := a_active
 		ensure
 			set: is_active = a_active
+			rest_unchanged: id = old id and username = old username and display_name = old display_name and password_hash = old password_hash
 		end
 
 	set_password_hash (a_hash: READABLE_STRING_8)
 			-- Replace the hash (reset or change of password).
 		require
 			person: not is_bot
-			pbkdf2_form: a_hash.occurrences ('$') = 2
+			pbkdf2_form: rules.is_pbkdf2 (a_hash)
 		do
 			password_hash := a_hash.to_string_8
 		ensure
 			set: password_hash.same_string (a_hash)
+			rest_unchanged: id = old id and username = old username and display_name = old display_name and is_active = old is_active
 		end
 
 	set_display_name (a_name: READABLE_STRING_GENERAL)
@@ -100,6 +104,7 @@ feature -- Element change
 			display_name := a_name.to_string_32
 		ensure
 			set: display_name.same_string_general (a_name)
+			rest_unchanged: id = old id and username = old username and password_hash = old password_hash and is_active = old is_active
 		end
 
 	set_id (a_id: INTEGER_64)
@@ -111,56 +116,24 @@ feature -- Element change
 			id := a_id
 		ensure
 			set: id = a_id
+			rest_unchanged: username = old username and display_name = old display_name and password_hash = old password_hash and is_active = old is_active
 		end
 
 feature -- Validation (contract support)
 
 	is_valid_username (a_name: READABLE_STRING_8): BOOLEAN
-			-- 1..32 characters of [a-z0-9_]?
-		local
-			i: INTEGER
-			c: CHARACTER_8
 		do
-			Result := a_name.count >= 1 and a_name.count <= Username_maximum
-			from i := 1 until i > a_name.count or not Result loop
-				c := a_name.item (i)
-				Result := (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c = '_'
-				i := i + 1
-			end
+			Result := rules.is_valid_username (a_name)
 		end
 
 	is_valid_display_name (a_name: READABLE_STRING_GENERAL): BOOLEAN
-			-- 1..40 characters, not only whitespace, no bidi control characters?
 		do
-			Result := a_name.count >= 1 and a_name.count <= Display_name_maximum
-				and not has_bidi_controls (a_name) and not is_blank (a_name)
+			Result := rules.is_valid_display_name (a_name)
 		end
 
-	has_bidi_controls (a_text: READABLE_STRING_GENERAL): BOOLEAN
-			-- Does `a_text' contain U+202A..U+202E or U+2066..U+2069 (reading-order overrides)?
-		local
-			i: INTEGER
-			c: NATURAL_32
-		do
-			from i := 1 until i > a_text.count or Result loop
-				c := a_text.code (i)
-				Result := (c >= 0x202A and c <= 0x202E) or (c >= 0x2066 and c <= 0x2069)
-				i := i + 1
-			end
-		end
-
-	is_blank (a_text: READABLE_STRING_GENERAL): BOOLEAN
-			-- Only spaces, tabs and line breaks?
-		local
-			i: INTEGER
-			c: NATURAL_32
-		do
-			Result := True
-			from i := 1 until i > a_text.count or not Result loop
-				c := a_text.code (i)
-				Result := c = 32 or c = 9 or c = 10 or c = 13
-				i := i + 1
-			end
+	rules: CHAT_USER_RULES
+		once
+			create Result
 		end
 
 feature -- Constants
@@ -172,7 +145,7 @@ invariant
 	id_non_negative: id >= 0
 	username_shape: is_valid_username (username)
 	display_shape: is_valid_display_name (display_name)
-	people_have_hashes: not is_bot implies password_hash.occurrences ('$') = 2
+	people_have_hashes: not is_bot implies rules.is_pbkdf2 (password_hash)
 	bots_have_none: is_bot implies password_hash.is_empty
 
 end

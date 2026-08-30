@@ -7,7 +7,11 @@ note
 		v1: user, room, membership, event (id INTEGER PRIMARY KEY AUTOINCREMENT,
 		room_id, kind, sender_id, created_at, body, attachment_id,
 		payload_json, is_bot), attachment, session (token_hash UNIQUE,
-		is_bot_token); indexes event(room_id, id), session(token_hash).
+		is_bot_token); UNIQUE on user.username and membership (room_id,
+		user_id) so the store's `fresh_*' preconditions are also facts on
+		disk; indexes event(room_id, id), session(token_hash). A database
+		ahead of `Current_version' is refused by the store's `open', never
+		migrated down.
 	]"
 	author: "Larry Rix"
 
@@ -37,7 +41,6 @@ feature -- Basic operations
 			-- Implementation in Phase 4
 		ensure
 			non_negative: Result >= 0
-			never_ahead: Result <= Current_version
 		end
 
 	migrate (a_db: SIMPLE_SQL_DATABASE)
