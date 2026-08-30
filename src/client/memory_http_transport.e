@@ -3,9 +3,10 @@ note
 		HTTP_TRANSPORT that replays a script: `script' queues the replies
 		in order; each `send' consumes one and records the request (method,
 		url, headers, body). An empty script answers with a transport
-		failure, so a test that forgets to script sees it. `requests_model'
-		is what the assault reads to prove a token travelled as a header
-		and never in a URL.
+		failure, so a test that forgets to script sees it. `requests' and
+		`requests_model' are what the assault reads to prove a token
+		travelled as a header and never in a URL or a body - across every
+		request, not just the last.
 	]"
 	author: "Larry Rix"
 
@@ -69,7 +70,8 @@ feature -- Element change
 	script (a_status: INTEGER; a_body: READABLE_STRING_8)
 			-- The next unconsumed reply.
 		require
-			http_status: a_status >= 100 and a_status <= 599
+			final_status: a_status >= 200 and a_status <= 599
+			bounded: a_body.count <= Body_maximum
 		do
 			replies.extend (create {HTTP_REPLY}.make (a_status, a_body))
 		ensure

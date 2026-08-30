@@ -3,6 +3,8 @@ note
 		What a transport brings back: an HTTP status and body when the
 		exchange happened, or a transport error (no connection, timeout)
 		when it did not. `status' = 0 exactly when the transport failed.
+		A final status is 200..599 - a 1xx is never an answer - and the
+		body never exceeds HTTP_TRANSPORT.Body_maximum.
 	]"
 	author: "Larry Rix"
 
@@ -18,7 +20,8 @@ feature {NONE} -- Initialization
 	make (a_status: INTEGER; a_body: READABLE_STRING_8)
 			-- An answer from the server.
 		require
-			http_status: a_status >= 100 and a_status <= 599
+			final_status: a_status >= 200 and a_status <= 599
+			bounded: a_body.count <= {HTTP_TRANSPORT}.Body_maximum
 		do
 			status := a_status
 			body := a_body.to_string_8
@@ -38,6 +41,7 @@ feature {NONE} -- Initialization
 		ensure
 			failed: not is_exchanged
 			explained: error.same_string_general (a_error)
+			no_body: body.is_empty
 		end
 
 feature -- Access
@@ -57,16 +61,21 @@ feature -- Status report
 			-- Did a request reach the server and an answer come back?
 		do
 			Result := status > 0
+		ensure
+			definition: Result = (status > 0)
 		end
 
 	is_success: BOOLEAN
 			-- 2xx?
 		do
 			Result := status >= 200 and status <= 299
+		ensure
+			definition: Result = (status >= 200 and status <= 299)
 		end
 
 invariant
 	failed_is_explained: (status = 0) = not error.is_empty
-	status_range: status = 0 or (status >= 100 and status <= 599)
+	status_range: status = 0 or (status >= 200 and status <= 599)
+	bounded: body.count <= {HTTP_TRANSPORT}.Body_maximum
 
 end

@@ -58,5 +58,6 @@ feature {NONE} -- Implementation
 
 invariant
 	unread_non_negative: unread >= 0
+	notices_non_negative: notify_count >= 0
 
 end
