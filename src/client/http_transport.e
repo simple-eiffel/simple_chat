@@ -3,10 +3,13 @@ note
 		The one place bytes leave the client. One synchronous exchange per
 		call, bounded by a timeout and by `Body_maximum' on what comes
 		back; the caller owns the processor it blocks (the poller's, or
-		the root's for the GUI's own short calls). The real one
-		(WINHTTP_TRANSPORT, apps/client) rides simple_winhttp; the test one
-		(MEMORY_HTTP_TRANSPORT) replays a script and records every request,
-		which is how the assault proves what was sent.
+		the root's for the GUI's own short calls). A 3xx is the reply:
+		the transport never follows a redirect, so a bearer header is
+		never re-sent to a host the server names (CHAT_CLIENT treats the
+		3xx as a 502 result). The real one (WINHTTP_TRANSPORT,
+		apps/client) rides simple_winhttp; the test one
+		(MEMORY_HTTP_TRANSPORT) replays a script and records every
+		request, which is how the assault proves what was sent.
 	]"
 	author: "Larry Rix"
 
@@ -26,8 +29,9 @@ feature -- Basic operations
 
 	send (a_method, a_url: READABLE_STRING_8; a_headers: HASH_TABLE [STRING_8, STRING_8]; a_body: detachable READABLE_STRING_8;
 			a_timeout_seconds: INTEGER): HTTP_REPLY
-			-- One exchange; never raises for a network condition. A body beyond
-			-- `Body_maximum' is a transport failure, never a memory bomb.
+			-- One exchange; never raises for a network condition. A 3xx is the reply and is
+			-- never followed. A body beyond `Body_maximum' is a transport failure, never a
+			-- memory bomb.
 		require
 			known_method: is_known_method (a_method)
 			web_url: a_url.starts_with ("http://") or a_url.starts_with ("https://")
