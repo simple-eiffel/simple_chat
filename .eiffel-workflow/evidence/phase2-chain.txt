@@ -1,0 +1,33 @@
+# Phase 2 Review Chain Evidence
+# Project: D:\prod\simple_chat
+# Date: 2026-08-29
+
+Review chain: Claude Fable 5 (adversarial self-review) — four parallel cluster reviewers reading every file against the Phase 2 checklist; orchestrator adjudication with source re-reads of every HIGH
+  A: domain (15) + store (4) + config (2)
+  B: service (8) + bus (7) + web (3) + facade (1) + door (2)
+  C: participants (17) + apps/server (5)
+  D: client (15) + apps/client (3) + testing (4)
+Classes reviewed: 86 (8,818 lines)
+Issues found: 38 HIGH, 53 MEDIUM, ~30 LOW, INFO
+
+HIGH issues (by theme):
+  Concurrency model unstated (1-10): exact/unchanged postconditions on shared state; contracts iterating shared collections unlocked; POLL_WAITER postconditions after unlock; EVENT_POLLER older_kept + extend-before-cursor; wait_for_events nothing_appended; RATE_LIMITER.record TOCTOU; add_user fresh_username + no UNIQUE; subscribers working on the ringing thread (dispatcher re-entrancy, SSE I/O); EVENT_BUS.ring frame vs raise-handling
+  Wrong by construction (11-27): lockout boundary; unique_or_error equality; one limiter window; limiter that never limits; dispatcher rate limit absent; restart cursor 0; SSE caught_up per-room vs global; SSE open vs starts_at_since; events_since not gap-free; events_before oldest-N; duplicate memberships vs relation model; client echoed; oracle reference semantics; image with unstored attachment; never_plaintext for "0"; no Ollama timeout; no_orphan by forgetting
+  Never-raises broken (28-30): CHAT_ERROR preconditions from the decoder; to_string_8 on non-Latin-1 wire fields and usernames; created_at unvalidated
+  Security (31-38): argv gate vacuous with a shaper; via ignored; @claude in the vault + image_path; uploads/../../ traversal; unverified bot flag / forgeable marker; localhost@evil URL + Bearer on insecure endpoint; revocation uncontracted; is_safe_argument unspecified
+
+Decisions for the human: D1 concurrency model (threads + monotone contracts recommended); D2 subscribers never work on the ringing thread; D3 @claude sandbox; D4 the marker authenticates; D5 oracle value semantics; D6 user-facing rules as outcomes
+
+Verdict: FAIL as written (architecture passes; contracts require a Phase 1b repair pass, then targeted re-review)
+
+Synopsis: .eiffel-workflow/synopsis.md
+Full review: .eiffel-workflow/evidence/phase2-claude-response.md
+Cluster reports: .eiffel-workflow/evidence/phase2-part-{domain-store,service-bus,participants,client}.md
+Implementation sketch: .eiffel-workflow/approach.md
+
+Decision D1 taken by Larry 2026-08-29: SCOOP ("SCOOP is your threading solution. Use it."). Spike: use="scoop" -> simple_web fails VFFD(8) x4
+  (once ("PROCESS") router/pipeline singletons); all other libraries type-check under SCOOP; EWF httpd has a SCOOP connector.
+  -> dependency task 0: simple_web SCOOP mode. Findings 1-10 absorbed by the SCOOP restructuring (approach.md section 8); 11-38 remain.
+User approved (D3-D5): PENDING
+
+# Status: COMPLETE (awaiting human approval of the synopsis)

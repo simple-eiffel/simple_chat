@@ -17,8 +17,10 @@
 		</option>
 		<setting name="console_application" value="true"/>
 		<setting name="dead_code_removal" value="feature"/>
+		<!-- CONCURRENCY: SCOOP (Larry, Phase 2, 2026-08-29). simple_web serves under SCOOP since 0.2.0
+		     (SIMPLE_WEB_HANDLER_SERVER); nothing in this project may rely on threads. -->
 		<capability>
-			<concurrency support="scoop" use="thread"/>
+			<concurrency support="scoop" use="scoop"/>
 			<void_safety support="all"/>
 		</capability>
 		<!-- ISE allowed -->

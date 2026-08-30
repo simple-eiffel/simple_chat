@@ -1,11 +1,12 @@
 note
 	description: "[
-		The HTTP face: routes on a SIMPLE_WEB_SERVER bound to 127.0.0.1,
-		authentication of each request (Bearer token only - there is no
-		browser and no cookie, intent-v3), and the client address behind
-		the front door (X-Forwarded-For trusted only from localhost -
-		DR-010). Every handler lives in CHAT_API and answers JSON. No EWF
-		type appears here: simple_web only.
+		The HTTP face: a SIMPLE_WEB_HANDLER_SERVER bound to 127.0.0.1 that
+		creates one CHAT_REQUEST_HANDLER per request on the request's
+		processor (SCOOP-clean, D1); authentication of each request
+		(Bearer token only - there is no browser and no cookie, intent-v3);
+		and the client address behind the front door (X-Forwarded-For
+		trusted only from localhost - DR-010). Every handler lives in
+		CHAT_API and answers JSON. No EWF type appears here: simple_web only.
 	]"
 	author: "Larry Rix"
 
@@ -114,7 +115,7 @@ feature {NONE} -- Implementation
 	config: SERVER_CONFIG
 	log: CHAT_LOG
 	api: CHAT_API
-	server: detachable SIMPLE_WEB_SERVER
+	server: detachable SIMPLE_WEB_HANDLER_SERVER [CHAT_REQUEST_HANDLER]
 
 invariant
 	localhost_only: config.bind_address.same_string ("127.0.0.1")
