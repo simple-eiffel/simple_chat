@@ -85,7 +85,7 @@ feature -- Tests
 		do
 			create c.make_defaults
 			l_list := c.participants
-			l_list.extend (create {PARTICIPANT_CONFIG}.make ("@x", {PARTICIPANT_CONFIG}.Kind_none, "xbot", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " X"))
+			l_list.extend (create {PARTICIPANT_CONFIG}.make ("@x", {PARTICIPANT_CONFIG}.Kind_none, "xbot", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " X", ""))
 			assert ("mutating the copy changes nothing", c.participant_count = 0 and not c.ai_enabled)
 			assert ("no file, so not loaded", not c.is_loaded and c.is_valid)
 		end
