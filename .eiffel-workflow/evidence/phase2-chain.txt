@@ -27,7 +27,10 @@ Implementation sketch: .eiffel-workflow/approach.md
 
 Decision D1 taken by Larry 2026-08-29: SCOOP ("SCOOP is your threading solution. Use it."). Spike: use="scoop" -> simple_web fails VFFD(8) x4
   (once ("PROCESS") router/pipeline singletons); all other libraries type-check under SCOOP; EWF httpd has a SCOOP connector.
-  -> dependency task 0: simple_web SCOOP mode. Findings 1-10 absorbed by the SCOOP restructuring (approach.md section 8); 11-38 remain.
-User approved (D3-D5): PENDING
+  -> dependency task 0: simple_web SCOOP mode - DONE 2026-08-29 (simple_web 0.2.0: SIMPLE_WEB_HANDLER_SERVER [H]; proof 4/4 incl. two
+     concurrent 2 s requests in 2 s). simple_chat use="scoop": zero warnings, 30/30. Findings 1-10 absorbed by the SCOOP
+     restructuring (approach.md section 8); 11-38 remain.
+User approved (D3-D5): as recommended - Larry, 2026-08-29 ("continue on"): D3 @claude sandboxed (dedicated directory, tools off,
+  image_path fenced), D4 the marker authenticates (bot_flag_truthful + humans_unmarked), D5 the oracle stores twins.
 
-# Status: COMPLETE (awaiting human approval of the synopsis)
+# Status: COMPLETE - Phase 2 approved; next: Phase 1b (SCOOP restructuring + repair of findings 11-38), then targeted re-review, then /eiffel.tasks

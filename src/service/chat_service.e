@@ -7,8 +7,12 @@ note
 		doorbell (intent-v2 Q3): after a successful append it rings the
 		room, and readers pull from the store.
 
-		Lock order, never inverted: store < limiter < bus, and no lock is
-		held while calling out to a subscriber (Q2).
+		Concurrency (D1, SCOOP): one processor - the API's - owns this
+		service and the store, bus, limiter and log with it, so one request
+		executes here at a time and every postcondition below is exact.
+		Nothing here blocks: waiting for news is the request handler's job
+		(POLL_WAITER + POLL_WAIT on the request's processor). The bus wakes
+		subscribers with asynchronous separate commands.
 
 		`store', `bus', `limits', `config' and `hasher' are public queries
 		because the contracts speak of them (VAPE): a client that may call
@@ -66,7 +70,10 @@ feature -- Authentication
 			success_has_session: Result.is_success implies attached Result.value
 			session_is_fresh: (Result.is_success and then attached Result.value as s) implies s.created_at < s.expires_at
 			locked_out_stays_out: (old not limits.is_allowed (login_user_key (a_username))) implies not Result.is_success
-			failure_counted: not Result.is_success implies limits.count (login_user_key (a_username)) = old limits.count (login_user_key (a_username)) + 1
+			failure_counted: (not Result.is_success and old limits.is_allowed (login_user_key (a_username))) implies limits.count (login_user_key (a_username)) = old limits.count (login_user_key (a_username)) + 1
+			ip_locked_out_stays_out: (old not limits.is_allowed (login_ip_key (a_client_ip))) implies not Result.is_success
+			ip_failure_counted: (not Result.is_success and old limits.is_allowed (login_ip_key (a_client_ip))) implies limits.count (login_ip_key (a_client_ip)) = old limits.count (login_ip_key (a_client_ip)) + 1
+			no_session_on_failure: not Result.is_success implies Result.value = Void
 		end
 
 	session_for_token (a_token: READABLE_STRING_8): detachable CHAT_SESSION
@@ -107,6 +114,9 @@ feature -- Posting
 			marker_enforced: (Result.is_success and a_sender.is_bot and then attached Result.value as e) implies e.body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker)
 			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
 			rate_limited: (old not limits.is_allowed (post_key (a_sender.id))) implies not Result.is_success
+			recorded_on_success: Result.is_success implies limits.count (post_key (a_sender.id)) >= 1
+			right_event: (Result.is_success and then attached Result.value as e) implies (e.room_id = a_room.id and e.sender_id = a_sender.id and e.is_message and e.is_bot_authored = a_sender.is_bot)
+			humans_unmarked: (Result.is_success and not a_sender.is_bot and then attached Result.value as e) implies not e.body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker)
 		end
 
 	post_image (a_sender: CHAT_USER; a_room: CHAT_ROOM; a_attachment: CHAT_ATTACHMENT; a_caption: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
@@ -127,6 +137,8 @@ feature -- Posting
 			rung_on_success: Result.is_success implies bus.ring_count = old bus.ring_count + 1
 			image_kind: (Result.is_success and then attached Result.value as e) implies e.is_image and e.attachment = a_attachment
 			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
+			rate_limited: (old not limits.is_allowed (post_key (a_sender.id))) implies not Result.is_success
+			right_event: (Result.is_success and then attached Result.value as e) implies (e.room_id = a_room.id and e.sender_id = a_sender.id and e.is_bot_authored = a_sender.is_bot)
 		end
 
 	post_system (a_room: CHAT_ROOM; a_text: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
@@ -166,27 +178,6 @@ feature -- Reading
 		ensure
 			bounded: Result.count <= a_limit
 			all_after: across Result as e all e.id > a_since_id end
-		end
-
-	wait_for_events (a_room: CHAT_ROOM; a_since_id: INTEGER_64; a_limit, a_seconds: INTEGER): ARRAYED_LIST [CHAT_EVENT]
-			-- The long-poll (D-018): what is after `a_since_id' now; else wait on the
-			-- doorbell up to `a_seconds' and return what arrived, or nothing.
-			-- Arms a POLL_WAITER, checks the store, waits, checks again.
-		require
-			room_stored: a_room.is_stored
-			since_non_negative: a_since_id >= 0
-			limit_in_range: a_limit > 0 and a_limit <= Page_maximum
-			seconds_in_range: a_seconds >= 0 and a_seconds <= Max_wait_seconds
-		do
-			Result := store.events_since (a_room.id, a_since_id, a_limit)
-			-- Implementation in Phase 4: if Result.is_empty and a_seconds > 0 then
-			--   waiter.arm (a_room.id); bus.subscribe (waiter); Result := store.events_since (...);
-			--   if Result.is_empty and then waiter.wait (a_seconds * 1000) then Result := store.events_since (...) end;
-			--   bus.unsubscribe (waiter) end
-		ensure
-			bounded: Result.count <= a_limit
-			all_after: across Result as e all e.id > a_since_id end
-			nothing_appended: store.last_event_id = old store.last_event_id
 		end
 
 	events_before (a_room: CHAT_ROOM; a_before_id: INTEGER_64; a_limit: INTEGER): ARRAYED_LIST [CHAT_EVENT]
@@ -245,7 +236,8 @@ feature -- Administration
 			-- Implementation in Phase 4
 		ensure
 			never_void: Result /= Void
-			unique_or_error: Result.is_success = not (old store.has_username (a_username))
+			duplicate_refused: old store.has_username (a_username) implies not Result.is_success
+			success_is_fresh: Result.is_success implies not (old store.has_username (a_username))
 			hashed_properly: (Result.is_success and then attached Result.value as u) implies hasher.iterations_of (u.password_hash) >= {PASSWORD_HASHER}.Minimum_iterations
 			joined_default_room: (Result.is_success and then attached Result.value as u and then attached store.default_room as r) implies store.is_member (u.id, r.id)
 		end
@@ -260,7 +252,8 @@ feature -- Administration
 			-- Implementation in Phase 4
 		ensure
 			never_void: Result /= Void
-			unique_or_error: Result.is_success = not (old store.has_username (a_username))
+			duplicate_refused: old store.has_username (a_username) implies not Result.is_success
+			success_is_fresh: Result.is_success implies not (old store.has_username (a_username))
 			is_bot: (Result.is_success and then attached Result.value as t) implies t.bot.is_bot
 			token_shape: (Result.is_success and then attached Result.value as t) implies t.token.count = 64
 		end
@@ -276,6 +269,7 @@ feature -- Administration
 		ensure
 			never_void: Result /= Void
 			verifiable: Result.is_success implies hasher.verify (a_password, a_user.password_hash)
+			sessions_revoked: Result.is_success implies not store.has_session_of (a_user.id)
 		end
 
 	change_password (a_user: CHAT_USER; a_old, a_new: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_USER]
@@ -298,6 +292,8 @@ feature -- Administration
 			bot: a_bot.is_bot and a_bot.is_stored
 		do
 			-- Implementation in Phase 4: store.remove_sessions_of (a_bot.id)
+		ensure
+			revoked: not store.has_session_of (a_bot.id)
 		end
 
 	backup: CHAT_RESULT [STRING_32]
@@ -318,7 +314,7 @@ feature -- Access (contract support)
 
 	login_user_key (a_username: READABLE_STRING_GENERAL): STRING_8
 		do
-			Result := "login:user:" + a_username.as_lower.to_string_8
+			Result := "login:user:" + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_username.as_lower)
 		end
 
 	login_ip_key (a_ip: READABLE_STRING_8): STRING_8

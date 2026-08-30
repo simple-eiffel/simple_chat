@@ -41,7 +41,9 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_caddyfile_targets_localhost, "caddyfile_targets_localhost")
 
 			print ("=== THICK CLIENT STACK (intent-v3) ===%N")
-			run_test (agent t.test_poll_waiter_wakes_only_armed_room, "poll_waiter_wakes_only_armed_room")
+			run_test (agent t.test_poll_waiter_counts_only_its_room, "poll_waiter_counts_only_its_room")
+			run_test (agent t.test_event_bus_tickets, "event_bus_tickets")
+			run_test (agent t.test_sse_stream_delivers_in_order, "sse_stream_delivers_in_order")
 			run_test (agent t.test_event_json_round_trip, "event_json_round_trip")
 			run_test (agent t.test_client_login_sends_bearer_never_in_url, "client_login_sends_bearer_never_in_url")
 			run_test (agent t.test_poller_cursor_and_drain_laws, "poller_cursor_and_drain_laws")

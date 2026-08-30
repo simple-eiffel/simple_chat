@@ -302,11 +302,20 @@ feature -- Sessions
 			gone: session_by_hash (a_token_hash) = Void
 		end
 
+	has_session_of (a_user_id: INTEGER_64): BOOLEAN
+			-- Does any session (or bot token) of `a_user_id' exist?
+		require
+			open: is_open
+		deferred
+		end
+
 	remove_sessions_of (a_user_id: INTEGER_64)
 			-- Revoke every session and token of a user.
 		require
 			open: is_open
 		deferred
+		ensure
+			none_left: not has_session_of (a_user_id)
 		end
 
 end

@@ -337,6 +337,13 @@ feature -- Sessions
 			events_unchanged: events_model |=| old events_model
 		end
 
+	has_session_of (a_user_id: INTEGER_64): BOOLEAN
+		do
+			Result := across sessions as ic some ic.user_id = a_user_id end
+		ensure then
+			definition: Result = across sessions as ic some ic.user_id = a_user_id end
+		end
+
 	remove_sessions_of (a_user_id: INTEGER_64)
 		do
 			-- Implementation in Phase 4

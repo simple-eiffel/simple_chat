@@ -87,10 +87,28 @@ feature -- Encoding
 			Result.put_string (a_status.text, Key_text).do_nothing
 		end
 
+	statuses_to_json (a_statuses: LIST [CHAT_STATUS]): SIMPLE_JSON_ARRAY
+		do
+			create Result.make
+			across a_statuses as s loop
+				Result.add_object (status_to_json (s)).do_nothing
+			end
+		ensure
+			same_count: Result.count = a_statuses.count
+		end
+
 	page_to_json (a_events: LIST [CHAT_EVENT]; a_statuses: LIST [CHAT_STATUS]): SIMPLE_JSON_OBJECT
 			-- {"events": [...], "statuses": [...], "last_id": N}
+		do
+			Result := page_to_json_merged (a_events, statuses_to_json (a_statuses))
+		ensure
+			counted: attached Result.array_item (Key_events) as arr and then arr.count = a_events.count
+		end
+
+	page_to_json_merged (a_events: LIST [CHAT_EVENT]; a_statuses: SIMPLE_JSON_ARRAY): SIMPLE_JSON_OBJECT
+			-- A page whose statuses arrive already encoded (a long-poll's waiter keeps them as JSON).
 		local
-			l_events, l_statuses: SIMPLE_JSON_ARRAY
+			l_events: SIMPLE_JSON_ARRAY
 			l_last: INTEGER_64
 		do
 			create l_events.make
@@ -98,16 +116,21 @@ feature -- Encoding
 				l_events.add_object (event_to_json (e)).do_nothing
 				l_last := l_last.max (e.id)
 			end
-			create l_statuses.make
-			across a_statuses as s loop
-				l_statuses.add_object (status_to_json (s)).do_nothing
-			end
 			create Result.make
 			Result.put_array (l_events, Key_events).do_nothing
-			Result.put_array (l_statuses, Key_statuses).do_nothing
+			Result.put_array (a_statuses, Key_statuses).do_nothing
 			Result.put_integer (l_last, Key_last_id).do_nothing
 		ensure
 			counted: attached Result.array_item (Key_events) as arr and then arr.count = a_events.count
+			statuses_kept: attached Result.array_item (Key_statuses) as sarr and then sarr.count = a_statuses.count
+		end
+
+	bytes_of_array (a_array: SIMPLE_JSON_ARRAY): STRING_8
+			-- UTF-8 for the wire.
+		do
+			Result := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_array.to_json_string)
+		ensure
+			array_text: Result.starts_with ("[") and Result.ends_with ("]")
 		end
 
 	login_to_json (a_token: READABLE_STRING_8; a_member: CHAT_MEMBER): SIMPLE_JSON_OBJECT
@@ -139,6 +162,14 @@ feature -- Decoding
 		do
 			if attached parser.parse_message ({UTF_CONVERTER}.utf_8_string_8_to_string_32 (a_bytes)) as v and then v.is_object then
 				Result := v.as_object
+			end
+		end
+
+	array_from_bytes (a_bytes: READABLE_STRING_8): detachable SIMPLE_JSON_ARRAY
+			-- The JSON array `a_bytes' (UTF-8) encodes, or Void.
+		do
+			if attached parser.parse_message ({UTF_CONVERTER}.utf_8_string_8_to_string_32 (a_bytes)) as v and then v.is_array then
+				Result := v.as_array
 			end
 		end
 

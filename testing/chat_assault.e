@@ -212,24 +212,73 @@ feature -- Contract-support engines
 
 feature -- Thick client stack (intent-v3): real tests against the scripted transport
 
-	test_poll_waiter_wakes_only_armed_room
+	test_poll_waiter_counts_only_its_room
+			-- The SCOOP flag object: wakes for its room count, others do not; statuses of its room are kept; the alarm readies it.
 		local
 			w: POLL_WAITER
 		do
-			create w.make
-			w.arm (1)
+			create w.make (1)
 			w.wake (2)
-			assert ("other room ignored", not w.wait (0) and w.wakes_since_arm = 0)
+			assert ("other room ignored", not w.has_news and w.wake_count = 1 and not w.is_ready)
 			w.wake (1)
-			assert ("armed room wakes", w.wait (0) and w.wakes_since_arm = 1)
-			w.arm (1)
-			assert ("re-arm forgets", not w.wait (10))
-			w.wake (1)
+			assert ("own room counted", w.has_news and w.news_count = 1 and w.is_ready)
 			w.receive_status (create {CHAT_STATUS}.make (1, {STRING_32} "Claude", {STRING_32} "thinking"))
 			w.receive_status (create {CHAT_STATUS}.make (2, {STRING_32} "Claude", {STRING_32} "elsewhere"))
-			assert ("wake retained across the check", w.wait (0))
-			assert ("only my statuses kept", w.statuses.count = 1)
-			assert ("all wakes counted", w.wake_count = 3)
+			assert ("only my statuses kept", w.status_count = 1 and w.statuses_json.has_substring ("thinking") and not w.statuses_json.has_substring ("elsewhere"))
+			create w.make (3)
+			assert ("quiet waiter is not ready", not w.is_ready)
+			w.time_out
+			assert ("alarm readies it without news", w.is_ready and w.is_timed_out and not w.has_news)
+		end
+
+	test_event_bus_tickets
+			-- Subscriptions are tickets; ring reaches every subscriber; unsubscribe is idempotent.
+		local
+			b: EVENT_BUS
+			w1, w2: POLL_WAITER
+			t1: INTEGER
+		do
+			create b.make
+			create w1.make (1)
+			create w2.make (2)
+			b.subscribe (w1)
+			t1 := b.last_ticket
+			b.subscribe (w2)
+			assert ("two tickets", t1 = 1 and b.last_ticket = 2 and b.subscriber_count = 2 and b.is_subscribed (1) and b.is_subscribed (2))
+			b.ring (1)
+			assert ("both woken, only room 1 has news", w1.wake_count = 1 and w2.wake_count = 1 and w1.has_news and not w2.has_news)
+			b.ring_status (create {CHAT_STATUS}.make (2, {STRING_32} "Claude", {STRING_32} "queued"))
+			assert ("status delivered to room 2 only", w2.status_count = 1 and w1.status_count = 0 and b.status_count = 1)
+			b.unsubscribe (t1)
+			b.unsubscribe (99)
+			assert ("one left, unknown ticket harmless", b.subscriber_count = 1 and not b.is_subscribed (1) and b.is_subscribed (2))
+			b.ring (1)
+			assert ("unsubscribed waiter not woken", w1.wake_count = 1 and w2.wake_count = 2 and b.ring_count = 2)
+		end
+
+	test_sse_stream_delivers_in_order
+		local
+			k: MEMORY_STREAM_SINK
+			s: SSE_STREAM
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+			l_now: SIMPLE_DATE_TIME
+			l_payload: SIMPLE_JSON_OBJECT
+		do
+			create k.make
+			create s.make (k)
+			s.open (1, 0)
+			assert ("preamble", k.content.starts_with (": simple_chat stream"))
+			create l_now.make (2026, 8, 29, 12, 0, 0)
+			create l_payload.make
+			create l_events.make (2)
+			l_events.extend (create {CHAT_EVENT}.make (1, 1, 5, {CHAT_EVENT_KINDS}.Kind_message, l_now, {STRING_32} "one", Void, l_payload, False))
+			l_events.extend (create {CHAT_EVENT}.make (2, 1, 5, {CHAT_EVENT_KINDS}.Kind_message, l_now, {STRING_32} "two", Void, l_payload, False))
+			s.deliver (create {CHAT_PAGE}.make (l_events, create {ARRAYED_LIST [CHAT_STATUS]}.make (0)))
+			assert ("two delivered in order", s.delivered_model.count = 2 and s.last_delivered_id = 2 and k.content.has_substring ("id: 1%Nevent: message%N") and k.content.has_substring ("id: 2%N"))
+			s.heartbeat
+			assert ("heartbeat written", k.content.ends_with (": hb%N%N"))
+			s.close
+			assert ("closed", not s.is_open and not k.is_open)
 		end
 
 	test_event_json_round_trip

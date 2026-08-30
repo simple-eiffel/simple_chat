@@ -1,10 +1,16 @@
 note
 	description: "[
-		Something the bus wakes: a live stream, or the participant
+		Something the bus wakes: a long-poll's waiter, or the participant
 		dispatcher. The bus never hands over events - it says which room
 		has news, and the subscriber pulls what it has not seen from the
 		store (the doorbell pattern). Ephemeral statuses are handed over,
 		because they exist nowhere else.
+
+		SCOOP (D1): subscribers live on their own processors; the bus holds
+		them as `separate' and `wake' / `receive_status' are asynchronous
+		commands, so a poster never waits for a subscriber and a subscriber
+		never runs two wakes at once. A status arrives as a separate object
+		and is copied on the way in.
 	]"
 	author: "Larry Rix"
 
@@ -38,9 +44,11 @@ feature -- Basic operations
 			counted: wake_count = old wake_count + 1
 		end
 
-	receive_status (a_status: CHAT_STATUS)
-			-- An ephemeral notice for `a_status.room_id'.
+	receive_status (a_status: separate CHAT_STATUS)
+			-- An ephemeral notice for `a_status.room_id' (copied; the argument belongs to the bus's processor).
 		deferred
+		ensure
+			not_a_wake: wake_count = old wake_count
 		end
 
 end

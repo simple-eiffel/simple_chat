@@ -208,6 +208,11 @@ feature -- Sessions
 			-- Implementation in Phase 4
 		end
 
+	has_session_of (a_user_id: INTEGER_64): BOOLEAN
+		do
+			-- Implementation in Phase 4 (SELECT 1 FROM session WHERE user_id = ?)
+		end
+
 	remove_sessions_of (a_user_id: INTEGER_64)
 		do
 			-- Implementation in Phase 4

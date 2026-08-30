@@ -1,13 +1,15 @@
 note
 	description: "[
-		One client's live stream in Server-Sent Events form: replays
-		everything after `since_id' from the store, then, on each `wake' for
-		its room, pulls and writes what is new; heartbeats keep proxies and
-		browsers from closing an idle connection. It is both an EVENT_SOURCE
-		(to its client) and an EVENT_SUBSCRIBER (to the bus).
+		One client's live stream in Server-Sent Events form, driven by the
+		request's handler on the request's processor: the handler waits on
+		a POLL_WAITER (POLL_WAIT), pulls the page after `last_delivered_id'
+		from the API, and hands it to `deliver'; on a timeout it calls
+		`heartbeat'. This class only formats and keeps the cursor - it is
+		an EVENT_SOURCE, never a subscriber, and never does I/O on anyone
+		else's processor.
 
 		Wire form per event: "id: <id>\nevent: message\ndata: <json>\n\n";
-		statuses as "event: status\ndata: <json>\n\n"; heartbeats ": hb\n\n".
+		statuses "event: status\ndata: <json>\n\n"; heartbeats ": hb\n\n".
 	]"
 	author: "Larry Rix"
 
@@ -16,35 +18,45 @@ class
 
 inherit
 	EVENT_SOURCE
-	EVENT_SUBSCRIBER
 
 create
 	make
 
 feature {NONE} -- Initialization
 
-	make (a_sink: STREAM_SINK; a_store: CHAT_STORE; a_page_size: INTEGER)
+	make (a_sink: STREAM_SINK)
 		require
 			sink_open: a_sink.is_open
-			store_open: a_store.is_open
-			page_positive: a_page_size > 0
 		do
 			sink := a_sink
-			store := a_store
-			page_size := a_page_size
+			create delivered.make (16)
+			create codec.make
 			heartbeat_seconds := Default_heartbeat_seconds
-			subscriber_name := "sse"
 		ensure
 			not_open: not is_open
-			page_set: page_size = a_page_size
+			nothing_delivered: delivered_model.is_empty
+		end
+
+feature -- Model Queries (for MML postconditions)
+
+	delivered_model: MML_SEQUENCE [INTEGER_64]
+		do
+			create Result
+			across delivered as ic loop
+				Result := Result & ic
+			end
+		ensure then
+			same_count: Result.count = delivered.count
 		end
 
 feature -- Access
 
-	subscriber_name: STRING_8
-	wake_count: INTEGER
 	heartbeat_seconds: INTEGER
-	page_size: INTEGER
+
+	bytes_written: INTEGER_64
+		do
+			Result := sink.bytes_written
+		end
 
 feature -- Status report
 
@@ -61,34 +73,32 @@ feature -- Basic operations
 			since_id := a_since_id
 			last_delivered_id := a_since_id
 			is_opened := True
-			-- Implementation in Phase 4: write the SSE preamble, replay via deliver_pending
+			sink.write (Preamble)
+		ensure then
+			preamble_written: sink.bytes_written = old sink.bytes_written + Preamble.count
 		end
 
 	close
 		do
 			is_opened := False
-			-- Implementation in Phase 4: sink.close
-		end
-
-	deliver_pending
-			-- Pull events after `last_delivered_id' in pages and write them.
-		do
-			-- Implementation in Phase 4
+			if sink.is_open then
+				sink.close
+			end
 		ensure then
-			caught_up_or_closed: last_delivered_id >= store.last_event_id or else not is_open
+			sink_closed: not sink.is_open
 		end
 
-	wake (a_room_id: INTEGER_64)
+	deliver (a_page: CHAT_PAGE)
 		do
-			wake_count := wake_count + 1
-			-- Implementation in Phase 4: if a_room_id = room_id and is_open then deliver_pending end
-		ensure then
-			other_rooms_ignored: a_room_id /= room_id implies last_delivered_id = old last_delivered_id
-		end
-
-	receive_status (a_status: CHAT_STATUS)
-		do
-			-- Implementation in Phase 4: if a_status.room_id = room_id then write format_status end
+			across a_page.events as e loop
+				sink.write (format_event (e))
+				delivered.extend (e.id)
+				last_delivered_id := e.id
+			end
+			across a_page.statuses as s loop
+				sink.write (format_status (s))
+			end
+			sink.flush
 		end
 
 	heartbeat
@@ -96,9 +106,11 @@ feature -- Basic operations
 		require
 			open: is_open
 		do
-			-- Implementation in Phase 4: sink.write (": hb%N%N"); sink.flush
+			sink.write (Heartbeat_line)
+			sink.flush
 		ensure
-			written: sink.bytes_written > old sink.bytes_written
+			written: sink.bytes_written = old sink.bytes_written + Heartbeat_line.count
+			nothing_delivered: delivered_model |=| old delivered_model
 		end
 
 feature -- Conversion (contract support)
@@ -106,35 +118,39 @@ feature -- Conversion (contract support)
 	format_event (a_event: CHAT_EVENT): STRING_8
 			-- The SSE record for `a_event'.
 		do
-			create Result.make (64)
-			-- Implementation in Phase 4
+			Result := "id: " + a_event.id.out + "%Nevent: message%Ndata: " + codec.bytes_of (a_event.to_json) + "%N%N"
 		ensure
 			terminated: Result.ends_with ("%N%N")
-			carries_id: Result.starts_with ("id: " + a_event.id.out)
+			carries_id: Result.starts_with ("id: " + a_event.id.out + "%N")
+			one_record: not Result.substring (1, Result.count - 2).has_substring ("%N%N")
 		end
 
 	format_status (a_status: CHAT_STATUS): STRING_8
 		do
-			create Result.make (64)
-			-- Implementation in Phase 4
+			Result := "event: status%Ndata: " + codec.bytes_of (codec.status_to_json (a_status)) + "%N%N"
 		ensure
 			terminated: Result.ends_with ("%N%N")
-			is_status: Result.starts_with ("event: status")
+			is_status: Result.starts_with ("event: status%N")
+			one_record: not Result.substring (1, Result.count - 2).has_substring ("%N%N")
 		end
 
 feature -- Constants
 
 	Default_heartbeat_seconds: INTEGER = 20
 
+	Preamble: STRING_8 = ": simple_chat stream%N%N"
+
+	Heartbeat_line: STRING_8 = ": hb%N%N"
+
 feature {NONE} -- Implementation
 
 	sink: STREAM_SINK
-	store: CHAT_STORE
+	codec: CHAT_JSON
+	delivered: ARRAYED_LIST [INTEGER_64]
 	is_opened: BOOLEAN
 
 invariant
 	heartbeat_positive: heartbeat_seconds > 0
-	page_positive: page_size > 0
-	named: not subscriber_name.is_empty
+	model_consistent: delivered_model.count = delivered.count
 
 end

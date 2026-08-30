@@ -1,15 +1,20 @@
 note
 	description: "[
-		One simple_chat server: assembles store, service, web app, front
-		door, dynamic DNS and the participant dispatcher from a
-		SERVER_CONFIG, starts and stops them in order, reports health.
-		Holds no domain rule. The front door and DNS are supplied by the
-		application (its `ops' cluster) through the library's contracts.
+		One simple_chat server: starts the web face, the front door and
+		dynamic DNS from a SERVER_CONFIG, in order, and reports health.
+		Holds no domain rule. Under SCOOP (D1) the service, store, bus,
+		limiter and participants are built on the API's own processor
+		(CHAT_SHARED.shared_api) from the settings this facade shares
+		before starting; the door and DNS are supplied by the application
+		(its `ops' cluster) through the library's contracts.
 	]"
 	author: "Larry Rix"
 
 class
 	SIMPLE_CHAT_SERVER
+
+inherit
+	CHAT_SHARED
 
 create
 	make
@@ -19,9 +24,6 @@ feature {NONE} -- Initialization
 	make
 			-- An unconfigured server.
 		do
-			create bus.make
-			create limits.make (3600)
-			create registry.make
 		ensure
 			not_configured: not is_configured
 			not_running: not is_running
@@ -38,17 +40,6 @@ feature -- Configuration (Builder Pattern)
 			Result := Current
 		ensure
 			set: config = a_config
-			result_current: Result = Current
-		end
-
-	set_store (a_store: CHAT_STORE): like Current
-		require
-			not_running: not is_running
-		do
-			store := a_store
-			Result := Current
-		ensure
-			set: store = a_store
 			result_current: Result = Current
 		end
 
@@ -74,17 +65,6 @@ feature -- Configuration (Builder Pattern)
 			result_current: Result = Current
 		end
 
-	set_registry (a_registry: PARTICIPANT_REGISTRY): like Current
-		require
-			not_running: not is_running
-		do
-			registry := a_registry
-			Result := Current
-		ensure
-			set: registry = a_registry
-			result_current: Result = Current
-		end
-
 	set_log (a_log: CHAT_LOG): like Current
 		require
 			not_running: not is_running
@@ -99,38 +79,63 @@ feature -- Configuration (Builder Pattern)
 feature -- Core Operations
 
 	start
-			-- Open and migrate the store, build the service and web app on
-			-- localhost, start the door and DNS, subscribe the dispatcher.
+			-- Share the configuration, bring the API up on its processor,
+			-- create the web face, start the door and DNS.
 		require
 			configured: is_configured
 			not_running: not is_running
+		local
+			l_web: CHAT_WEB_APP
 		do
-			-- Implementation in Phase 4
-			last_error := not_implemented
+			if attached config as c then
+				shared_put (Config_path_key, {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (c.source_path))
+				api := shared_api
+				create l_web.make (c)
+				l_web.start
+				web_app := l_web
+				if attached front_door as d then
+					d.start
+				end
+				if attached dynamic_dns as n then
+					n.update
+				end
+				is_running := l_web.is_running
+				if not is_running then
+					last_error := l_web.last_error
+				else
+					last_error := Void
+				end
+			end
 		ensure
 			running_or_reported: is_running xor (last_error /= Void)
-			store_open: is_running implies (attached store as s and then s.is_open)
-			door_started: is_running implies (attached front_door as d and then (d.is_serving or d.last_error /= Void))
-			dispatcher_subscribed: (is_running and registry.count > 0) implies (attached dispatcher as p and then bus.subscribers_model.has (p))
+			api_up: is_running implies api /= Void
+			door_started: is_running implies (attached front_door as d implies (d.is_serving or d.last_error /= Void))
 		end
 
 	run
-			-- Serve until stopped (blocking).
+			-- Serve until stopped (blocking on the caller's processor).
 		require
 			running: is_running
 		do
-			-- Implementation in Phase 4: web_app.run
+			if attached web_app as w then
+				w.run
+			end
 		end
 
 	stop
 			-- Reverse order. Never leaves a child process behind.
 		do
+			if attached front_door as d then
+				d.stop
+			end
+			if attached web_app as w then
+				w.stop
+			end
+			web_app := Void
 			is_running := False
-			-- Implementation in Phase 4
 		ensure
 			stopped: not is_running
 			door_stopped: attached front_door as d implies (not d.is_serving and not d.has_child_process)
-			store_closed: attached store as s implies not s.is_open
 		end
 
 feature -- Status
@@ -148,35 +153,27 @@ feature -- Status
 		require
 			running: is_running
 		do
-			create Result.make (attached store as s and then s.is_open, attached web_app as w and then w.is_running,
-				attached front_door as d and then d.is_serving, attached dynamic_dns as n and then n.last_result.same_string ({DYNAMIC_DNS}.Result_ok),
-				dispatcher /= Void)
+			create Result.make (api /= Void, attached web_app as w and then w.is_running,
+				attached front_door as d and then d.is_serving,
+				attached dynamic_dns as n and then n.last_result.same_string ({DYNAMIC_DNS}.Result_ok),
+				False)
 		end
 
 feature -- Access
 
-	bus: EVENT_BUS
-	limits: RATE_LIMITER
-	registry: PARTICIPANT_REGISTRY
+	api: detachable separate CHAT_API
+			-- The API, on its own processor, once started.
 
 feature {NONE} -- Implementation
 
 	config: detachable SERVER_CONFIG
-	store: detachable CHAT_STORE
-	service: detachable CHAT_SERVICE
 	web_app: detachable CHAT_WEB_APP
 	front_door: detachable FRONT_DOOR
 	dynamic_dns: detachable DYNAMIC_DNS
-	dispatcher: detachable PARTICIPANT_DISPATCHER
 	log: detachable CHAT_LOG
-
-	not_implemented: CHAT_ERROR
-		do
-			create Result.make ({CHAT_ERROR}.Code_not_implemented, "Not implemented (Phase 1 skeleton)", 501)
-		end
 
 invariant
 	running_implies_configured: is_running implies is_configured
-	running_implies_parts: is_running implies (store /= Void and service /= Void and web_app /= Void and front_door /= Void)
+	running_implies_parts: is_running implies (web_app /= Void and api /= Void)
 
 end

@@ -59,7 +59,7 @@ feature -- Basic operations
 			cursor_never_backwards: cursor >= old cursor
 		end
 
-	receive_status (a_status: CHAT_STATUS)
+	receive_status (a_status: separate CHAT_STATUS)
 			-- Statuses are not requests.
 		do
 		end
