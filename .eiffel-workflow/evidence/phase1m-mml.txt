@@ -1,0 +1,72 @@
+# Phase 1m MML Coverage Report
+# Project: D:\prod\simple_chat
+# Date: 2026-08-29
+# Mode: spec-kit
+
+## Collection Attributes Found
+| Class | Attribute | Type | MML Type |
+|-------|-----------|------|----------|
+| MEMORY_CHAT_STORE | events | ARRAYED_LIST [CHAT_EVENT] | MML_SEQUENCE [CHAT_EVENT] |
+| MEMORY_CHAT_STORE | users_table | HASH_TABLE [CHAT_USER, INTEGER_64] | MML_MAP [INTEGER_64, CHAT_USER] |
+| MEMORY_CHAT_STORE | rooms | HASH_TABLE [CHAT_ROOM, INTEGER_64] | MML_MAP [INTEGER_64, CHAT_ROOM] |
+| MEMORY_CHAT_STORE | memberships | ARRAYED_LIST [CHAT_MEMBERSHIP] | MML_RELATION [INTEGER_64, INTEGER_64] (user -> room) |
+| MEMORY_CHAT_STORE | attachments | HASH_TABLE [CHAT_ATTACHMENT, INTEGER_64] | MML_MAP [INTEGER_64, CHAT_ATTACHMENT] |
+| MEMORY_CHAT_STORE | sessions | HASH_TABLE [CHAT_SESSION, STRING_8] | MML_MAP [STRING_8, CHAT_SESSION] |
+| RATE_LIMITER | counts | HASH_TABLE [INTEGER, STRING_8] | MML_MAP [STRING_8, INTEGER] |
+| RATE_LIMITER | limits | HASH_TABLE [INTEGER, STRING_8] | MML_MAP [STRING_8, INTEGER] |
+| EVENT_BUS | subscribers | ARRAYED_LIST [EVENT_SUBSCRIBER] | MML_SET [EVENT_SUBSCRIBER] (unique by reference) |
+| PARTICIPANT_REGISTRY | table | HASH_TABLE [PARTICIPANT, STRING_32] | MML_SET [STRING_32] (handles) + MML_MAP [STRING_32, PARTICIPANT] |
+| SERVER_CONFIG | participants | ARRAYED_LIST [PARTICIPANT_CONFIG] | MML_SEQUENCE [PARTICIPANT_CONFIG] |
+| SERVER_CONFIG | validation_errors | ARRAYED_LIST [STRING_32] | MML_SEQUENCE [STRING_32] |
+| PARTICIPANT_CONFIG | aliases | ARRAYED_LIST [STRING_32] | MML_SEQUENCE [STRING_32] |
+| PARTICIPANT_CONFIG | allow_via | ARRAYED_LIST [STRING_32] | MML_SEQUENCE [STRING_32] |
+| SHAPING_BRIEF | examples | ARRAYED_LIST [STRING_32] | MML_SEQUENCE [STRING_32] |
+
+## Model Queries Added/Verified
+| Class | Query | MML Type | Status |
+|-------|-------|----------|--------|
+| MEMORY_CHAT_STORE | events_model / users_model / rooms_model / sessions_model | SEQUENCE / MAP | VERIFIED |
+| MEMORY_CHAT_STORE | membership_model | MML_RELATION | ADDED |
+| MEMORY_CHAT_STORE | attachments_model | MML_MAP | ADDED |
+| RATE_LIMITER | counts_model | MML_MAP | VERIFIED |
+| RATE_LIMITER | limits_model | MML_MAP | ADDED |
+| EVENT_BUS | subscribers_model | MML_SET | VERIFIED |
+| PARTICIPANT_REGISTRY | handles_model | MML_SET | VERIFIED |
+| PARTICIPANT_REGISTRY | participants_model | MML_MAP | ADDED |
+| SERVER_CONFIG | participants_model | MML_SEQUENCE | VERIFIED |
+| SERVER_CONFIG | errors_model | MML_SEQUENCE | ADDED |
+| PARTICIPANT_CONFIG | aliases_model, allow_via_model | MML_SEQUENCE | ADDED |
+| SHAPING_BRIEF | examples_model | MML_SEQUENCE | ADDED |
+
+Model queries in src: 16 (8 added, 8 verified)
+
+## Contracts Strengthened
+- Postconditions added/enriched: about 75 clauses across MEMORY_CHAT_STORE (every command and query), RATE_LIMITER, PARTICIPANT_REGISTRY, PARTICIPANT_CONFIG (incl. new add_allow_via), SHAPING_BRIEF, SERVER_CONFIG
+- Preconditions added/enriched: 2 (add_alias / add_allow_via freshness)
+- Frame conditions (|=| old *_model): 61
+- Invariants added/enriched: 8 (models_consistent in memory store, limiter, registry, participant config, brief, bus, server config; valid_means_no_errors)
+
+## Notes
+- MML_SET / MML_MAP are not ITERABLE: quantify over the concrete collection (across counts / across sessions) and compare against the old model; 'old sessions.twin' snapshots the table for the others_kept clause.
+- MML_MAP.has tests VALUES; key membership is domain.has (k).
+- Deferred CHAT_STORE keeps query-based contracts; model-based frame conditions live on MEMORY_CHAT_STORE as 'ensure then', and the SQLite store is checked against it (Phase 5).
+
+## Compilation
+Command: /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_tests
+E1\eref.obj E1\eoption.obj C30\Cobj30.lib C29\Cobj29.lib C28\Cobj28.lib 
+C27\Cobj27.lib C26\Cobj26.lib C25\Cobj25.lib C24\Cobj24.lib C23\Cobj23.lib 
+C22\Cobj22.lib C21\Cobj21.lib C20\Cobj20.lib C19\Cobj19.lib C18\Cobj18.lib 
+C17\Cobj17.lib C16\Cobj16.lib C15\Cobj15.lib C14\Cobj14.lib C13\Cobj13.lib 
+C12\Cobj12.lib C11\Cobj11.lib C10\Cobj10.lib C9\Cobj9.lib C8\Cobj8.lib 
+C7\Cobj7.lib C6\Cobj6.lib C5\Cobj5.lib C4\Cobj4.lib C3\Cobj3.lib 
+C2\Cobj2.lib C1\Cobj1.lib 
+C compilation completed
+Event logged.
+[CLI] Closing oracle...
+[CLI] Done.
+✓ Built: EIFGENs/simple_chat_tests/F_code/simple_chat.exe (1s ago)
+Assault: 22 passed, 0 failed
+Status: PASS
+
+## Coverage Assessment
+FULL for in-memory collections. SQLITE_CHAT_STORE holds no in-memory collection (its state is the database) and carries CHAT_STORE's query-based contracts; CHAT_EVENT.payload (SIMPLE_JSON_OBJECT) is opaque data, not a modeled collection.

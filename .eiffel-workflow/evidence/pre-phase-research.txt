@@ -1,0 +1,19 @@
+# Pre-Phase Research Evidence
+# Project: D:\prod\simple_chat
+# Date: 2026-08-28
+
+Research completed: yes
+Steps completed: 7/7
+Recommendation: BUILD
+Confidence: HIGH (MVP); MEDIUM on SSE-over-EWF and WebView2-on-simple_shell until Phase 0 spikes pass
+
+References cited: 20 fetched URLs + 11 local sources (see research/REFERENCES.md)
+Alternatives researched: 5 with content (Matrix/Conduit, Zulip, Rocket.Chat, Prosody/XMPP, The Lounge) + 1 not retrieved (Mattermost, recorded as such)
+Risks identified: 17
+
+Decisions needing Larry's confirmation before /eiffel.spec is acted on:
+  D-004 TLS: Caddy terminator (recommended) vs EWF ssl (OpenSSL 1.1.1 EOL)
+  D-005 Name: own domain vs Duck DNS
+  Phase 0 go/no-go: CGNAT check; Spike A (SSE on EWF); Spike B (WebView2 on simple_shell HWND)
+
+# Status: COMPLETE

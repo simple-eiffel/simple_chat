@@ -1,0 +1,37 @@
+# Eiffel build artifacts
+EIFGENs/
+Documentation/
+
+# Compiled files
+*.melted
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Runtime data (never commit a chat database, uploads, tokens or backups)
+data/
+dist/
+*.db
+*.db-wal
+*.db-shm
+simple_chat_server.toml
+client.toml
+
+# Backup files
+*.swp
+*.bak
+*~
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+*.epr
+*.log

@@ -1,0 +1,38 @@
+# Phase 1 amendment evidence - thick client (intent-v3, spec/10)
+# Project: D:\prod\simple_chat
+# Date: 2026-08-29
+# Command: /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_tests   (finalize -keep, assertions on)
+
+Decision applied: "Thick first and no browser" (Larry, 2026-08-29).
+
+Removed: CHAT_UI, CLIENT_HOST, SHELL_WEBVIEW_HOST, NOTIFICATION_BRIDGE, is_htmx_request, cookie_secure,
+         simple_browser from the client target.
+Added (library, src/client, UI-free): CHAT_ENDPOINT, SERVICE_LOCATOR, HTTP_TRANSPORT (deferred), HTTP_REPLY,
+         HTTP_REQUEST_RECORD, MEMORY_HTTP_TRANSPORT, CHAT_PAGE, CHAT_CLIENT, EVENT_POLLER, CHAT_VIEW (deferred),
+         MEMORY_CHAT_VIEW, NOTIFIER (deferred), MEMORY_NOTIFIER, CHAT_PRESENTER, CLIENT_CONFIG (moved).
+Added (domain): CHAT_MEMBER, CHAT_JSON (the wire codec, both directions), CHAT_ATTACHMENT_RULES.
+Added (bus): POLL_WAITER - implemented in full (MUTEX + CONDITION_VARIABLE.wait_with_timeout, EiffelBase).
+Added (service): CHAT_SERVICE.wait_for_events + Max_wait_seconds = 25 (D-018 long-poll).
+Added (web): CHAT_API.handle_wait, handle_members; CHAT_WEB_APP.bearer_token; SERVER_CONFIG.is_public.
+Added (apps/client): CLIENT_APP (rewritten), TRAY_NOTIFIER (needs SHELL_TRAY), WINHTTP_TRANSPORT (needs simple_winhttp);
+         the client target links simple_widgets and waits on those two dependency tasks, as before.
+
+Compilation: System Recompiled. Zero warnings.
+Assault: 30 passed, 0 failed (22 before the amendment; 6 new real tests + 2 new skeletal).
+
+New real tests (all against the scripted MEMORY_HTTP_TRANSPORT; no sockets):
+  poll_waiter_wakes_only_armed_room       - wake retained across the check-then-wait race; other rooms ignored
+  event_json_round_trip                   - message + image + bot-marked Hebrew/robot text; pages; malformed input -> Void
+  client_login_sends_bearer_never_in_url  - password in body only; Authorization: Bearer on every call; token never in a URL
+  poller_cursor_and_drain_laws            - cursor monotonic; a page violating the since-contract refused whole; drain empties
+  presenter_unread_and_foreground_law     - unread counts only others' messages while not foreground; foreground clears
+  locator_prefers_live_local_then_standby - local service, then primary, then standby; primary reported when all are dark
+
+Defect found and fixed upstream during this amendment:
+  simple_json 0.2.0 - ISE ejson's JSON_STRING escaper wrote astral characters (every emoji, U+1F916 included) as a
+  five-digit \u escape; decoder never combined surrogate pairs. SIMPLE_JSON_OBJECT.put_string's `value_stored'
+  postcondition caught it on the first bot-marked message. New SIMPLE_JSON_TEXT; 4 vector tests; 265/265 in simple_json.
+  Note: EiffelStudio's incremental finalize did NOT pick up the changed library class - EIFGENs/simple_chat_tests had
+  to be deleted for the fix to reach this build.
+
+# Status: PASS

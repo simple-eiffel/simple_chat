@@ -1,0 +1,15 @@
+# Phase 0 Intent Evidence
+# Project: D:\prod\simple_chat
+# Date: 2026-08-29
+
+Intent document: .eiffel-workflow/intent-v2.md
+Review conducted: yes
+Review engine: Claude (self-review, adversarial pass over spec 01-09)
+Questions generated: 14
+Questions answered: 14 (recommended answers written into intent-v2.md)
+Dependency audit: complete (simple_* first; gaps: simple_thread, simple_winhttp, simple_process kill/timeout, SHELL_TRAY, simple_htmx SSE attributes, simple_wic for Phase 2)
+User approved: yes ("Approve as recommended", 2026-08-29)
+
+Design corrections carried into Phase 1: doorbell event bus (Q3), lock hierarchy (Q2), library/app split (Q1), cookie_secure (Q4), upload hardening (Q5), CSP + single escaping point (Q6), process timeout/kill (Q7), per-participant FIFO (Q8), migrations with backup (Q10), integration test target (Q11), PHRASED_PARTICIPANT folded into TOOL_PARTICIPANT (Q13), edge-case table (Q14).
+
+# Status: APPROVED

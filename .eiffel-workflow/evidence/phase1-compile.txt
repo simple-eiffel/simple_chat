@@ -1,0 +1,108 @@
+# Phase 1 Compilation Evidence
+# Project: D:\prod\simple_chat
+# Date: 2026-08-29
+# Command: /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_tests   (finalize -keep: all assertions live)
+
+[oracle] Logging compilation for library: simple_chat
+Event logged.
+
+[CLI] Closing oracle...
+[CLI] Done.
+=== TEST MODE (finalize -keep) ===
+Running: ec.exe -batch -config simple_chat.ecf -target simple_chat_tests -finalize -keep -c_compile
+Eiffel Compilation Manager
+Version 25.02.9.8732 - win64
+
+Degree 6: Examining System
+Degree 5: Parsing Classes
+Degree 4: Analyzing Inheritance
+Degree 3: Checking Types
+Degree 2: Generating Byte Code
+Degree -2: Constructing Polymorphic Table
+Degree -3: Generating Optimized Code
+System Recompiled.
+Preparing C compilation using Microsoft Visual Studio 2022 VC++ (17.0)...
+big_file_C16_c.c
+big_file_C13_c.c
+big_file_C20_c.c
+big_file_C26_c.c
+big_file_C27_c.c
+big_file_C24_c.c
+big_file_C25_c.c
+big_file_C30_c.c
+big_file_C18_c.c
+big_file_C29_c.c
+big_file_C28_c.c
+eoption.c
+big_file_C11_c.c
+big_file_C19_c.c
+big_file_C2_c.c
+big_file_C12_c.c
+big_file_C22_c.c
+big_file_C21_c.c
+big_file_C6_c.c
+big_file_E2_c.c
+big_file_C8_c.c
+big_file_C5_c.c
+big_file_C23_c.c
+big_file_C1_c.c
+big_file_C9_c.c
+big_file_C7_c.c
+big_file_C4_c.c
+big_file_C10_c.c
+big_file_C15_c.c
+big_file_C17_c.c
+big_file_C3_c.c
+big_file_C14_c.c
+eref.c
+epoly.c
+esize.c
+eplug.c
+eskelet.c
+enames.c
+evisib.c
+ececil.c
+einit.c
+eparents.c
+        1 file(s) copied.
+emain.c
+Microsoft (R) Windows (R) Resource Compiler Version 10.0.10011.16384
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+Microsoft (R) Incremental Linker Version 14.44.35220.0
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+-STACK:5000000 -NODEFAULTLIB:libc -STACK:5000000 -NODEFAULTLIB:libc -SUBSYSTEM:CONSOLE -OUT:simple_chat.exe 
+e1\emain.obj 
+"C:\Program Files\Eiffel Software\EiffelStudio 25.02 Standard\studio\spec\win64\lib\msc_vc140\mtfinalized.lib" "D:\prod\eiffel_sqlite_2025\Clib\sqlite3.obj" "D:\prod\eiffel_sqlite_2025\Clib\esqlite.obj" "D:\prod\simple_process\Clib\simple_process.obj" "C:\Program Files\Eiffel Software\EiffelStudio 25.02 Standard\library\net\spec\msc_vc140\win64\lib\mtnet.lib" "C:\Program Files\Eiffel Software\EiffelStudio 25.02 Standard\library\wel\spec\msc_vc140\win64\lib\mtwel.lib" "Crypt32.lib" "C:\Program Files\Eiffel Software\EiffelStudio 25.02 Standard\C_library\openssl\spec\win64\lib\dynamic\libcrypto.lib" "C:\Program Files\Eiffel Software\EiffelStudio 25.02 Standard\C_library\openssl\spec\win64\lib\dynamic\libssl.lib" "C:\Program Files\Eiffel Software\EiffelStudio 25.02 Standard\library\cURL\spec\msc_vc140\win64\lib\mteiffel_curl.lib" "c:\program files\eiffel software\eiffelstudio 25.02 standard\contrib\library\web\framework\ewf\libfcgi\spec\lib\win64\msc_vc140\libfcgi.lib" Mswsock.lib 
+USER32.lib WS2_32.lib ADVAPI32.lib GDI32.lib SHELL32.lib MSIMG32.lib COMDLG32.lib UUID.lib OLE32.lib OLEAUT32.lib COMCTL32.lib MPR.LIB SHLWAPI.LIB WINSPOOL.LIB 
+simple_chat.res 
+E2\Eobj2.lib E1\eparents.obj E1\einit.obj E1\ececil.obj E1\evisib.obj 
+E1\enames.obj E1\eskelet.obj E1\eplug.obj E1\esize.obj E1\epoly.obj 
+E1\eref.obj E1\eoption.obj C30\Cobj30.lib C29\Cobj29.lib C28\Cobj28.lib 
+C27\Cobj27.lib C26\Cobj26.lib C25\Cobj25.lib C24\Cobj24.lib C23\Cobj23.lib 
+C22\Cobj22.lib C21\Cobj21.lib C20\Cobj20.lib C19\Cobj19.lib C18\Cobj18.lib 
+C17\Cobj17.lib C16\Cobj16.lib C15\Cobj15.lib C14\Cobj14.lib C13\Cobj13.lib 
+C12\Cobj12.lib C11\Cobj11.lib C10\Cobj10.lib C9\Cobj9.lib C8\Cobj8.lib 
+C7\Cobj7.lib C6\Cobj6.lib C5\Cobj5.lib C4\Cobj4.lib C3\Cobj3.lib 
+C2\Cobj2.lib C1\Cobj1.lib 
+C compilation completed
+Event logged.
+
+[CLI] Closing oracle...
+[CLI] Done.
+✓ Built: EIFGENs/simple_chat_tests/F_code/simple_chat.exe (0s ago)
+
+# Assault run: 22 passed, 0 failed (15 real tests on data classes and contract-support engines, 1 SCOOP consumer, 6 skeletal TODO Phase 5)
+
+ECF Dependency Audit:
+- ISE allowed: base (MUTEX is in EiffelBase; no thread library needed), testing (tests target only)
+- simple_* used: simple_mml, simple_json, simple_datetime, simple_logger, simple_encryption (2.0.0), simple_uuid, simple_sql, simple_process, simple_base64, simple_encoding, simple_web, simple_ai_client; client target adds simple_shell, simple_browser
+- Violations: none. No WSF_*/EWF type appears in simple_chat; EWF is reached only through simple_web.
+- Gaps identified: simple_web needs streaming (chunked) responses, multipart uploads and cookie helpers (Spike A lives there); simple_winhttp (promote OCR_HTTP); simple_process wait_for_exit/kill; SHELL_TRAY in simple_shell; SSE attributes in simple_htmx; CLAUDE_CODE_CLIENT --json-schema.
+- Warnings: zero. One obsolete implicit as_string_8 in simple_web's SIMPLE_WEB_SERVER_REQUEST.method was fixed at its source (D:\prod\simple_web, uncommitted).
+- Client target (simple_chat_client) written, not yet compiled: waits on SHELL_TRAY.
+
+Classes: 56 library, 10 application (5 server incl. ops, 5 client), 4 test = 70
+
+# Status: PASS

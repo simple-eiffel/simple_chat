@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<system xmlns="http://www.eiffel.com/developers/xml/configuration-1-23-0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.eiffel.com/developers/xml/configuration-1-23-0 http://www.eiffel.com/developers/xml/configuration-1-23-0.xsd" name="simple_chat" uuid="5C4A7E2B-91D3-4F60-8B1E-2A6F0D9C3E71" library_target="simple_chat">
+	<description>simple_chat - a standalone group chat: Eiffel server, Eiffel client, addressable AI and tool participants</description>
+	<!-- Phase 1 (contracts). simple_* first: the only ISE library is base (MUTEX is in EiffelBase).
+	     EWF is reached only through simple_web; no WSF_* type appears in this project. -->
+	<target name="simple_chat">
+		<root all_classes="true"/>
+		<file_rule>
+			<exclude>/EIFGENs$</exclude>
+			<exclude>/\..*$</exclude>
+			<exclude>/apps$</exclude>
+			<exclude>/testing$</exclude>
+			<exclude>/dist$</exclude>
+		</file_rule>
+		<option warning="warning">
+			<assertions precondition="true" postcondition="true" check="true" invariant="true" loop="true" supplier_precondition="true"/>
+		</option>
+		<setting name="console_application" value="true"/>
+		<setting name="dead_code_removal" value="feature"/>
+		<capability>
+			<concurrency support="scoop" use="thread"/>
+			<void_safety support="all"/>
+		</capability>
+		<!-- ISE allowed -->
+		<library name="base" location="$ISE_LIBRARY\library\base\base.ecf"/>
+		<!-- simple_* -->
+		<library name="simple_mml" location="$SIMPLE_EIFFEL/simple_mml/simple_mml.ecf"/>
+		<library name="simple_json" location="$SIMPLE_EIFFEL/simple_json/simple_json.ecf"/>
+		<library name="simple_datetime" location="$SIMPLE_EIFFEL/simple_datetime/simple_datetime.ecf"/>
+		<library name="simple_logger" location="$SIMPLE_EIFFEL/simple_logger/simple_logger.ecf"/>
+		<library name="simple_encryption" location="$SIMPLE_EIFFEL/simple_encryption/simple_encryption.ecf"/>
+		<library name="simple_uuid" location="$SIMPLE_EIFFEL/simple_uuid/simple_uuid.ecf"/>
+		<library name="simple_sql" location="$SIMPLE_EIFFEL/simple_sql/simple_sql.ecf"/>
+		<library name="simple_process" location="$SIMPLE_EIFFEL/simple_process/simple_process.ecf"/>
+		<library name="simple_base64" location="$SIMPLE_EIFFEL/simple_base64/simple_base64.ecf"/>
+		<library name="simple_encoding" location="$SIMPLE_EIFFEL/simple_encoding/simple_encoding.ecf"/>
+		<library name="simple_web" location="$SIMPLE_EIFFEL/simple_web/simple_web.ecf"/>
+		<library name="simple_ai_client" location="$SIMPLE_EIFFEL/simple_ai_client/simple_ai_client.ecf"/>
+		<cluster name="src" location=".\src\" recursive="true"/>
+	</target>
+	<target name="simple_chat_server" extends="simple_chat">
+		<root class="SERVER_APP" feature="make"/>
+		<setting name="console_application" value="true"/>
+		<cluster name="server" location=".\apps\server\" recursive="true"/>
+	</target>
+	<!-- The thick client (intent-v3, D-015): simple_widgets, no browser. The UI-free client stack
+	     (CHAT_CLIENT, EVENT_POLLER, CHAT_PRESENTER, ...) lives in the library's src\client\ cluster and is
+	     assaulted by the tests target; this target adds the window, the tray and WinHTTP. It compiles once
+	     SHELL_TRAY (simple_shell) and simple_winhttp land - dependency tasks. -->
+	<target name="simple_chat_client" extends="simple_chat">
+		<root class="CLIENT_APP" feature="make"/>
+		<setting name="console_application" value="false"/>
+		<library name="simple_shell" location="$SIMPLE_EIFFEL/simple_shell/simple_shell.ecf"/>
+		<library name="simple_widgets" location="$SIMPLE_EIFFEL/simple_widgets/simple_widgets.ecf"/>
+		<cluster name="client" location=".\apps\client\" recursive="true"/>
+	</target>
+	<target name="simple_chat_tests" extends="simple_chat">
+		<root class="TEST_APP" feature="make"/>
+		<setting name="console_application" value="true"/>
+		<library name="simple_testing" location="$SIMPLE_EIFFEL/simple_testing/simple_testing.ecf"/>
+		<library name="testing" location="$ISE_LIBRARY\library\testing\testing.ecf"/>
+		<cluster name="server" location=".\apps\server\" recursive="true"/>
+		<cluster name="tests" location=".\testing\" recursive="true"/>
+	</target>
+</system>
