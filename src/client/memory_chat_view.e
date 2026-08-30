@@ -1,5 +1,10 @@
 note
-	description: "CHAT_VIEW that remembers what it was told: the presenter's test double."
+	description: "[
+		CHAT_VIEW that remembers what it was told: the presenter's test
+		double. `set_flips_on_show' makes every shown event toggle
+		`is_foreground' - the assault's way of bringing the window to the
+		front, or sending it back, in the middle of a pump.
+	]"
 	author: "Larry Rix"
 
 class
@@ -22,19 +27,17 @@ feature {NONE} -- Initialization
 		ensure
 			nothing_shown: shown_count = 0
 			in_front: is_foreground
+			steady: not flips_on_show
 		end
 
 feature -- Model Queries (for MML postconditions)
 
 	shown_model: MML_SEQUENCE [INTEGER_64]
-			-- Ids shown, in order.
 		do
 			create Result
 			across shown_ids as ic loop
 				Result := Result & ic
 			end
-		ensure
-			same_count: Result.count = shown_ids.count
 		end
 
 feature -- Access
@@ -55,6 +58,9 @@ feature -- Status report
 
 	is_foreground: BOOLEAN
 
+	flips_on_show: BOOLEAN
+			-- Does each `show_event' toggle `is_foreground'?
+
 feature -- Element change
 
 	set_foreground (a_value: BOOLEAN)
@@ -62,6 +68,13 @@ feature -- Element change
 			is_foreground := a_value
 		ensure
 			set: is_foreground = a_value
+		end
+
+	set_flips_on_show (a_value: BOOLEAN)
+		do
+			flips_on_show := a_value
+		ensure
+			set: flips_on_show = a_value
 		end
 
 feature -- Basic operations
@@ -72,8 +85,12 @@ feature -- Basic operations
 			if a_mine then
 				mine_count := mine_count + 1
 			end
+			if flips_on_show then
+				is_foreground := not is_foreground
+			end
 		ensure then
-			appended: shown_model |=| ((old shown_model) & a_event.id)
+			flipped: flips_on_show implies is_foreground = not old is_foreground
+			steady: not flips_on_show implies is_foreground = old is_foreground
 		end
 
 	show_status (a_text: READABLE_STRING_GENERAL)
@@ -84,6 +101,8 @@ feature -- Basic operations
 	show_error (a_message: READABLE_STRING_GENERAL)
 		do
 			errors.extend (a_message.to_string_32)
+		ensure then
+			kept: errors.count = old errors.count + 1
 		end
 
 	show_connection (a_endpoint: CHAT_ENDPOINT; a_connected: BOOLEAN)
