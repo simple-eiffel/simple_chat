@@ -3,8 +3,11 @@ note
 		What the client remembers, in %APPDATA%\simple_chat\client.toml:
 		the servers to try in order (the primary first, then any standby
 		hosts - D-017), whether to look for a local service first and on
-		which port, window placement. Never the password; the session
-		token only under DPAPI (intent-v3 Q17), never in clear.
+		which port, window placement. Never the password. The session
+		token is never persisted in clear: if a remembered session ever
+		exists it will be DPAPI ciphertext produced inside CHAT_CLIENT
+		(Phase 4, dependency task DPAPI in simple_encryption), and no
+		query yields the token in clear (intent-v3 Q17).
 
 		Every server URL passed CHAT_URL_RULES on the way in (https, or
 		loopback http for tests; nothing that merely starts like either),
@@ -170,6 +173,7 @@ feature -- Element change
 			standbys_kept: across old (server_urls.twin) as u all has_url (u) end
 			preference_kept: prefers_local = old prefers_local
 			port_kept: local_port = old local_port
+			window_kept: window_x = old window_x and window_y = old window_y and window_width = old window_width and window_height = old window_height
 		end
 
 	set_prefers_local (a_value: BOOLEAN)

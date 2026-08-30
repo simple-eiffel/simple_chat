@@ -10,11 +10,19 @@ note
 		the inbox.
 
 		Rules it owns: attribution (who sent it, is it mine, "system" for
-		sender 0), the unread count (grows only for others' messages,
+		sender 0 - and " (@username)" after any member's name that would
+		mislead on its own: a twin in the roster, or the reserved "system"
+		itself), the unread count (grows only for others' messages,
 		never system events, while the window is not in front; foreground
 		clears it), the badge (touched only when it would change), the
-		status line, and the connection error - shown once per outage
-		(`reported_outage'), not once per tick and not never.
+		status line, the connection state (`show_connection', revised
+		exactly when an outage begins and when it ends), the connection
+		error - shown once per outage (`reported_outage'), not once per
+		tick and not never - and the end of the session: when the inbox
+		says the poller met a 401 (`session_lost'), `pump' shows the
+		server's reason once, closes the room and drops the GUI client's
+		token without an exchange (the server has already rejected it);
+		the window then asks for a login and `open_room' starts afresh.
 	]"
 	author: "Larry Rix"
 
@@ -38,6 +46,7 @@ feature {NONE} -- Initialization
 			no_room: not is_room_open
 			nothing_unread: unread = 0
 			nothing_reported: not reported_outage
+			session_alive: not session_lost
 		end
 
 feature -- Model Queries (for MML postconditions)
@@ -70,13 +79,14 @@ feature -- Access
 
 	name_of (a_sender_id: INTEGER_64): STRING_32
 			-- The member's display name; "system" for sender 0; "#<id>" until the roster
-			-- arrives; with " (@username)" appended when another member shows the same name.
+			-- arrives; with " (@username)" appended when the name would mislead on its own -
+			-- another member shows the same name (any case), or it reads as the reserved "system".
 		do
 			if a_sender_id = 0 then
 				Result := System_name.twin
 			elseif attached members [a_sender_id] as m then
 				Result := m.display_name.twin
-				if has_name_twin (a_sender_id) then
+				if is_ambiguous_name (a_sender_id) then
 					Result.append ({STRING_32} " (")
 					Result.append (m.mention)
 					Result.append_character (')')
@@ -88,7 +98,8 @@ feature -- Access
 			named: not Result.is_empty
 			system_named: a_sender_id = 0 implies Result.same_string (System_name)
 			unknown_by_id: (a_sender_id /= 0 and not knows (a_sender_id)) implies Result.same_string ({STRING_32} "#" + a_sender_id.out)
-			disambiguated: (a_sender_id /= 0 and knows (a_sender_id) and has_name_twin (a_sender_id)) implies Result.ends_with ({STRING_32} ")")
+			disambiguated: (a_sender_id /= 0 and knows (a_sender_id) and is_ambiguous_name (a_sender_id)) implies Result.ends_with ({STRING_32} ")")
+			never_system_alike: (a_sender_id /= 0 and knows (a_sender_id)) implies not Result.as_lower.same_string (System_name)
 		end
 
 feature -- Status report
@@ -101,6 +112,10 @@ feature -- Status report
 	reported_outage: BOOLEAN
 			-- Has the current outage been shown? Reset when polling recovers.
 
+	session_lost: BOOLEAN
+			-- Did the last pump learn the session is dead (the poller met a 401)? The room is then
+			-- closed and the client logged out; the window must ask for a login before `open_room'.
+
 	knows (a_sender_id: INTEGER_64): BOOLEAN
 			-- Is `a_sender_id' in the roster?
 		do
@@ -108,11 +123,30 @@ feature -- Status report
 		end
 
 	has_name_twin (a_member_id: INTEGER_64): BOOLEAN
-			-- Does another member in the roster show the same display name?
+			-- Does another member in the roster show the same display name (compared without regard to case)?
 		do
 			if attached members [a_member_id] as m then
-				Result := across members as other some (other.id /= m.id and then other.display_name.same_string (m.display_name)) end
+				Result := across members as other some (other.id /= m.id and then other.display_name.as_lower.same_string (m.display_name.as_lower)) end
 			end
+		ensure
+			known_only: Result implies knows (a_member_id)
+		end
+
+	is_system_alike (a_member_id: INTEGER_64): BOOLEAN
+			-- Does the member's display name read as the reserved `System_name' (without regard to case)?
+		do
+			Result := attached members [a_member_id] as m and then m.display_name.as_lower.same_string (System_name)
+		ensure
+			known_only: Result implies knows (a_member_id)
+		end
+
+	is_ambiguous_name (a_member_id: INTEGER_64): BOOLEAN
+			-- Would the member's display name mislead on its own: a twin in the roster, or the reserved "system"?
+		do
+			Result := has_name_twin (a_member_id) or is_system_alike (a_member_id)
+		ensure
+			definition: Result = (has_name_twin (a_member_id) or is_system_alike (a_member_id))
+			known_only: Result implies knows (a_member_id)
 		end
 
 feature -- Element change
@@ -165,12 +199,15 @@ feature -- Basic operations
 			room_id := a_room_id
 			last_seen_id := a_since_id
 			reported_outage := False
+			session_lost := False
 			view.show_connection (client.endpoint, True)
 		ensure
 			open: is_room_open
 			room_set: room_id = a_room_id
 			from_there: last_seen_id = a_since_id
 			inbox_kept: inbox = a_inbox
+			session_fresh: not session_lost
+			connected_shown: view.is_connected
 			unread_kept: unread = old unread
 			shown_kept: view.shown_model |=| old view.shown_model
 		end
@@ -206,14 +243,15 @@ feature -- Basic operations
 		end
 
 	pump
-			-- Show every page the poller left in the inbox; keep the unread count, the badge
-			-- and the connection error honest.
+			-- Show every page the poller left in the inbox; keep the unread count, the badge, the
+			-- connection state and the connection error honest; and when the inbox says the session
+			-- is lost, show why once, close the room and forget the session.
 		require
 			open: is_room_open
 			logged_in: client.is_logged_in
 		local
 			l_bytes: detachable STRING_8
-			l_outage: detachable STRING_32
+			l_outage, l_lost: detachable STRING_32
 		do
 			if attached inbox as b then
 				from
@@ -232,13 +270,21 @@ feature -- Basic operations
 					l_bytes := take_from (b)
 				end
 				l_outage := outage_from (b)
+				l_lost := session_lost_from (b)
 			end
-			if attached l_outage as o then
+			if attached l_lost as l_why then
+				view.show_error (l_why)
+				session_lost := True
+				close_room
+				client.forget_session
+			elseif attached l_outage as o then
 				if not reported_outage then
 					view.show_error (o)
+					view.show_connection (client.endpoint, False)
 					reported_outage := True
 				end
-			else
+			elseif reported_outage then
+				view.show_connection (client.endpoint, True)
 				reported_outage := False
 			end
 			if view.is_foreground then
@@ -256,8 +302,10 @@ feature -- Basic operations
 			badge_matches: notifier.unread = unread
 			last_seen_monotonic: last_seen_id >= old last_seen_id
 			pumped_monotonic: pages_pumped >= old pages_pumped
-			still_open: is_room_open
-			room_kept: room_id = old room_id
+			lost_closes: session_lost implies (not is_room_open and not client.is_logged_in)
+			still_open: not session_lost implies is_room_open
+			room_kept: not session_lost implies room_id = old room_id
+			connection_shown: not session_lost implies view.is_connected = not reported_outage
 		end
 
 	send (a_text: READABLE_STRING_GENERAL)
@@ -365,9 +413,22 @@ feature {NONE} -- The inbox (each a short, separate call)
 			end
 		end
 
+	session_lost_from (a_inbox: separate EVENT_INBOX): detachable STRING_32
+			-- The server's reason when the poller met a 401 (the outage it reported with it), copied
+			-- here; Void while the session is alive.
+		do
+			if a_inbox.is_session_lost and then attached a_inbox.outage as o then
+				create Result.make_from_separate (o)
+			end
+		ensure
+			lost_iff_given: (Result /= Void) = a_inbox.is_session_lost
+		end
+
 	stop_inbox (a_inbox: separate EVENT_INBOX)
 		do
 			a_inbox.stop
+		ensure
+			stopped: a_inbox.is_stopped
 		end
 
 feature {NONE} -- Implementation
@@ -387,5 +448,7 @@ invariant
 	model_consistent: members_model.count = members.count
 	open_implies_session: is_room_open implies client.is_logged_in
 	room_iff_open: is_room_open = (room_id > 0)
+	lost_is_closed: session_lost implies not is_room_open
+	connection_honest: is_room_open implies view.is_connected = not reported_outage
 
 end

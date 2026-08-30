@@ -6,7 +6,9 @@ note
 		loopback (never plaintext - a precondition at creation and an
 		invariant after), or into another CHAT_CLIENT on the poller's
 		processor (`hand_session_to'). Never in a URL, never in a body,
-		never through a public query. A token is exactly 64 lowercase hex
+		never through a public query; dropped by `logout' (which tells
+		the server) or by `forget_session' (which does not - the server
+		has already rejected it). A token is exactly 64 lowercase hex
 		digits - the shape SESSION_ISSUER mints - so nothing a hostile
 		server sends can be folded into a header.
 
@@ -100,6 +102,21 @@ feature -- Session
 			forgotten: me = Void
 		end
 
+	forget_session
+			-- Drop the session without telling the server: it has already rejected the token (a 401
+			-- met by the poller), so there is nothing to revoke and no exchange is made.
+		require
+			logged_in: is_logged_in
+		do
+			create token.make_empty
+			me := Void
+		ensure
+			logged_out: not is_logged_in
+			forgotten: me = Void
+			no_exchange: transport.exchange_count = old transport.exchange_count
+			endpoint_kept: endpoint = old endpoint
+		end
+
 	hand_session_to (a_other: separate CHAT_CLIENT)
 			-- Copy this session into `a_other' (the poller's client on its own processor).
 		require
@@ -117,6 +134,9 @@ feature {CHAT_CLIENT} -- Session transfer
 
 	adopt_session (a_token: separate READABLE_STRING_8; a_member: separate CHAT_MEMBER)
 			-- Take over a session copied from another CHAT_CLIENT: the token and `me' are copied here.
+			-- Once only: a live session is never replaced under a poller's feet.
+		require
+			logged_out: not is_logged_in
 		local
 			l_token, l_username: STRING_8
 			l_display: STRING_32
@@ -247,11 +267,11 @@ feature -- Validation (contract support)
 
 	is_hex_64 (a_text: READABLE_STRING_8): BOOLEAN
 			-- Exactly `Token_length' lowercase hex digits - the shape SESSION_ISSUER mints,
-			-- and nothing a header could be broken with.
+			-- and nothing a header could be broken with. CHAT_JSON's rule, the one choice.
 		do
-			Result := a_text.count = Token_length
-				and then across a_text as c all ((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f')) end
+			Result := codec.json.is_hex_64 (a_text)
 		ensure
+			definition: Result = codec.json.is_hex_64 (a_text)
 			length: Result implies a_text.count = Token_length
 		end
 
@@ -392,12 +412,13 @@ feature {NONE} -- Requests
 		end
 
 	salvaged_code (a_body: READABLE_STRING_8): STRING_8
-			-- The "code" of an error reply whose message was unusable, when it is a short printable
-			-- ASCII word; else "unavailable".
+			-- The "code" of an error reply whose message was unusable, when it is one CHAT_ERROR
+			-- knows; else "unavailable". Never anything CHAT_ERROR.make would refuse.
 		do
 			if attached codec.object (a_body) as o and then attached o.string_item ({CHAT_JSON}.Key_code) as c
 				and then not c.is_empty and then c.count <= Code_maximum
 				and then across c as ch all (ch.natural_32_code >= 33 and ch.natural_32_code <= 126) end
+				and then error_probe.is_known_code (c.to_string_8)
 			then
 				Result := c.to_string_8
 			else
@@ -405,6 +426,13 @@ feature {NONE} -- Requests
 			end
 		ensure
 			given: not Result.is_empty
+			known: error_probe.is_known_code (Result)
+		end
+
+	error_probe: CHAT_ERROR
+			-- An instance to ask `is_known_code' of (it is not a class feature).
+		once
+			create Result.make ({CHAT_ERROR}.Code_unavailable, "probe", 503)
 		end
 
 	Code_maximum: INTEGER = 32

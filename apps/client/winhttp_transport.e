@@ -4,7 +4,11 @@ note
 		OCR_HTTP): HTTPS through SChannel with no redistributable, request
 		headers, a receive timeout long enough for the long-poll, raw
 		bytes for uploads. Phase 4 - the dependency task names exactly
-		what OCR_HTTP lacks today (intent-v3 dependency audit).
+		what OCR_HTTP lacks today (intent-v3 dependency audit). Redirects
+		are never followed: the session must set
+		WINHTTP_OPTION_REDIRECT_POLICY to WINHTTP_OPTION_REDIRECT_POLICY_NEVER,
+		because WinHTTP's default follows a 3xx and would re-send the
+		Authorization header to whatever host the reply names.
 	]"
 	author: "Larry Rix"
 
@@ -35,7 +39,10 @@ feature -- Basic operations
 			a_timeout_seconds: INTEGER): HTTP_REPLY
 		do
 			exchange_count := exchange_count + 1
-			-- Implementation in Phase 4 (simple_winhttp)
+			-- Implementation in Phase 4 (simple_winhttp). On the session handle, before any request:
+			-- WinHttpSetOption (WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_NEVER),
+			-- so that a 3xx comes back as the reply (HTTP_TRANSPORT's contract) and the bearer header
+			-- is never re-sent to a redirect target.
 			create Result.make_failed ("WINHTTP_TRANSPORT: not implemented (Phase 1 skeleton)")
 		end
 

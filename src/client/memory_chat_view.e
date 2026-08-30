@@ -4,6 +4,9 @@ note
 		double. `set_flips_on_show' makes every shown event toggle
 		`is_foreground' - the assault's way of bringing the window to the
 		front, or sending it back, in the middle of a pump.
+		`connection_count' counts the `show_connection' calls, so the
+		assault can prove the presenter revises the connection state only
+		when it changes.
 	]"
 	author: "Larry Rix"
 
@@ -28,6 +31,7 @@ feature {NONE} -- Initialization
 			nothing_shown: shown_count = 0
 			in_front: is_foreground
 			steady: not flips_on_show
+			nothing_said_of_the_server: not is_connected and connection_count = 0
 		end
 
 feature -- Model Queries (for MML postconditions)
@@ -51,12 +55,17 @@ feature -- Access
 	errors: ARRAYED_LIST [STRING_32]
 	status: STRING_32
 	mine_count: INTEGER
-	connected: BOOLEAN
 	endpoint: detachable CHAT_ENDPOINT
+
+	connection_count: INTEGER
+			-- `show_connection' calls so far.
 
 feature -- Status report
 
 	is_foreground: BOOLEAN
+
+	is_connected: BOOLEAN
+			-- What the last `show_connection' said; False until one.
 
 	flips_on_show: BOOLEAN
 			-- Does each `show_event' toggle `is_foreground'?
@@ -108,10 +117,15 @@ feature -- Basic operations
 	show_connection (a_endpoint: CHAT_ENDPOINT; a_connected: BOOLEAN)
 		do
 			endpoint := a_endpoint
-			connected := a_connected
+			is_connected := a_connected
+			connection_count := connection_count + 1
+		ensure then
+			counted: connection_count = old connection_count + 1
+			endpoint_kept: endpoint = a_endpoint
 		end
 
 invariant
 	model_consistent: shown_model.count = shown_ids.count
+	connections_non_negative: connection_count >= 0
 
 end

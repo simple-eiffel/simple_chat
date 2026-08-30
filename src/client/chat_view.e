@@ -6,7 +6,9 @@ note
 		assault. The presenter talks only to this. `shown_model' - the ids
 		shown, in order - is part of the contract so that a presenter's
 		pump can be proved to show each event once and in order without
-		reaching into a poller.
+		reaching into a poller; `is_connected' - what the window last
+		said about the server - so that the presenter can be proved to
+		revise it when an outage begins and when it ends.
 	]"
 	author: "Larry Rix"
 
@@ -35,6 +37,11 @@ feature -- Status report
 
 	is_foreground: BOOLEAN
 			-- Is the room window in front of the member right now?
+		deferred
+		end
+
+	is_connected: BOOLEAN
+			-- What the window last said about the server: answering, or not (the last `show_connection').
 		deferred
 		end
 
@@ -70,6 +77,7 @@ feature -- Basic operations
 		deferred
 		ensure
 			events_unchanged: shown_model |=| old shown_model
+			recorded: is_connected = a_connected
 		end
 
 end

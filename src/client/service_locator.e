@@ -11,10 +11,15 @@ note
 		way: the endpoint is the only difference between the host's GUI
 		and a friend's.
 
-		Every candidate is a CHAT_ENDPOINT before it is probed, so the
-		result is secure by construction and no path is concatenated
-		outside `url_for'. `probe' is a command; `last_probe_alive' and
-		`last_probe_status' say what it found.
+		"Answers" means a 2xx whose body is the health reply CHAT_API
+		emits (`is_health_reply': a JSON object carrying "store" as a
+		boolean and "last_event_id" as a number) - a foreign service that
+		happens to listen on the port and says 200 to anything is not the
+		chat server and must never receive the login. Every candidate is
+		a CHAT_ENDPOINT before it is probed, so the result is secure by
+		construction and no path is concatenated outside `url_for'.
+		`probe' is a command; `last_probe_alive', `last_probe_status'
+		and `last_probe_body' say what it found.
 	]"
 	author: "Larry Rix"
 
@@ -29,6 +34,8 @@ feature {NONE} -- Initialization
 	make (a_transport: HTTP_TRANSPORT)
 		do
 			transport := a_transport
+			create codec.make
+			create last_probe_body.make_empty
 		ensure
 			set: transport = a_transport
 			nothing_probed: probe_count = 0
@@ -43,13 +50,27 @@ feature -- Access
 	last_probe_status: INTEGER
 			-- HTTP status of the last probe; 0 before any probe, or when it failed at the transport.
 
+	last_probe_body: STRING_8
+			-- What the last probe answered with; empty before any probe, or when it failed at the transport.
+
 feature -- Status report
 
 	found_alive: BOOLEAN
 			-- Did the last `locate' end on a server that answered /health?
 
 	last_probe_alive: BOOLEAN
-			-- Did the last probe answer 2xx?
+			-- Did the last probe answer 2xx with a health reply?
+
+	is_health_reply (a_body: READABLE_STRING_8): BOOLEAN
+			-- Does `a_body' decode to the object CHAT_API.health emits: "store" a boolean and
+			-- "last_event_id" a number? Decoded through CLIENT_CODEC, so never an exception.
+		do
+			Result := attached codec.object (a_body) as o
+				and then attached o.item (Health_key_store) as s and then s.is_boolean
+				and then attached o.item (Health_key_last_event_id) as n and then n.is_number
+		ensure
+			an_object: Result implies attached codec.object (a_body)
+		end
 
 feature -- Basic operations
 
@@ -61,6 +82,7 @@ feature -- Basic operations
 		do
 			probe_count := 0
 			last_probe_status := 0
+			create last_probe_body.make_empty
 			last_probe_alive := False
 			if a_config.prefers_local then
 				create l_candidate.make (a_config.local_url)
@@ -96,7 +118,8 @@ feature -- Basic operations
 		end
 
 	probe (a_endpoint: CHAT_ENDPOINT)
-			-- GET /health at `a_endpoint' within `Probe_timeout_seconds'; `last_probe_alive' says whether it answered 2xx.
+			-- GET /health at `a_endpoint' within `Probe_timeout_seconds'; `last_probe_alive' says
+			-- whether it answered 2xx with a health reply (`is_health_reply').
 		local
 			l_reply: HTTP_REPLY
 			l_headers: HASH_TABLE [STRING_8, STRING_8]
@@ -106,10 +129,12 @@ feature -- Basic operations
 			l_reply := transport.send ("GET", a_endpoint.url_for (Health_path), l_headers, Void, Probe_timeout_seconds)
 			probe_count := probe_count + 1
 			last_probe_status := l_reply.status
-			last_probe_alive := l_reply.is_success
+			last_probe_body := l_reply.body
+			last_probe_alive := l_reply.is_success and then is_health_reply (l_reply.body)
 		ensure
 			probed: probe_count = old probe_count + 1
-			alive_definition: last_probe_alive = (last_probe_status >= 200 and last_probe_status <= 299)
+			alive_definition: last_probe_alive = ((last_probe_status >= 200 and last_probe_status <= 299) and is_health_reply (last_probe_body))
+			shape_checked: last_probe_alive implies is_health_reply (last_probe_body)
 		end
 
 feature -- Constants
@@ -117,13 +142,19 @@ feature -- Constants
 	Health_path: STRING_8 = "/health"
 	Probe_timeout_seconds: INTEGER = 2
 
+	Health_key_store: STRING_32 = "store"
+			-- As CHAT_API.health writes it - the wire's only health encoder.
+	Health_key_last_event_id: STRING_32 = "last_event_id"
+			-- As CHAT_API.health writes it.
+
 feature {NONE} -- Implementation
 
 	transport: HTTP_TRANSPORT
+	codec: CLIENT_CODEC
 
 invariant
 	status_range: last_probe_status = 0 or (last_probe_status >= 200 and last_probe_status <= 599)
-	alive_is_2xx: last_probe_alive = (last_probe_status >= 200 and last_probe_status <= 299)
+	alive_is_2xx: last_probe_alive implies (last_probe_status >= 200 and last_probe_status <= 299)
 	probes_non_negative: probe_count >= 0
 
 end

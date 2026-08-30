@@ -43,8 +43,11 @@ feature {NONE} -- Initialization
 			create client.make (l_transport, l_endpoint)
 			-- Implementation in Phase 4: login dialog (SW_DIALOG) -> client.login; presenter over
 			-- SW_CHAT_VIEW + TRAY_NOTIFIER; start_polling (presenter, room, since); the window timer
-			-- calls presenter.pump every tick; on close: presenter.log_out (the inbox is stopped and
-			-- the host's loop ends on its next poll), then l_config.save.
+			-- calls presenter.pump every tick and, when presenter.session_lost is set afterwards (the
+			-- server answered 401: the room is closed and the client logged out with no exchange),
+			-- shows the login dialog again and start_polling from presenter.last_seen_id; on close:
+			-- presenter.log_out while still logged in (the inbox is stopped and the host's loop ends
+			-- on its next poll), then l_config.save.
 		end
 
 feature -- Access

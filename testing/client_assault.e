@@ -185,6 +185,7 @@ feature -- CHAT_CLIENT: the token and the wire
 			c.hand_session_to (c2)
 			assert ("session copied", c2.is_logged_in and attached c2.me as m and then (m.id = 5 and m.username.same_string ("larry") and m.display_name.same_string ({STRING_32} "Larry") and m.is_admin))
 			assert ("the first client keeps its session", c.is_logged_in and attached c.me as m0 and then m0.id = 5)
+			assert ("a second hand-over onto a live session is refused", handover_is_refused (c, c2) and c2.is_logged_in and c.is_logged_in)
 			t2.script (200, wire_page ("", ""))
 			l_page := c2.wait_for_events (1, 0, 10, 0)
 			assert ("the second client polls with the same bearer", l_page.is_success and t2.last_request.header ("Authorization").same_string ("Bearer " + hex64))
@@ -339,17 +340,17 @@ feature -- SERVICE_LOCATOR
 			create cfg.make_defaults
 			cfg.set_only_server_url ("https://rixchat.duckdns.org")
 			cfg.add_server_url ("https://sue-chat.duckdns.org")
-			t.script (200, "{%"store%":true}")
+			t.script (200, health_reply)
 			e := l.locate (cfg)
 			assert ("local wins when alive", e.is_local and l.probe_count = 1 and l.last_probe_alive and e.base_url.same_string ("http://127.0.0.1:8080"))
 			assert ("health probed through url_for", t.last_request.url.same_string ("http://127.0.0.1:8080/health") and t.last_request.timeout_seconds = 2)
 			t.script_failure ({STRING_32} "refused")
-			t.script (200, "{%"store%":true}")
+			t.script (200, health_reply)
 			e := l.locate (cfg)
 			assert ("primary when local is dead", not e.is_local and e.base_url.same_string ("https://rixchat.duckdns.org") and l.probe_count = 2)
 			t.script_failure ({STRING_32} "refused")
 			t.script_failure ({STRING_32} "no route to host")
-			t.script (200, "{%"store%":true}")
+			t.script (200, health_reply)
 			e := l.locate (cfg)
 			assert ("standby when primary is dark", e.base_url.same_string ("https://sue-chat.duckdns.org") and l.found_alive and l.probe_count = 3)
 			t.script_failure ({STRING_32} "a")
@@ -359,8 +360,9 @@ feature -- SERVICE_LOCATOR
 			assert ("primary reported when everything is dark", not l.found_alive and not l.last_probe_alive and e.base_url.same_string ("https://rixchat.duckdns.org"))
 			cfg.set_prefers_local (False)
 			t.script (200, "ok")
+			t.script_failure ({STRING_32} "d")
 			e := l.locate (cfg)
-			assert ("no local probe when not preferred", l.probe_count = 1 and not e.is_local and l.last_probe_status = 200)
+			assert ("no local probe when not preferred, and a bare 200 is not alive: on to the standby", l.probe_count = 2 and not e.is_local and not l.found_alive and e.base_url.same_string ("https://rixchat.duckdns.org") and t.requests [t.exchange_count - 1].url.same_string ("https://rixchat.duckdns.org/health") and t.last_request.url.same_string ("https://sue-chat.duckdns.org/health"))
 		end
 
 	test_locator_with_no_server_configured
@@ -563,7 +565,7 @@ feature -- CHAT_PRESENTER
 			create b.make
 			pr.remember (create {CHAT_MEMBER}.make (9, "nick", {STRING_32} "Nick", False, False))
 			pr.open_room (1, 0, b)
-			assert ("open", pr.is_room_open and pr.room_id = 1 and v.connected)
+			assert ("open", pr.is_room_open and pr.room_id = 1 and v.is_connected and v.connection_count = 1)
 			v.set_foreground (False)
 			b.put (wire_page (wire_message (1, 9, "hi larry") + "," + wire_message (2, 5, "my own echo"), ""))
 			pr.pump
@@ -753,6 +755,289 @@ feature -- CHAT_PRESENTER
 			assert ("garbage is an error, not an exception", v.errors.count = 3 and pr.members_model.count = 2)
 		end
 
+feature -- Phase 1c: the re-review's repairs
+
+	test_unknown_error_code_never_raises
+			-- NEW-1: a 4xx/5xx whose code CHAT_ERROR does not know and whose message is unusable
+			-- (missing, empty, not a string) is a result carrying "unavailable" and the status -
+			-- through CHAT_CLIENT and through the poller, where it was an uncaught precondition
+			-- violation of CHAT_ERROR.make.
+		local
+			l_transport: MEMORY_HTTP_TRANSPORT
+			l_client: CHAT_CLIENT
+			l_inbox: EVENT_INBOX
+			l_poller: EVENT_POLLER
+			l_page: CHAT_RESULT [CHAT_PAGE]
+		do
+			create l_transport.make
+			l_client := logged_in_client (l_transport)
+			l_transport.script (429, "{%"code%":%"throttled%"}")
+			l_page := l_client.events_since (1, 0, 50)
+			assert ("429 with an unknown code and no message", not l_page.is_success and is_error_status (l_page.error, 429) and attached l_page.error as e1 and then (e1.code.same_string ({CHAT_ERROR}.Code_unavailable) and e1.message.same_string ({STRING_32} "HTTP 429")))
+			l_transport.script (503, "{%"code%":%"maintenance%",%"message%":%"%"}")
+			l_page := l_client.events_since (1, 0, 50)
+			assert ("503 with an unknown code and an empty message", not l_page.is_success and is_error_status (l_page.error, 503) and attached l_page.error as e2 and then e2.code.same_string ({CHAT_ERROR}.Code_unavailable))
+			l_transport.script (401, "{%"code%":%"expired%",%"message%":42}")
+			l_page := l_client.events_since (1, 0, 50)
+			assert ("401 with a non-string message", not l_page.is_success and is_error_status (l_page.error, 401) and attached l_page.error as e3 and then e3.code.same_string ({CHAT_ERROR}.Code_unavailable))
+			l_transport.script (429, "{%"code%":%"rate_limited%"}")
+			l_page := l_client.events_since (1, 0, 50)
+			assert ("a known code without a message keeps the code", not l_page.is_success and attached l_page.error as e4 and then (e4.http_status = 429 and e4.code.same_string ({CHAT_ERROR}.Code_rate_limited)))
+			create l_inbox.make
+			create l_poller.make (l_client, 1, 0, l_inbox)
+			l_transport.script (429, "{%"code%":%"throttled%"}")
+			l_poller.poll_once (0)
+			assert ("the poller survives it as a failure", l_poller.consecutive_failures = 1 and l_poller.polls = 1 and l_poller.cursor = 0 and not l_poller.session_lost and is_error_status (l_poller.last_error, 429) and attached l_poller.last_error as e5 and then e5.code.same_string ({CHAT_ERROR}.Code_unavailable))
+			assert ("and the GUI hears of it", l_inbox.has_outage and attached l_inbox.outage as o and then o.same_string ({STRING_32} "HTTP 429"))
+			l_transport.script (503, "{%"code%":%"maintenance%",%"message%":%"%"}")
+			l_poller.poll_once (0)
+			assert ("twice", l_poller.consecutive_failures = 2 and is_error_status (l_poller.last_error, 503) and attached l_poller.last_error as e6 and then e6.code.same_string ({CHAT_ERROR}.Code_unavailable))
+			assert ("still logged in", l_client.is_logged_in and l_transport.exchange_count = 7)
+		end
+
+	test_poller_moves_nothing_once_the_inbox_is_stopped
+			-- NEW-2: the cursor follows the inbox, not the wire. After `stop' a page the server sent
+			-- is neither queued nor counted nor dropped by the poller (`deliver' answers False) and
+			-- the cursor stays, so a poller started later from `last_seen_id' asks for it again.
+		local
+			l_transport: MEMORY_HTTP_TRANSPORT
+			l_client: CHAT_CLIENT
+			l_inbox: EVENT_INBOX
+			l_poller: EVENT_POLLER
+		do
+			create l_transport.make
+			l_client := logged_in_client (l_transport)
+			create l_inbox.make
+			create l_poller.make (l_client, 1, 0, l_inbox)
+			l_transport.script (200, wire_page (wire_message (1, 5, "one") + "," + wire_message (2, 5, "two"), ""))
+			l_poller.poll_once (0)
+			assert ("running: taken and moved", l_poller.cursor = 2 and l_poller.delivered = 1 and l_inbox.count = 1 and l_inbox.dropped = 0)
+			l_inbox.stop
+			l_inbox.put ("a page from anyone else")
+			assert ("the inbox itself still refuses and counts after stop", l_inbox.dropped = 1 and l_inbox.count = 1)
+			l_transport.script (200, wire_page (wire_message (3, 5, "three"), ""))
+			l_poller.poll_once (0)
+			assert ("a success, but nothing moved", l_poller.polls = 2 and l_poller.consecutive_failures = 0 and l_poller.last_error = Void and l_poller.cursor = 2 and l_poller.delivered = 1)
+			assert ("nothing queued, nothing dropped by the poller", l_inbox.count = 1 and l_inbox.dropped = 1)
+			l_poller.run
+			assert ("run ends at once on a stopped inbox", l_poller.polls = 2)
+			assert ("the page the GUI had is still there", attached l_inbox.take as taken and then taken.has_substring ("%"id%":1"))
+		end
+
+	test_poller_quiet_floor_and_pause
+			-- NEW-3: `pause_seconds' is the backoff while failing, one second from the second quiet
+			-- poll in a row, and nothing when a page just came or the first quiet poll answered.
+		local
+			l_transport: MEMORY_HTTP_TRANSPORT
+			l_client: CHAT_CLIENT
+			l_inbox: EVENT_INBOX
+			l_poller: EVENT_POLLER
+		do
+			create l_transport.make
+			l_client := logged_in_client (l_transport)
+			create l_inbox.make
+			create l_poller.make (l_client, 1, 0, l_inbox)
+			assert ("fresh: eager", l_poller.pause_seconds = 0 and l_poller.quiet_polls = 0 and not l_poller.last_was_quiet)
+			l_transport.script (200, wire_page ("", ""))
+			l_poller.poll_once (25)
+			assert ("first quiet poll: still eager", l_poller.quiet_polls = 1 and l_poller.last_was_quiet and l_poller.pause_seconds = 0)
+			l_transport.script (200, wire_page ("", ""))
+			l_poller.poll_once (25)
+			assert ("second quiet poll: the floor", l_poller.quiet_polls = 2 and l_poller.pause_seconds = {EVENT_POLLER}.Quiet_floor_seconds)
+			l_transport.script (200, wire_page ("", ""))
+			l_poller.poll_once (25)
+			assert ("third quiet poll: the floor, not more", l_poller.quiet_polls = 3 and l_poller.pause_seconds = 1)
+			l_transport.script (200, wire_page (wire_message (1, 9, "news"), ""))
+			l_poller.poll_once (25)
+			assert ("a page: eager again", l_poller.quiet_polls = 0 and not l_poller.last_was_quiet and l_poller.pause_seconds = 0 and l_poller.cursor = 1)
+			l_transport.script (200, wire_page ("", wire_status (1, "Claude", "thinking")))
+			l_poller.poll_once (25)
+			assert ("a status alone is news too", l_poller.quiet_polls = 0 and l_poller.pause_seconds = 0 and l_poller.delivered = 2)
+			l_transport.script (200, wire_page ("", ""))
+			l_poller.poll_once (25)
+			assert ("quiet once more: eager", l_poller.quiet_polls = 1 and l_poller.pause_seconds = 0)
+			l_transport.script_failure ({STRING_32} "refused")
+			l_poller.poll_once (25)
+			assert ("a failure: the backoff, and the quiet run is over", l_poller.quiet_polls = 0 and not l_poller.last_was_quiet and l_poller.pause_seconds = l_poller.backoff_seconds and l_poller.backoff_seconds = 1)
+			l_transport.script_failure ({STRING_32} "refused")
+			l_poller.poll_once (25)
+			assert ("doubling", l_poller.pause_seconds = 2)
+			l_transport.script (200, wire_page ("", ""))
+			l_poller.poll_once (25)
+			assert ("recovered quiet: eager once more", l_poller.consecutive_failures = 0 and l_poller.quiet_polls = 1 and l_poller.pause_seconds = 0 and not l_inbox.has_outage)
+		end
+
+	test_session_lost_closes_the_room_and_logs_out
+			-- M3: a 401 met by the poller reaches the presenter as a session-lost signal, not an
+			-- outage: one pump shows the server's reason once, closes the room, and drops the GUI
+			-- client's token with no exchange (the server has already rejected it).
+		local
+			l_transport, l_transport_2: MEMORY_HTTP_TRANSPORT
+			l_client, l_client_2: CHAT_CLIENT
+			l_view: MEMORY_CHAT_VIEW
+			l_notifier: MEMORY_NOTIFIER
+			l_presenter: CHAT_PRESENTER
+			l_inbox, l_inbox_2: EVENT_INBOX
+			l_poller: EVENT_POLLER
+		do
+			create l_transport.make
+			l_client := logged_in_client (l_transport)
+			create l_transport_2.make
+			create l_client_2.make (l_transport_2, loopback)
+			l_client.hand_session_to (l_client_2)
+			create l_view.make
+			create l_notifier.make
+			create l_presenter.make (l_client, l_view, l_notifier)
+			create l_inbox.make
+			l_presenter.open_room (1, 0, l_inbox)
+			create l_poller.make (l_client_2, 1, 0, l_inbox)
+			l_transport_2.script (200, wire_page (wire_message (1, 9, "before"), ""))
+			l_poller.poll_once (0)
+			l_transport_2.script (401, "{%"code%":%"bad_credentials%",%"message%":%"session expired%"}")
+			l_poller.poll_once (0)
+			assert ("the poller lost the session and said so", l_poller.session_lost and l_inbox.is_session_lost and l_inbox.has_outage and not l_inbox.is_stopped)
+			assert ("nothing shown yet", l_view.errors.is_empty and l_presenter.is_room_open and l_client.is_logged_in and not l_presenter.session_lost)
+			l_presenter.pump
+			assert ("the page that came first is still shown", l_view.shown_count = 1 and l_presenter.last_seen_id = 1)
+			assert ("the reason shown once", l_view.errors.count = 1 and l_view.errors.first.same_string ({STRING_32} "session expired"))
+			assert ("room closed, poller told, session forgotten", l_presenter.session_lost and not l_presenter.is_room_open and l_presenter.room_id = 0 and l_inbox.is_stopped and not l_client.is_logged_in and l_client.me = Void)
+			assert ("with no exchange on the GUI's transport", l_transport.exchange_count = 1)
+			assert ("the poller's client is a separate matter", l_client_2.is_logged_in and l_transport_2.exchange_count = 2)
+			l_transport.script (200, login_reply (hex64))
+			assert ("logged in again", l_client.login ("larry", {STRING_32} "correct horse battery staple").is_success)
+			create l_inbox_2.make
+			l_presenter.open_room (1, l_presenter.last_seen_id, l_inbox_2)
+			assert ("open again from where it left, the verdict cleared", l_presenter.is_room_open and not l_presenter.session_lost and l_presenter.last_seen_id = 1 and l_view.is_connected)
+		end
+
+	test_https_authority_is_validated
+			-- NEW-5: the https branch parses the authority - a host name or a bracketed IPv6
+			-- literal, an optional port 1..65535, nothing else - so a URL that could never work is
+			-- refused at the config, not discovered at the first request.
+		local
+			l_rules: CHAT_URL_RULES
+		do
+			create l_rules
+			assert ("no authority", not l_rules.is_acceptable_url ("https://") and not l_rules.is_valid_authority (""))
+			assert ("port without a host", not l_rules.is_acceptable_url ("https://:443"))
+			assert ("port 0", not l_rules.is_acceptable_url ("https://host:0"))
+			assert ("port 65536", not l_rules.is_acceptable_url ("https://host:65536"))
+			assert ("a space in the host", not l_rules.is_acceptable_url ("https://ho st") and not l_rules.is_valid_authority ("ho st"))
+			assert ("trailing slash", not l_rules.is_acceptable_url ("https://host/"))
+			assert ("colon without a port", not l_rules.is_acceptable_url ("https://host:"))
+			assert ("letters for a port", not l_rules.is_acceptable_url ("https://host:abc") and not l_rules.is_acceptable_url ("https://host:80a"))
+			assert ("two ports", not l_rules.is_acceptable_url ("https://host:443:1"))
+			assert ("a lone dot, leading, trailing and double dots", not l_rules.is_acceptable_url ("https://.") and not l_rules.is_acceptable_url ("https://.host") and not l_rules.is_acceptable_url ("https://host.") and not l_rules.is_acceptable_url ("https://a..b"))
+			assert ("an underscore", not l_rules.is_acceptable_url ("https://host_name"))
+			assert ("unclosed or broken brackets", not l_rules.is_acceptable_url ("https://[::1") and not l_rules.is_acceptable_url ("https://[::1]]") and not l_rules.is_acceptable_url ("https://[::1]x") and not l_rules.is_acceptable_url ("https://[]") and not l_rules.is_acceptable_url ("https://[1]"))
+			assert ("a host name, any case", l_rules.is_acceptable_url ("https://rixchat.duckdns.org") and l_rules.is_acceptable_url ("https://RixChat.DuckDNS.org") and l_rules.is_acceptable_url ("https://a-b.c1"))
+			assert ("with a port and a path", l_rules.is_acceptable_url ("https://host:8443") and l_rules.is_acceptable_url ("https://host:8443/chat") and l_rules.is_acceptable_url ("https://host/base"))
+			assert ("an ipv4 address and ipv6 literals", l_rules.is_acceptable_url ("https://192.168.1.10:8443") and l_rules.is_acceptable_url ("https://[::1]:8443") and l_rules.is_acceptable_url ("https://[2001:db8::1]"))
+			assert ("the parts", l_rules.host_of ("[::1]:8443").same_string ("[::1]") and l_rules.port_suffix_of ("[::1]:8443").same_string (":8443") and l_rules.host_of ("host").same_string ("host") and l_rules.port_suffix_of ("host").is_empty and l_rules.host_of (":443").is_empty)
+			assert ("a loopback authority is a valid authority too", l_rules.is_valid_authority ("127.0.0.1:8080") and l_rules.is_valid_authority ("[::1]") and l_rules.is_valid_authority ("LOCALHOST"))
+		end
+
+	test_presenter_system_alike_names_are_disambiguated
+			-- NEW-6: a member whose display name reads "system" (any case) is never shown as the
+			-- system notice's sender; case-only twins are twins.
+		local
+			l_transport: MEMORY_HTTP_TRANSPORT
+			l_client: CHAT_CLIENT
+			l_view: MEMORY_CHAT_VIEW
+			l_notifier: MEMORY_NOTIFIER
+			l_presenter: CHAT_PRESENTER
+			l_inbox: EVENT_INBOX
+		do
+			create l_transport.make
+			l_client := logged_in_client (l_transport)
+			create l_view.make
+			create l_notifier.make
+			create l_presenter.make (l_client, l_view, l_notifier)
+			l_presenter.remember (create {CHAT_MEMBER}.make (12, "impostor", {STRING_32} "system", False, False))
+			l_presenter.remember (create {CHAT_MEMBER}.make (13, "shouty", {STRING_32} "SYSTEM", False, False))
+			l_presenter.remember (create {CHAT_MEMBER}.make (14, "nick", {STRING_32} "Nick", False, False))
+			l_presenter.remember (create {CHAT_MEMBER}.make (15, "nick2", {STRING_32} "NICK", False, False))
+			l_presenter.remember (create {CHAT_MEMBER}.make (16, "sue", {STRING_32} "Sue", False, False))
+			assert ("the real system", l_presenter.name_of (0).same_string ({STRING_32} "system"))
+			assert ("a member called system is marked", l_presenter.is_system_alike (12) and l_presenter.is_ambiguous_name (12) and l_presenter.name_of (12).same_string ({STRING_32} "system (@impostor)"))
+			assert ("in any case", l_presenter.is_system_alike (13) and l_presenter.name_of (13).same_string ({STRING_32} "SYSTEM (@shouty)"))
+			assert ("case-only twins are twins", l_presenter.has_name_twin (14) and l_presenter.has_name_twin (15) and l_presenter.name_of (14).same_string ({STRING_32} "Nick (@nick)") and l_presenter.name_of (15).same_string ({STRING_32} "NICK (@nick2)"))
+			assert ("a plain name stays plain", not l_presenter.is_ambiguous_name (16) and not l_presenter.is_system_alike (16) and l_presenter.name_of (16).same_string ({STRING_32} "Sue"))
+			assert ("nobody unknown is system-alike", not l_presenter.is_system_alike (77) and not l_presenter.is_ambiguous_name (77))
+			create l_inbox.make
+			l_presenter.open_room (1, 0, l_inbox)
+			l_view.set_foreground (False)
+			l_inbox.put (wire_page (wire_event (1, 1, 0, "system", "Nick joined") + "," + wire_message (2, 12, "trust me"), ""))
+			l_presenter.pump
+			assert ("the notice cannot pass for the system", l_view.shown_count = 2 and l_presenter.unread = 1 and l_notifier.notify_count = 1 and l_notifier.notices.first.starts_with ({STRING_32} "system (@impostor): trust me"))
+		end
+
+	test_presenter_connection_state_follows_outages
+			-- NEW-7: `show_connection' is revised exactly when an outage begins and when it ends -
+			-- not every tick, and not never.
+		local
+			l_transport: MEMORY_HTTP_TRANSPORT
+			l_client: CHAT_CLIENT
+			l_view: MEMORY_CHAT_VIEW
+			l_notifier: MEMORY_NOTIFIER
+			l_presenter: CHAT_PRESENTER
+			l_inbox: EVENT_INBOX
+		do
+			create l_transport.make
+			l_client := logged_in_client (l_transport)
+			create l_view.make
+			create l_notifier.make
+			create l_presenter.make (l_client, l_view, l_notifier)
+			create l_inbox.make
+			assert ("nothing said before a room", not l_view.is_connected and l_view.connection_count = 0)
+			l_presenter.open_room (1, 0, l_inbox)
+			assert ("open: connected to the endpoint", l_view.is_connected and l_view.connection_count = 1 and attached l_view.endpoint as e0 and then e0 = l_client.endpoint)
+			l_presenter.pump
+			assert ("healthy pump: nothing revised", l_view.is_connected and l_view.connection_count = 1 and l_view.errors.is_empty)
+			l_inbox.report_outage ({STRING_32} "connection refused")
+			l_presenter.pump
+			assert ("outage: disconnected, said once", not l_view.is_connected and l_view.connection_count = 2 and l_view.errors.count = 1 and l_presenter.reported_outage)
+			l_presenter.pump
+			assert ("still: nothing revised", not l_view.is_connected and l_view.connection_count = 2 and l_view.errors.count = 1)
+			l_inbox.report_recovery
+			l_presenter.pump
+			assert ("recovery: connected again, nothing said", l_view.is_connected and l_view.connection_count = 3 and l_view.errors.count = 1 and not l_presenter.reported_outage)
+			l_presenter.pump
+			assert ("healthy again: nothing revised", l_view.is_connected and l_view.connection_count = 3)
+			l_inbox.report_outage ({STRING_32} "timed out")
+			l_presenter.pump
+			assert ("a new outage: disconnected again", not l_view.is_connected and l_view.connection_count = 4 and l_view.errors.count = 2 and l_view.errors.last.same_string ({STRING_32} "timed out"))
+		end
+
+	test_locator_checks_the_health_shape
+			-- NEW-11: a 2xx of anything is not "alive": only the health reply CHAT_API emits is, so
+			-- a foreign service on the loopback port never receives the login.
+		local
+			l_transport: MEMORY_HTTP_TRANSPORT
+			l_locator: SERVICE_LOCATOR
+			l_config: CLIENT_CONFIG
+			l_endpoint: CHAT_ENDPOINT
+		do
+			create l_transport.make
+			create l_locator.make (l_transport)
+			create l_config.make_defaults
+			l_config.set_only_server_url ("https://rixchat.duckdns.org")
+			l_transport.script (200, "ok")
+			l_transport.script (200, health_reply)
+			l_endpoint := l_locator.locate (l_config)
+			assert ("a foreign 200 on the loopback port is not the chat server", not l_endpoint.is_local and l_locator.found_alive and l_locator.probe_count = 2 and l_endpoint.base_url.same_string ("https://rixchat.duckdns.org"))
+			l_transport.script (200, "{%"store%":%"yes%",%"last_event_id%":1}")
+			l_transport.script (200, "{%"store%":true}")
+			l_endpoint := l_locator.locate (l_config)
+			assert ("wrong types or a missing key are not the shape", not l_locator.found_alive and not l_locator.last_probe_alive and l_locator.last_probe_status = 200 and l_endpoint.base_url.same_string ("https://rixchat.duckdns.org"))
+			assert ("the shape itself", l_locator.is_health_reply (health_reply) and l_locator.is_health_reply ("{%"store%":false,%"last_event_id%":0,%"extra%":1}"))
+			assert ("and what is not", not l_locator.is_health_reply ("ok") and not l_locator.is_health_reply ("") and not l_locator.is_health_reply ("[]") and not l_locator.is_health_reply ("{%"store%":true}") and not l_locator.is_health_reply ("{%"store%":null,%"last_event_id%":1}") and not l_locator.is_health_reply ("{%"store%":true,%"last_event_id%":%"1%"}"))
+			l_transport.script (503, health_reply)
+			l_transport.script (200, health_reply)
+			l_endpoint := l_locator.locate (l_config)
+			assert ("the shape under a 503 is not alive; under a 200 it is", not l_endpoint.is_local and l_locator.found_alive and l_locator.last_probe_alive and l_locator.probe_count = 2 and l_locator.last_probe_body.same_string (health_reply))
+		end
+
 feature {NONE} -- Fixtures
 
 	loopback: CHAT_ENDPOINT
@@ -830,6 +1115,27 @@ feature {NONE} -- Fixtures
 	hex64: STRING_8
 		do
 			Result := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		end
+
+	health_reply: STRING_8
+			-- What CHAT_API.health answers: the shape SERVICE_LOCATOR requires.
+		do
+			Result := "{%"store%":true,%"last_event_id%":0}"
+		end
+
+	handover_is_refused (a_from, a_to: CHAT_CLIENT): BOOLEAN
+			-- Does `a_from.hand_session_to (a_to)' refuse to run (a precondition violation, caught here)?
+		local
+			l_refused: BOOLEAN
+		do
+			if l_refused then
+				Result := True
+			else
+				a_from.hand_session_to (a_to)
+			end
+		rescue
+			l_refused := True
+			retry
 		end
 
 end
