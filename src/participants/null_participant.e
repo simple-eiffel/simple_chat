@@ -15,12 +15,16 @@ feature {NONE} -- Initialization
 
 	make (a_handle: READABLE_STRING_GENERAL; a_bot_user: CHAT_USER)
 		require
-			handle_shape: a_handle.count >= 2 and a_handle.starts_with ("@")
+			handle_valid: (create {PARTICIPANT_RULES}).is_valid_handle (a_handle)
 			bot: a_bot_user.is_bot
+			bot_stored: a_bot_user.is_stored
+			bot_active: a_bot_user.is_active
+			bot_marked: a_bot_user.display_name.has_substring ({CHAT_EVENT_KINDS}.Bot_marker)
 		do
-			handle := a_handle.to_string_32
+			create handle.make_from_string_general (a_handle)
 			bot_user := a_bot_user
 			max_concurrent := 1
+			max_characters := Default_max_characters
 		ensure
 			handle_set: handle.same_string_general (a_handle)
 		end

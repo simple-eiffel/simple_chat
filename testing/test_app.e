@@ -14,12 +14,14 @@ feature {NONE} -- Initialization
 		local
 			t: CHAT_ASSAULT
 			s: TEST_SCOOP_CONSUMER
+			p: PARTICIPANTS_ASSAULT
 		do
 			print ("simple_chat assault (Phase 1: contracts + skeletal tests)%N%N")
 			passed := 0
 			failed := 0
 			create t
 			create s
+			create p
 
 			print ("=== DOMAIN DATA ===%N")
 			run_test (agent t.test_user_creation_and_storage_id, "user_creation_and_storage_id")
@@ -93,6 +95,26 @@ feature {NONE} -- Initialization
 
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
+
+			print ("=== PARTICIPANTS (Phase 1b) ===%N")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_handle_rules, "handle_rules")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_prefix_spoof_and_boundary, "prefix_spoof_and_boundary")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_handle_only_body_is_not_a_request, "handle_only_body_is_not_a_request")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_via_parsing, "via_parsing")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_registry_alias_resolution, "registry_alias_resolution")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_participant_config_completeness, "participant_config_completeness")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_tool_gates_raw_and_shaped, "tool_gates_raw_and_shaped")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_via_plain_disclosure_law, "via_plain_disclosure_law")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_tool_reply_limits, "tool_reply_limits")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_bible_and_shape_allowlists, "bible_and_shape_allowlists")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_image_path_rules, "image_path_rules")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_image_path_outside_sandbox_refused, "image_path_outside_sandbox_refused")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_claude_sandbox_rule, "claude_sandbox_rule")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_claude_vault_directory_refused, "claude_vault_directory_refused")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_engine_timing_contracts, "engine_timing_contracts")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_ignores_bots_and_answers_once, "dispatcher_ignores_bots_and_answers_once")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_restart_cursor_honoured, "dispatcher_restart_cursor_honoured")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_per_room_cursors, "dispatcher_per_room_cursors")
 
 			print ("=== TODO: PHASE 5 (skeletal) ===%N")
 			run_test (agent t.test_post_message_appends_and_rings, "post_message_appends_and_rings (skeletal)")
