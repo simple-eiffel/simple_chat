@@ -388,6 +388,137 @@ feature -- Answers: account and administration
 			counted: request_count = old request_count + 1
 		end
 
+feature {PARTICIPANT_DISPATCHER} -- The dispatcher's processor
+
+	dispatcher_start_after: INTEGER_64
+			-- Where a new dispatcher begins: the store's last event id, so a
+			-- restart never re-answers history (Issue 16).
+		do
+			Result := service.store.last_event_id
+		ensure
+			definition: Result = service.store.last_event_id
+		end
+
+	dispatcher_page (a_room_id, a_since_id: INTEGER_64; a_limit: INTEGER): STRING_8
+			-- The page of `a_room_id' after `a_since_id' as bytes - what `events'
+			-- answers, without a token: the dispatcher is this process. An
+			-- unknown room gives an empty page.
+		require
+			since_non_negative: a_since_id >= 0
+			limit_in_range: a_limit > 0 and a_limit <= {CHAT_SERVICE}.Page_maximum
+		local
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+		do
+			if a_room_id > 0 and then attached service.store.room (a_room_id) as l_room and then l_room.is_stored then
+				l_events := service.events_since (l_room, a_since_id, a_limit)
+			else
+				create l_events.make (0)
+			end
+			Result := codec.bytes_of (codec.page_to_json (l_events, create {ARRAYED_LIST [CHAT_STATUS]}.make (0)))
+			request_count := request_count + 1
+		ensure
+			counted: request_count = old request_count + 1
+			decodable: codec.page_from_bytes (Result) /= Void
+			bounded: attached codec.page_from_bytes (Result) as p implies p.events.count <= a_limit
+			all_after: attached codec.page_from_bytes (Result) as p implies across p.events as e all e.id > a_since_id and e.room_id = a_room_id end
+			empty_when_unknown: service.store.room (a_room_id) = Void implies (attached codec.page_from_bytes (Result) as p and then p.events.is_empty)
+		end
+
+	dispatcher_can_post (a_bot_user_id, a_room_id: INTEGER_64): BOOLEAN
+			-- May bot `a_bot_user_id' post in `a_room_id': stored, active, a bot, and a member?
+		do
+			Result := attached service.store.user (a_bot_user_id) as u and then u.is_stored and then u.is_bot and then u.is_active
+				and then attached service.store.room (a_room_id) as r and then r.is_stored and then service.store.is_member (u.id, r.id)
+		ensure
+			definition: Result = (attached service.store.user (a_bot_user_id) as u and then u.is_stored and then u.is_bot and then u.is_active
+				and then attached service.store.room (a_room_id) as r and then r.is_stored and then service.store.is_member (u.id, r.id))
+		end
+
+	dispatcher_try_ask (a_key: separate READABLE_STRING_8): BOOLEAN
+			-- One more ask under `a_key' if its limit allows - decided and
+			-- counted here, in one step, on the processor that owns the limiter.
+		require
+			key_given: not a_key.is_empty
+		local
+			l_key: STRING_8
+		do
+			l_key := local_8 (a_key)
+			Result := service.limits.is_allowed (l_key)
+			if Result then
+				service.limits.record (l_key)
+			end
+		ensure
+			granted_when_allowed: Result = old service.limits.is_allowed (local_8 (a_key))
+			recorded: Result implies service.limits.count (local_8 (a_key)) = old service.limits.count (local_8 (a_key)) + 1
+			nothing_when_refused: not Result implies service.limits.counts_model |=| old service.limits.counts_model
+		end
+
+	dispatcher_post (a_bot_user_id, a_room_id: INTEGER_64; a_text: separate READABLE_STRING_32): INTEGER
+			-- Post `a_text' as bot `a_bot_user_id' in `a_room_id': 201, else the
+			-- service's error status - 403 when the bot cannot post there, 400
+			-- for an empty or over-long text.
+		local
+			l_text: STRING_32
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			l_text := local_32 (a_text)
+			if attached service.store.user (a_bot_user_id) as u and then u.is_stored and then u.is_bot and then u.is_active
+				and then attached service.store.room (a_room_id) as r and then r.is_stored and then service.store.is_member (u.id, r.id)
+			then
+				if l_text.is_empty or l_text.count > config.message_characters then
+					Result := 400
+				else
+					l_result := service.post_message (u, r, l_text)
+					if l_result.is_success then
+						Result := 201
+					elseif attached l_result.error as e then
+						Result := e.http_status
+					else
+						Result := 500
+					end
+				end
+			else
+				Result := 403
+			end
+			request_count := request_count + 1
+		ensure
+			counted: request_count = old request_count + 1
+			http_status: Result >= 200 and Result <= 599
+			appended_on_success: Result = 201 implies service.store.last_event_id = old service.store.last_event_id + 1
+			nothing_on_failure: Result /= 201 implies service.store.last_event_id = old service.store.last_event_id
+			only_member_rooms: not dispatcher_can_post (a_bot_user_id, a_room_id) implies Result = 403
+			text_required: local_32 (a_text).is_empty implies Result /= 201
+			within_limit: local_32 (a_text).count > config.message_characters implies Result /= 201
+		end
+
+	dispatcher_display_name (a_user_id: INTEGER_64): STRING_32
+			-- The member's display name, or "#<id>" for one the store does not know.
+		do
+			if attached service.store.user (a_user_id) as u then
+				Result := u.display_name.twin
+			else
+				create Result.make_from_string_general ("#")
+				Result.append_string_general (a_user_id.out)
+			end
+		ensure
+			given: not Result.is_empty
+			from_store: attached service.store.user (a_user_id) as u implies Result.same_string (u.display_name)
+		end
+
+	dispatcher_room_name (a_room_id: INTEGER_64): STRING_32
+			-- The room's name, or "room <id>" for one the store does not know.
+		do
+			if attached service.store.room (a_room_id) as r then
+				Result := r.name.twin
+			else
+				create Result.make_from_string_general ("room ")
+				Result.append_string_general (a_room_id.out)
+			end
+		ensure
+			given: not Result.is_empty
+			from_store: attached service.store.room (a_room_id) as r implies Result.same_string (r.name)
+		end
+
 feature -- Sessions (contract support)
 
 	session_for (a_token: READABLE_STRING_8): detachable CHAT_SESSION

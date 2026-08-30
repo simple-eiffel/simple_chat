@@ -1,0 +1,89 @@
+# Phase 1b - participants cluster: compile + assault evidence
+# Date: 2026-08-29  Branch: phase1b/participants  Command: rm -rf EIFGENs/simple_chat_tests && /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_tests && EIFGENs/simple_chat_tests/F_code/simple_chat.exe
+
+## Compile (tail)
+=== TEST MODE (finalize -keep) ===
+Running: ec.exe -batch -config simple_chat.ecf -target simple_chat_tests -finalize -keep -c_compile
+Eiffel Compilation Manager
+Version 25.02.9.8732 - win64
+
+Degree 6: Examining System
+Degree 5: Parsing Classes
+Degree 4: Analyzing Inheritance
+Degree 3: Checking Types
+Degree 2: Generating Byte Code
+Degree -2: Constructing Polymorphic Table
+Degree -3: Generating Optimized Code
+System Recompiled.
+Preparing C compilation using Microsoft Visual Studio 2022 VC++ (17.0)...
+big_file_C16_c.c
+...
+[CLI] Closing oracle...
+[CLI] Done.
+✓ Built: EIFGENs/simple_chat_tests/F_code/simple_chat.exe (1s ago)
+
+## Warnings: 0 (grep -ci warning over the full compiler output)
+
+## Run
+simple_chat assault (Phase 1: contracts + skeletal tests)
+
+=== DOMAIN DATA ===
+  PASS: user_creation_and_storage_id
+  PASS: username_rules
+  PASS: display_name_rejects_bidi_controls_and_blank
+  PASS: result_success_xor_error
+  PASS: bot_event_carries_marker
+  PASS: session_fields
+=== CONTRACT-SUPPORT ENGINES ===
+  PASS: password_hasher_round_trip
+  PASS: session_issuer_token_shape
+  PASS: registry_register_and_find
+  PASS: null_shaper_honours_limit
+  PASS: null_and_mock_participants
+  PASS: config_defaults_and_public_flag
+  PASS: memory_store_models_start_empty
+  PASS: memory_sink_counts_bytes
+  PASS: caddyfile_targets_localhost
+=== THICK CLIENT STACK (intent-v3) ===
+  PASS: poll_waiter_counts_only_its_room
+  PASS: event_bus_tickets
+  PASS: sse_stream_delivers_in_order
+  PASS: event_json_round_trip
+  PASS: client_login_sends_bearer_never_in_url
+  PASS: poller_cursor_and_drain_laws
+  PASS: presenter_unread_and_foreground_law
+  PASS: locator_prefers_live_local_then_standby
+=== SCOOP CONSUMER ===
+  PASS: scoop_compatibility
+=== PARTICIPANTS (Phase 1b) ===
+  PASS: handle_rules
+  PASS: prefix_spoof_and_boundary
+  PASS: handle_only_body_is_not_a_request
+  PASS: via_parsing
+  PASS: registry_alias_resolution
+  PASS: participant_config_completeness
+  PASS: tool_gates_raw_and_shaped
+  PASS: via_plain_disclosure_law
+  PASS: tool_reply_limits
+  PASS: bible_and_shape_allowlists
+  PASS: image_path_rules
+  PASS: image_path_outside_sandbox_refused
+  PASS: claude_sandbox_rule
+  PASS: claude_vault_directory_refused
+  PASS: engine_timing_contracts
+  PASS: dispatcher_ignores_bots_and_answers_once
+  PASS: dispatcher_restart_cursor_honoured
+  PASS: dispatcher_per_room_cursors
+=== TODO: PHASE 5 (skeletal) ===
+  PASS: post_message_appends_and_rings (skeletal)
+  PASS: doorbell_no_loss_under_concurrency (skeletal)
+  PASS: dispatcher_ignores_bots_and_answers_once (skeletal)
+  PASS: tool_refuses_unsafe_argument (skeletal)
+  PASS: sse_replays_since_then_live (skeletal)
+  PASS: long_poll_returns_within_deadline (skeletal)
+  PASS: sw_view_renders_hebrew_and_marker (skeletal)
+  PASS: log_never_contains_secrets (skeletal)
+
+========================
+Results: 50 passed, 0 failed
+ALL TESTS PASSED

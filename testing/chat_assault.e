@@ -540,7 +540,7 @@ feature {NONE} -- Fixtures
 			l_now: SIMPLE_DATE_TIME
 		do
 			create l_now.make_now
-			create Result.make (0, a_username, a_display, "", False, True, l_now)
+			create Result.make (0, a_username, {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " " + a_display, "", False, True, l_now)
 			Result.set_id (99)
 		end
 
