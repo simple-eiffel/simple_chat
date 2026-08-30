@@ -237,9 +237,8 @@ feature -- CHAT_CLIENT: the token and the wire
 			assert ("a non-latin-1 kind is a 502 result, not an exception", not l_page.is_success and is_error_status (l_page.error, 502))
 			t.script (200, "{%"events%":[{%"id%":1,%"room_id%":1,%"sender_id%":9,%"kind%":%"message%",%"created_at%":%"garbage%",%"body%":%"x%"}],%"statuses%":[]}")
 			l_page := c.events_since (1, 0, 50)
-			-- Known gap (Issue 30, domain cluster): the codec builds a date from "garbage" without raising, so the
-			-- page is accepted with a meaningless time; what this proves is that the client survives either way.
-			assert ("an unparseable created_at is a result, never an exception", c.is_logged_in and (l_page.is_success or is_error_status (l_page.error, 502)))
+			-- CHAT_JSON.is_iso8601 refuses "garbage", and one malformed event refuses the whole page (Issue 30): a 502, never a page with a made-up time.
+			assert ("an unparseable created_at is a 502 result, never an exception", c.is_logged_in and not l_page.is_success and is_error_status (l_page.error, 502))
 			t.script (200, wire_page (wire_message (1, 9, "one") + "," + wire_message (2, 9, "two"), wire_status (1, "Claude", "thinking")))
 			l_page := c.events_since (1, 0, 50)
 			assert ("a lawful page is accepted with its bytes", l_page.is_success and attached l_page.value as p and then (p.events.count = 2 and p.statuses.count = 1 and p.last_id = 2 and p.has_bytes and p.bytes.has_substring ("thinking")))
