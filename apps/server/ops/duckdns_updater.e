@@ -2,7 +2,9 @@ note
 	description: "[
 		DYNAMIC_DNS over Duck DNS: one HTTPS GET to the update URL every
 		`interval_seconds'; the address is detected server-side when
-		omitted; OK or KO comes back. The token never reaches a log.
+		omitted; OK or KO comes back. The token never reaches a log:
+		`update_url' is the exact request with the token masked, and the
+		domains are validated so nothing can smuggle a second parameter.
 		Phase 4 issues the request through simple_winhttp.
 	]"
 	author: "Larry Rix"
@@ -20,8 +22,9 @@ feature {NONE} -- Initialization
 
 	make (a_domains, a_token: READABLE_STRING_8; a_interval_seconds: INTEGER)
 		require
-			given: not a_domains.is_empty and not a_token.is_empty
-			positive: a_interval_seconds > 0
+			domains_valid: is_valid_domains (a_domains)
+			token_given: not a_token.is_empty
+			at_least_a_minute: a_interval_seconds >= Minimum_interval_seconds
 		do
 			domains := a_domains.to_string_8
 			token := a_token.to_string_8
@@ -41,10 +44,11 @@ feature -- Access
 	update_count: INTEGER
 
 	update_url: STRING_8
-			-- The request, without the token (safe to log).
+			-- The request with the token masked (safe to log).
 		do
-			Result := "https://www.duckdns.org/update?domains=" + domains + "&token=****"
+			Result := Base_url + domains + Masked_token
 		ensure
+			definition: Result.same_string (Base_url + domains + Masked_token)
 			no_token: not Result.has_substring (token)
 		end
 
@@ -55,8 +59,13 @@ feature -- Basic operations
 			update_count := update_count + 1
 			create last_update_at.make_now
 			last_result := Result_unreachable
-			-- Implementation in Phase 4: GET update_url with the real token; "OK" -> Result_ok, "KO" -> Result_ko
+			-- Implementation in Phase 4: GET Base_url + domains + "&token=" + token; "OK" -> Result_ok, "KO" -> Result_ko
 		end
+
+feature -- Constants
+
+	Base_url: STRING_8 = "https://www.duckdns.org/update?domains="
+	Masked_token: STRING_8 = "&token=****"
 
 feature {NONE} -- Implementation
 
@@ -64,9 +73,9 @@ feature {NONE} -- Implementation
 			-- Never logged (DR-012).
 
 invariant
-	given: not domains.is_empty and not token.is_empty
-	interval_positive: interval_seconds > 0
+	token_given: not token.is_empty
 	known_result: is_known_result (last_result)
 	count_non_negative: update_count >= 0
+	token_not_in_url: not update_url.has_substring (token)
 
 end

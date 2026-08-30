@@ -205,7 +205,7 @@ feature -- Contract-support engines
 			create c.make_defaults
 			c.set_front_door ({SERVER_CONFIG}.Door_caddy, "rixchat.duckdns.org")
 			create d.make (c)
-			assert ("site", d.caddyfile_text.starts_with ("rixchat.duckdns.org"))
+			assert ("site", d.caddyfile_text.has_substring ("rixchat.duckdns.org {"))
 			assert ("upstream", d.caddyfile_text.has_substring ("127.0.0.1:8080"))
 			assert ("sse passthrough", d.caddyfile_text.has_substring ("flush_interval -1"))
 		end

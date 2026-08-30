@@ -60,6 +60,13 @@ feature {NONE} -- Initialization
 			run_test (agent (create {STORE_ASSAULT}).test_user_rules, "user_rules")
 			run_test (agent (create {STORE_ASSAULT}).test_decoder_refuses_hostile_fields, "decoder_refuses_hostile_fields")
 
+			print ("=== OPS (Phase 1b) ===%N")
+			run_test (agent (create {OPS_ASSAULT}).test_caddyfile_is_one_loopback_site_with_admin_off, "caddyfile_is_one_loopback_site_with_admin_off")
+			run_test (agent (create {OPS_ASSAULT}).test_hostnames_are_validated, "hostnames_are_validated")
+			run_test (agent (create {OPS_ASSAULT}).test_null_door_stays_stopped, "null_door_stays_stopped")
+			run_test (agent (create {OPS_ASSAULT}).test_duckdns_url_masks_the_token, "duckdns_url_masks_the_token")
+			run_test (agent (create {OPS_ASSAULT}).test_config_lists_are_copies, "config_lists_are_copies")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 
