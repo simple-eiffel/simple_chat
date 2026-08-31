@@ -1,0 +1,59 @@
+# Phase 1b/1c Repair Evidence
+# Project: D:\prod\simple_chat
+# Date: 2026-08-31
+
+Phase 1b (SCOOP restructuring + repair of Phase 2 findings 11-38):
+  pass 1 bus/API/web (921358d), pass 2 store/domain/service (6a65a75),
+  pass 5 ops (7be2e5a), client pass (87a6345), participants pass (5652b71)
+  -> main 6739050: 85/85, zero warnings, use="scoop".
+
+Phase 2b targeted re-review (three clusters; reports in phase2b-part-*.md):
+  client                      PASS WITH CONDITIONS (2 NEW-HIGH)
+  domain/store/service        PASS WITH CONDITIONS (1 NEW-HIGH, Issue 13 OPEN, Issue 30/23 PARTIAL)
+  participants                PASS WITH CONDITIONS (Issue 33/38/15/26 PARTIAL, 5 NEW-MEDIUM)
+  bus/web/facade/ops          NOT RERUN YET - the reviewer was stopped for budget; first job after the reset.
+
+Phase 1c (repair of every condition above):
+  main work (3e7ca56): RATE_LIMITER per-prefix rules + windows, exact held/live/total
+    counts, sweep, advance; wired from SERVER_CONFIG in CHAT_SERVICE.make.
+    CHAT_LOG redaction implemented (hex runs >= 64, password/token/hash/Bearer values,
+    bare, quoted and JSON forms; last_line; invariant last_line_clean).
+    CHAT_JSON: empty bytes and nesting > 32 refused before parsing (string-aware scan);
+    is_iso8601 validates the calendar (leap years, 24:00, 1970..9999).
+    Service clauses: room_known, attachment id equality, store_upload valid_name +
+    has_attachment + sha256, create_first_admin duplicate_refused, password checks via
+    the store, unknown login names counted under the address only, never_plaintext
+    conditioned on no '$'.
+  client (phase1c/client 8ce7ba8, merged 4d4e8fe): salvaged_code only known codes;
+    wait_for_room SCOOP wait condition + deliver: BOOLEAN (a full inbox makes the
+    poller wait - events are never silently lost); quiet-poll floor; session-lost path
+    (EVENT_INBOX.report_session_lost, CHAT_CLIENT.forget_session, pump closes the
+    room); https authority validation; health-shape probe; DPAPI note corrected.
+  domain (phase1c/domain e23d501, merged 3a5ddac): value semantics end to end -
+    constructors copy text, is_equal by value, duplicate; the oracle stores and
+    returns duplicates (test: mutation never reaches it; ~ holds); humans_unmarked /
+    bots_marked display-name rules (CHAT_USER + service create_*); SERVER_CONFIG
+    unique bot usernames + aliases-never-handles; CHAT_STORE.open opened_or_explained.
+  participants (phase1c/participants 82b65a0, merged 0f4f9c9): sandbox anchored on
+    <data_dir>\participants\<handle> by canonical PATH equality + no CLAUDE.md/.claude/
+    MEMORY.md ancestor (filesystem walk); tools really off - CLAUDE_CODE_CLIENT 0.2.0
+    (branch feature/claude-code-sandbox-flags, dead799, 40/40) adds --tools "",
+    --setting-sources (empty = none, verified), --strict-mcp-config, and the
+    participant's no_tools reads the client; Bible allowlist = 18 verified read-only
+    commands (closed set); metacharacter law + command_line_of; device names refused
+    in image paths; DISPATCHER_HOST.launch (a_api: separate CHAT_API) + wake drives
+    dispatch_pending + CHAT_API.dispatcher_subscribe; via_charged (both keys must
+    grant); answered pruned to a floor (bounded); a raising engine is one counted
+    failure, the dispatcher survives (rescue).
+
+Main after all merges: 0f4f9c9 = 103 passed, 0 failed, zero warnings, clean build
+  (rm -rf EIFGENs; ec.sh test -config simple_chat.ecf -target simple_chat_tests),
+  pushed to https://github.com/simple-eiffel/simple_chat.
+
+Open before Phase 3 (/eiffel.tasks):
+  - Rerun the bus/web/facade/ops re-review (read-only) and repair its findings.
+  - simple_ai_client feature/claude-code-sandbox-flags: Larry merges (with the other
+    five open simple_* PRs).
+  - Facade wiring of DISPATCHER_HOST.launch (deliberately left for the bus/web pass).
+
+# Status: COMPLETE except the bus/web re-review rerun noted above

@@ -4,7 +4,7 @@ A standalone group chat for a private circle of friends on Windows PCs: an Eiffe
 
 ## Status
 
-**Phase 1 — contracts and skeletons.** Nothing here chats yet. What exists is the full class design with its contracts (preconditions, postconditions, invariants, MML model queries and frame conditions), the parts small enough to implement outright, and an assault suite that exercises them: **30 tests, zero compiler warnings.** Implementation is Phase 4 of the Eiffel Spec Kit workflow; the design record that leads there lives in `.eiffel-workflow/`.
+**Phase 1 — contracts and skeletons.** Nothing here chats yet. What exists is the full class design with its contracts (preconditions, postconditions, invariants, MML model queries and frame conditions), the parts small enough to implement outright, and an assault suite that exercises them: **103 tests, zero compiler warnings**, compiled in SCOOP mode. Two adversarial review rounds (Phase 2 and the targeted 2b re-review) and their repair passes are done — the record lives in `.eiffel-workflow/`. Implementation is Phase 4 of the Eiffel Spec Kit workflow.
 
 ## What it will be
 
