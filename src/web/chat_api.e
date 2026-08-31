@@ -110,7 +110,14 @@ feature -- Answers: liveness and session
 			else
 				l_result := service.authenticate (l_name, l_password, l_ip)
 				if l_result.is_success then
-					Result := answered (not_yet)   -- Phase 4: the token travels only here, once
+						-- The clear token travels in this one reply and nowhere else (DR-006):
+						-- read from the service's seam right after the authenticate, never kept, never logged.
+					check has_session: attached l_result.value as l_session then
+						check known_user: attached service.store.user (l_session.user_id) as l_account then
+							Result := answered (create {CHAT_REPLY}.make_json (200,
+								codec.login_to_json (service.last_issued_token, codec.member_of (l_account)), 0))
+						end
+					end
 				else
 					Result := answered (error_reply (l_result.error))
 				end
@@ -146,7 +153,7 @@ feature -- Answers: liveness and session
 			end
 		ensure
 			counted: request_count = old request_count + 1
-			needs_session: user_for (local_8 (a_token)) = Void implies Result.status = 401
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
 		end
 
 feature -- Answers: reading
@@ -180,7 +187,7 @@ feature -- Answers: reading
 			counted: request_count = old request_count + 1
 			bounded: Result.item_count <= a_limit
 			page_on_success: Result.status = 200 implies Result.is_json
-			needs_session: user_for (local_8 (a_token)) = Void implies Result.status = 401
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
 		end
 
 	events_before (a_token: separate READABLE_STRING_8; a_room_id, a_before_id: INTEGER_64; a_limit: INTEGER): CHAT_REPLY
@@ -216,7 +223,7 @@ feature -- Answers: reading
 				last_subscription := 0
 			end
 		ensure
-			ticket_when_allowed: (attached user_for (local_8 (a_token)) as u and then attached member_room (u, a_room_id)) = (last_subscription > 0)
+			ticket_when_allowed: old (not (attached user_for (local_8 (a_token)) as u and then attached member_room (u, a_room_id))) implies last_subscription = 0
 			live: last_subscription > 0 implies service.bus.is_subscribed (last_subscription)
 		end
 
@@ -231,8 +238,8 @@ feature -- Answers: reading
 			-- {"members": [...]} - the roster, never a hash.
 		do
 			if attached user_for (local_8 (a_token)) as l_user then
-				if attached member_room (l_user, a_room_id) then
-					Result := answered (not_yet)   -- Phase 4: CHAT_STORE.members_of
+				if attached member_room (l_user, a_room_id) as l_room then
+					Result := answered (create {CHAT_REPLY}.make_json (200, members_json (l_room), 0))
 				else
 					Result := answered (forbidden)
 				end
@@ -247,8 +254,8 @@ feature -- Answers: reading
 	rooms (a_token: separate READABLE_STRING_8): CHAT_REPLY
 			-- [{id, name}] for the caller's rooms.
 		do
-			if attached user_for (local_8 (a_token)) then
-				Result := answered (not_yet)   -- Phase 4: service.rooms_of
+			if attached user_for (local_8 (a_token)) as l_user then
+				Result := answered (create {CHAT_REPLY}.make (200, {CHAT_REPLY}.Json_content_type, codec.bytes_of_array (rooms_json (l_user))))
 			else
 				Result := answered (unauthorized)
 			end
@@ -257,9 +264,10 @@ feature -- Answers: reading
 		end
 
 	participants (a_token: separate READABLE_STRING_8): CHAT_REPLY
+			-- {"participants": [{handle, username, display_name}]} - the configured AI participants.
 		do
 			if attached user_for (local_8 (a_token)) then
-				Result := answered (not_yet)
+				Result := answered (create {CHAT_REPLY}.make_json (200, participants_json, 0))
 			else
 				Result := answered (unauthorized)
 			end
@@ -271,7 +279,13 @@ feature -- Answers: reading
 			-- The file's bytes with its validated type; nosniff is the handler's job.
 		do
 			if attached user_for (local_8 (a_token)) then
-				Result := answered (not_yet)   -- Phase 4: read data/uploads/<sha>.<ext>
+				if a_attachment_id > 0 and then service.store.has_attachment (a_attachment_id) then
+						-- Task 1 stores upload metadata only; the bytes reach data/uploads/<sha>.<ext>
+						-- in the SQLite/deploy task (tasks.md Task 4), so serving them is honestly 501 until then.
+					Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Attachment bytes are not stored yet.", 501)))
+				else
+					Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such attachment.", 404)))
+				end
 			else
 				Result := answered (unauthorized)
 			end
@@ -312,15 +326,44 @@ feature -- Answers: posting
 			counted: request_count = old request_count + 1
 			appended_on_success: Result.status = 201 implies service.store.last_event_id = old service.store.last_event_id + 1
 			nothing_on_failure: Result.status /= 201 implies service.store.last_event_id = old service.store.last_event_id
-			needs_session: user_for (local_8 (a_token)) = Void implies Result.status = 401
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
 		end
 
 	post_image (a_token: separate READABLE_STRING_8; a_room_id: INTEGER_64; a_bytes: separate READABLE_STRING_8; a_file_name, a_caption: separate READABLE_STRING_32): CHAT_REPLY
 			-- 201 with the stored image event; 413 too large; 415 not a PNG/JPEG by signature.
+		local
+			l_name, l_caption: STRING_32
+			l_bytes: STRING_8
+			l_rules: CHAT_ATTACHMENT_RULES
+			l_upload: CHAT_RESULT [CHAT_ATTACHMENT]
+			l_result: CHAT_RESULT [CHAT_EVENT]
 		do
 			if attached user_for (local_8 (a_token)) as l_user then
-				if attached member_room (l_user, a_room_id) then
-					Result := answered (not_yet)   -- Phase 4: service.store_upload then post_image
+				if attached member_room (l_user, a_room_id) as l_room then
+					l_bytes := local_8 (a_bytes)
+					l_name := local_32 (a_file_name)
+					l_caption := local_32 (a_caption)
+					create l_rules
+					if not l_rules.is_valid_name (l_name) then
+						l_name := {STRING_32} "image"
+					end
+					if l_bytes.is_empty then
+						Result := answered (bad_request ("image bytes are required"))
+					elseif l_caption.count > config.message_characters then
+						Result := answered (error_reply (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_too_long, "caption too long", 400)))
+					else
+						l_upload := service.store_upload (l_user, l_name, special_of (l_bytes))
+						if l_upload.is_success and then attached l_upload.value as l_attachment then
+							l_result := service.post_image (l_user, l_room, l_attachment, l_caption)
+							if l_result.is_success and then attached l_result.value as e then
+								Result := answered (create {CHAT_REPLY}.make_json (201, e.to_json, 1))
+							else
+								Result := answered (error_reply (l_result.error))
+							end
+						else
+							Result := answered (error_reply (l_upload.error))
+						end
+					end
 				else
 					Result := answered (forbidden)
 				end
@@ -335,9 +378,27 @@ feature -- Answers: posting
 feature -- Answers: account and administration
 
 	change_password (a_token: separate READABLE_STRING_8; a_old, a_new: separate READABLE_STRING_32): CHAT_REPLY
+		local
+			l_old, l_new: STRING_32
+			l_result: CHAT_RESULT [CHAT_USER]
 		do
-			if attached user_for (local_8 (a_token)) then
-				Result := answered (not_yet)
+			if attached user_for (local_8 (a_token)) as l_user then
+				l_old := local_32 (a_old)
+				l_new := local_32 (a_new)
+				if l_user.is_bot then
+					Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "Bots have no password.", 403)))
+				elseif l_old.is_empty then
+					Result := answered (bad_request ("the old password is required"))
+				elseif l_new.count < config.password_minimum then
+					Result := answered (bad_request ("the new password is too short"))
+				else
+					l_result := service.change_password (l_user, l_old, l_new)
+					if l_result.is_success then
+						Result := answered (create {CHAT_REPLY}.make_json (200, create {SIMPLE_JSON_OBJECT}.make, 0))
+					else
+						Result := answered (error_reply (l_result.error))
+					end
+				end
 			else
 				Result := answered (unauthorized)
 			end
@@ -346,44 +407,151 @@ feature -- Answers: account and administration
 		end
 
 	admin_users (a_token: separate READABLE_STRING_8): CHAT_REPLY
+			-- {"users": [...]} - every stored user as its public view, never a hash.
 		do
-			Result := answered (admin_only (a_token))
+			if attached admin_for (a_token) then
+				Result := answered (create {CHAT_REPLY}.make_json (200, users_json, 0))
+			else
+				Result := answered (admin_refused (a_token))
+			end
 		ensure
 			counted: request_count = old request_count + 1
 		end
 
 	admin_create_user (a_token: separate READABLE_STRING_8; a_username: separate READABLE_STRING_8; a_display_name, a_password: separate READABLE_STRING_32; a_is_admin: BOOLEAN): CHAT_REPLY
+			-- 201 with the new member; 400 invalid input, 409 taken.
+		local
+			l_username: STRING_8
+			l_display, l_password: STRING_32
+			l_rules: CHAT_USER_RULES
+			l_result: CHAT_RESULT [CHAT_USER]
 		do
-			Result := answered (admin_only (a_token))
+			if attached admin_for (a_token) then
+				l_username := local_8 (a_username)
+				l_display := local_32 (a_display_name)
+				l_password := local_32 (a_password)
+				create l_rules
+				if not l_rules.is_valid_username (l_username) then
+					Result := answered (bad_request ("a username is 1..32 characters of [a-z0-9_]"))
+				elseif not l_rules.is_valid_human_display_name (l_display) then
+					Result := answered (bad_request ("a display name is 1..40 visible characters without the bot marker"))
+				elseif l_password.count < config.password_minimum then
+					Result := answered (bad_request ("the password is too short"))
+				else
+					l_result := service.create_user (l_username, l_display, l_password, a_is_admin)
+					if l_result.is_success and then attached l_result.value as l_created then
+						Result := answered (create {CHAT_REPLY}.make_json (201, codec.member_to_json (codec.member_of (l_created)), 0))
+					else
+						Result := answered (error_reply (l_result.error))
+					end
+				end
+			else
+				Result := answered (admin_refused (a_token))
+			end
 		ensure
 			counted: request_count = old request_count + 1
 		end
 
 	admin_reset_password (a_token: separate READABLE_STRING_8; a_user_id: INTEGER_64; a_password: separate READABLE_STRING_32): CHAT_REPLY
+			-- 200 and every session of that person dies; 404 for nobody or a bot.
+		local
+			l_password: STRING_32
+			l_result: CHAT_RESULT [CHAT_USER]
 		do
-			Result := answered (admin_only (a_token))
+			if attached admin_for (a_token) then
+				l_password := local_32 (a_password)
+				if a_user_id > 0 and then attached service.store.user (a_user_id) as l_target and then not l_target.is_bot then
+					if l_password.count < config.password_minimum then
+						Result := answered (bad_request ("the password is too short"))
+					else
+						l_result := service.reset_password (l_target, l_password)
+						if l_result.is_success then
+							Result := answered (create {CHAT_REPLY}.make_json (200, create {SIMPLE_JSON_OBJECT}.make, 0))
+						else
+							Result := answered (error_reply (l_result.error))
+						end
+					end
+				else
+					Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such person.", 404)))
+				end
+			else
+				Result := answered (admin_refused (a_token))
+			end
 		ensure
 			counted: request_count = old request_count + 1
 		end
 
 	admin_create_bot (a_token: separate READABLE_STRING_8; a_username: separate READABLE_STRING_8; a_display_name: separate READABLE_STRING_32): CHAT_REPLY
 			-- The bot's token is shown once, in this reply, and never stored in clear.
+		local
+			l_username: STRING_8
+			l_display: STRING_32
+			l_rules: CHAT_USER_RULES
+			l_result: CHAT_RESULT [TUPLE [bot: CHAT_USER; token: STRING_8]]
 		do
-			Result := answered (admin_only (a_token))
+			if attached admin_for (a_token) then
+				l_username := local_8 (a_username)
+				l_display := local_32 (a_display_name)
+				create l_rules
+				if not l_display.is_empty and then not l_display.starts_with ({CHAT_EVENT_KINDS}.Bot_marker) then
+					l_display := {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " " + l_display
+				end
+				if not l_rules.is_valid_username (l_username) then
+					Result := answered (bad_request ("a username is 1..32 characters of [a-z0-9_]"))
+				elseif not l_rules.is_marked_display_name (l_display) then
+					Result := answered (bad_request ("a bot's display name is 1..40 visible characters"))
+				else
+					l_result := service.create_bot (l_username, l_display)
+					if l_result.is_success and then attached l_result.value as l_created then
+							-- The bot token travels in this one reply and nowhere else.
+						Result := answered (create {CHAT_REPLY}.make_json (201,
+							codec.login_to_json (l_created.token, codec.member_of (l_created.bot)), 0))
+					else
+						Result := answered (error_reply (l_result.error))
+					end
+				end
+			else
+				Result := answered (admin_refused (a_token))
+			end
 		ensure
 			counted: request_count = old request_count + 1
 		end
 
 	admin_revoke_bot (a_token: separate READABLE_STRING_8; a_bot_id: INTEGER_64): CHAT_REPLY
+			-- 200 and the bot's token dies; 404 for nobody or a person.
 		do
-			Result := answered (admin_only (a_token))
+			if attached admin_for (a_token) then
+				if a_bot_id > 0 and then attached service.store.user (a_bot_id) as l_bot and then l_bot.is_bot then
+					service.revoke_bot_token (l_bot)
+					Result := answered (create {CHAT_REPLY}.make_json (200, create {SIMPLE_JSON_OBJECT}.make, 0))
+				else
+					Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such bot.", 404)))
+				end
+			else
+				Result := answered (admin_refused (a_token))
+			end
 		ensure
 			counted: request_count = old request_count + 1
 		end
 
 	admin_backup (a_token: separate READABLE_STRING_8): CHAT_REPLY
+			-- {"path": ...} once the SQLite task lands; the service's honest 501 until then.
+		local
+			l_result: CHAT_RESULT [STRING_32]
+			l_json: SIMPLE_JSON_OBJECT
 		do
-			Result := answered (admin_only (a_token))
+			if attached admin_for (a_token) then
+				l_result := service.backup
+				if l_result.is_success and then attached l_result.value as l_path then
+					create l_json.make
+					l_json.put_string (l_path, {CHAT_JSON}.Key_path).do_nothing
+					Result := answered (create {CHAT_REPLY}.make_json (200, l_json, 0))
+				else
+					Result := answered (error_reply (l_result.error))
+				end
+			else
+				Result := answered (admin_refused (a_token))
+			end
 		ensure
 			counted: request_count = old request_count + 1
 		end
@@ -565,6 +733,72 @@ feature -- Sessions (contract support)
 			member: attached Result as r implies service.store.is_member (a_user.id, r.id)
 		end
 
+feature {NONE} -- Encodings
+
+	members_json (a_room: CHAT_ROOM): SIMPLE_JSON_OBJECT
+			-- {"members": [...]} - every stored member of `a_room', never a hash.
+		require
+			stored: a_room.is_stored
+		local
+			l_members: SIMPLE_JSON_ARRAY
+		do
+			create l_members.make
+			across service.store.users as u loop
+				if service.store.is_member (u.id, a_room.id) then
+					l_members.add_object (codec.member_to_json (codec.member_of (u))).do_nothing
+				end
+			end
+			create Result.make
+			Result.put_array (l_members, {CHAT_JSON}.Key_members).do_nothing
+		end
+
+	rooms_json (a_user: CHAT_USER): SIMPLE_JSON_ARRAY
+			-- [{id, name}] for `a_user''s rooms.
+		require
+			stored: a_user.is_stored
+		local
+			l_room: SIMPLE_JSON_OBJECT
+		do
+			create Result.make
+			across service.rooms_of (a_user) as r loop
+				create l_room.make
+				l_room.put_integer (r.id, {CHAT_JSON}.Key_id).do_nothing
+				l_room.put_string (r.name, {CHAT_JSON}.Key_name).do_nothing
+				Result.add_object (l_room).do_nothing
+			end
+		end
+
+	participants_json: SIMPLE_JSON_OBJECT
+			-- {"participants": [{handle, username, display_name}]} from the configuration.
+		local
+			l_list: SIMPLE_JSON_ARRAY
+			l_one: SIMPLE_JSON_OBJECT
+		do
+			create l_list.make
+			across config.participants as p loop
+				create l_one.make
+				l_one.put_string (p.handle, {CHAT_JSON}.Key_handle).do_nothing
+				l_one.put_string (p.bot_username.to_string_32, {CHAT_JSON}.Key_username).do_nothing
+				l_one.put_string (p.bot_display_name, {CHAT_JSON}.Key_display_name).do_nothing
+				l_list.add_object (l_one).do_nothing
+			end
+			create Result.make
+			Result.put_array (l_list, {CHAT_JSON}.Key_participants).do_nothing
+		end
+
+	users_json: SIMPLE_JSON_OBJECT
+			-- {"users": [...]} - every stored user as its public view, never a hash.
+		local
+			l_users: SIMPLE_JSON_ARRAY
+		do
+			create l_users.make
+			across service.store.users as u loop
+				l_users.add_object (codec.member_to_json (codec.member_of (u))).do_nothing
+			end
+			create Result.make
+			Result.put_array (l_users, {CHAT_JSON}.Key_users).do_nothing
+		end
+
 feature {NONE} -- Replies
 
 	answered (a_reply: CHAT_REPLY): CHAT_REPLY
@@ -575,11 +809,6 @@ feature {NONE} -- Replies
 		ensure
 			counted: request_count = old request_count + 1
 			same: Result = a_reply
-		end
-
-	not_yet: CHAT_REPLY
-		do
-			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Not implemented (Phase 1 skeleton)", 501))
 		end
 
 	unauthorized: CHAT_REPLY
@@ -617,20 +846,27 @@ feature {NONE} -- Replies
 			failed: not Result.is_success
 		end
 
-	admin_only (a_token: separate READABLE_STRING_8): CHAT_REPLY
-			-- 401 without a session, 403 for a person who is not an admin, else the Phase 4 gap.
+	admin_for (a_token: separate READABLE_STRING_8): detachable CHAT_USER
+			-- The active admin behind `a_token', or Void.
 		do
-			if attached user_for (local_8 (a_token)) as l_user then
-				if l_user.is_admin then
-					Result := not_yet
-				else
-					create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "admin only", 403))
-				end
-			else
-				Result := unauthorized
+			if attached user_for (local_8 (a_token)) as l_user and then l_user.is_admin then
+				Result := l_user
 			end
 		ensure
-			needs_session: user_for (local_8 (a_token)) = Void implies Result.status = 401
+			admin: attached Result as u implies (u.is_admin and u.is_active)
+		end
+
+	admin_refused (a_token: separate READABLE_STRING_8): CHAT_REPLY
+			-- 401 without a session, 403 for a person who is not an admin.
+		do
+			if user_for (local_8 (a_token)) = Void then
+				Result := unauthorized
+			else
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "admin only", 403))
+			end
+		ensure
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
+			refusal: Result.status = 401 or Result.status = 403
 		end
 
 feature {NONE} -- Copies across processors
@@ -647,6 +883,24 @@ feature {NONE} -- Copies across processors
 			create Result.make_from_separate (a_text)
 		ensure
 			same_length: Result.count = a_text.count
+		end
+
+	special_of (a_bytes: READABLE_STRING_8): SPECIAL [NATURAL_8]
+			-- `a_bytes' as raw bytes.
+		local
+			i: INTEGER
+		do
+			create Result.make_filled (0, a_bytes.count)
+			from
+				i := 1
+			until
+				i > a_bytes.count
+			loop
+				Result [i - 1] := a_bytes.item (i).natural_32_code.to_natural_8
+				i := i + 1
+			end
+		ensure
+			same_size: Result.count = a_bytes.count
 		end
 
 feature {NONE} -- Implementation
