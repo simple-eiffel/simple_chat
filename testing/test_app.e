@@ -111,6 +111,20 @@ feature {NONE} -- Initialization
 			run_test (agent (create {CONFIG_ASSAULT}).test_config_addresses_and_bot_usernames_are_tracked, "config_addresses_and_bot_usernames_are_tracked")
 			run_test (agent (create {CONFIG_ASSAULT}).test_config_refuses_colliding_participants, "config_refuses_colliding_participants")
 
+			print ("=== SERVICE BEHAVIOR (Phase 4) ===%N")
+			run_test (agent (create {SERVICE_ASSAULT}).test_first_admin_created_once, "first_admin_created_once")
+			run_test (agent (create {SERVICE_ASSAULT}).test_login_lockout_and_recovery, "login_lockout_and_recovery")
+			run_test (agent (create {SERVICE_ASSAULT}).test_unknown_names_never_fill_the_user_limiter, "unknown_names_never_fill_the_user_limiter")
+			run_test (agent (create {SERVICE_ASSAULT}).test_session_round_trip, "session_round_trip")
+			run_test (agent (create {SERVICE_ASSAULT}).test_bot_token_round_trip_and_bot_login_refused, "bot_token_round_trip_and_bot_login_refused")
+			run_test (agent (create {SERVICE_ASSAULT}).test_bot_marker_is_the_bots_alone, "bot_marker_is_the_bots_alone")
+			run_test (agent (create {SERVICE_ASSAULT}).test_post_rate_limit_hits_and_recovers, "post_rate_limit_hits_and_recovers")
+			run_test (agent (create {SERVICE_ASSAULT}).test_image_system_and_status_posts, "image_system_and_status_posts")
+			run_test (agent (create {SERVICE_ASSAULT}).test_events_since_pages_gapless, "events_since_pages_gapless")
+			run_test (agent (create {SERVICE_ASSAULT}).test_upload_signature_size_and_pinning, "upload_signature_size_and_pinning")
+			run_test (agent (create {SERVICE_ASSAULT}).test_reset_password_revokes_sessions, "reset_password_revokes_sessions")
+			run_test (agent (create {SERVICE_ASSAULT}).test_change_password_needs_the_old_one, "change_password_needs_the_old_one")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 
