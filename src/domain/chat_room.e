@@ -1,9 +1,23 @@
 note
-	description: "A named conversation with members and an ordered event log. v1 has one; the model has many."
+	description: "[
+		A named conversation with members and an ordered event log. v1 has
+		one; the model has many.
+
+		Value semantics (Issue 23 / M-D3): `make' copies its incoming text,
+		`is_equal' compares by value, `duplicate' builds an independent copy.
+		The attributes stay STRING_32; moving them to READABLE_/IMMUTABLE_
+		types is a Phase 4 task.
+	]"
 	author: "Larry Rix"
 
 class
 	CHAT_ROOM
+
+inherit
+	ANY
+		redefine
+			is_equal
+		end
 
 create
 	make
@@ -16,11 +30,12 @@ feature {NONE} -- Initialization
 			valid_name: is_valid_name (a_name)
 		do
 			id := a_id
-			name := a_name.to_string_32
+			create name.make_from_string_general (a_name)
 			created_at := a_created_at
 		ensure
 			id_set: id = a_id
 			name_set: name.same_string_general (a_name)
+			owns_text: name /= a_name
 		end
 
 feature -- Access
@@ -52,6 +67,32 @@ feature -- Element change
 			id := a_id
 		ensure
 			set: id = a_id
+		end
+
+feature -- Comparison
+
+	is_equal (a_other: like Current): BOOLEAN
+			-- Do `Current' and `a_other' carry the same values, text compared by content?
+		do
+			Result := id = a_other.id
+				and name.same_string (a_other.name)
+				and created_at ~ a_other.created_at
+		ensure then
+			definition: Result = (id = a_other.id
+				and name.same_string (a_other.name)
+				and created_at ~ a_other.created_at)
+		end
+
+feature -- Duplication
+
+	duplicate: like Current
+			-- An independent copy with fresh strings, equal to `Current' by value.
+		do
+			create Result.make (id, name, created_at)
+		ensure
+			equal_value: Result ~ Current
+			distinct: Result /= Current
+			own_text: Result.name /= name
 		end
 
 feature -- Validation (contract support)

@@ -5,11 +5,22 @@ note
 		given: uploads/<sha256>.<png|jpg>, so no caller and no wire form
 		can name a path. `original_name' is metadata for display only.
 		`id' is 0 until the store has assigned one.
+
+		Value semantics (Issue 23 / M-D3): `make' copies its incoming text,
+		`is_equal' compares by value, `duplicate' builds an independent copy.
+		The attributes stay STRING_8/STRING_32; moving them to
+		READABLE_/IMMUTABLE_ types is a Phase 4 task.
 	]"
 	author: "Larry Rix"
 
 class
 	CHAT_ATTACHMENT
+
+inherit
+	ANY
+		redefine
+			is_equal
+		end
 
 create
 	make
@@ -28,10 +39,10 @@ feature {NONE} -- Initialization
 		do
 			id := a_id
 			uploader_id := a_uploader_id
-			original_name := a_original_name.to_string_32
-			mime := a_mime.to_string_8
+			create original_name.make_from_string_general (a_original_name)
+			create mime.make_from_string (a_mime)
 			size := a_size
-			sha256 := a_sha256.to_string_8
+			create sha256.make_from_string (a_sha256)
 			stored_relpath := rules.stored_path_for (sha256, mime)
 			created_at := a_created_at
 		ensure
@@ -39,6 +50,7 @@ feature {NONE} -- Initialization
 			name_set: original_name.same_string_general (a_original_name)
 			mime_set: mime.same_string (a_mime)
 			hash_set: sha256.same_string (a_sha256)
+			owns_text: original_name /= a_original_name and mime /= a_mime and sha256 /= a_sha256
 			created_set: created_at = a_created_at
 			path_computed: stored_relpath.same_string (rules.stored_path_for (a_sha256, a_mime))
 		end
@@ -73,6 +85,42 @@ feature -- Element change
 		ensure
 			set: id = a_id
 			rest_unchanged: uploader_id = old uploader_id and sha256 = old sha256 and stored_relpath = old stored_relpath
+		end
+
+feature -- Comparison
+
+	is_equal (a_other: like Current): BOOLEAN
+			-- Do `Current' and `a_other' carry the same values, text compared by content?
+		do
+			Result := id = a_other.id
+				and uploader_id = a_other.uploader_id
+				and original_name.same_string (a_other.original_name)
+				and mime.same_string (a_other.mime)
+				and size = a_other.size
+				and sha256.same_string (a_other.sha256)
+				and stored_relpath.same_string (a_other.stored_relpath)
+				and created_at ~ a_other.created_at
+		ensure then
+			definition: Result = (id = a_other.id
+				and uploader_id = a_other.uploader_id
+				and original_name.same_string (a_other.original_name)
+				and mime.same_string (a_other.mime)
+				and size = a_other.size
+				and sha256.same_string (a_other.sha256)
+				and stored_relpath.same_string (a_other.stored_relpath)
+				and created_at ~ a_other.created_at)
+		end
+
+feature -- Duplication
+
+	duplicate: like Current
+			-- An independent copy with fresh strings, equal to `Current' by value.
+		do
+			create Result.make (id, uploader_id, original_name, mime, size, sha256, created_at)
+		ensure
+			equal_value: Result ~ Current
+			distinct: Result /= Current
+			own_text: Result.original_name /= original_name and Result.mime /= mime and Result.sha256 /= sha256
 		end
 
 feature -- Validation (contract support)

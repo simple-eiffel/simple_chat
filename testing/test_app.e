@@ -93,6 +93,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {STORE_ASSAULT}).test_attachment_path_is_pinned_to_its_hash, "attachment_path_is_pinned_to_its_hash")
 			run_test (agent (create {STORE_ASSAULT}).test_user_rules, "user_rules")
 			run_test (agent (create {STORE_ASSAULT}).test_decoder_refuses_hostile_fields, "decoder_refuses_hostile_fields")
+			run_test (agent (create {STORE_ASSAULT}).test_oracle_copies_strings, "oracle_copies_strings")
 
 			print ("=== OPS (Phase 1b) ===%N")
 			run_test (agent (create {OPS_ASSAULT}).test_caddyfile_is_one_loopback_site_with_admin_off, "caddyfile_is_one_loopback_site_with_admin_off")
@@ -105,6 +106,10 @@ feature {NONE} -- Initialization
 			run_test (agent (create {CHAT_ASSAULT}).test_log_never_contains_secrets, "log_never_contains_secrets")
 			run_test (agent (create {CHAT_ASSAULT}).test_limiter_prefixes_windows_and_totals, "limiter_prefixes_windows_and_totals")
 			run_test (agent (create {CHAT_ASSAULT}).test_json_refuses_empty_deep_and_impossible_dates, "json_refuses_empty_deep_and_impossible_dates")
+
+			print ("=== CONFIG (Phase 1c) ===%N")
+			run_test (agent (create {CONFIG_ASSAULT}).test_config_addresses_and_bot_usernames_are_tracked, "config_addresses_and_bot_usernames_are_tracked")
+			run_test (agent (create {CONFIG_ASSAULT}).test_config_refuses_colliding_participants, "config_refuses_colliding_participants")
 
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")

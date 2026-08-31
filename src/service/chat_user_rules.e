@@ -63,6 +63,27 @@ feature -- Validation
 			bounded: Result implies (a_name.count >= 1 and a_name.count <= {CHAT_USER}.Display_name_maximum)
 		end
 
+	is_valid_human_display_name (a_name: READABLE_STRING_GENERAL): BOOLEAN
+			-- A valid display name that nowhere contains the bot marker?
+			-- (NEW-4: the badge that authenticates bots is reserved for them.)
+		do
+			Result := is_valid_display_name (a_name) and then
+				not a_name.to_string_32.has_substring ({CHAT_EVENT_KINDS}.Bot_marker)
+		ensure
+			valid_when_true: Result implies is_valid_display_name (a_name)
+			unmarked_when_true: Result implies not a_name.to_string_32.has_substring ({CHAT_EVENT_KINDS}.Bot_marker)
+		end
+
+	is_marked_display_name (a_name: READABLE_STRING_GENERAL): BOOLEAN
+			-- A valid display name that begins with the bot marker?
+		do
+			Result := is_valid_display_name (a_name) and then
+				a_name.to_string_32.starts_with ({CHAT_EVENT_KINDS}.Bot_marker)
+		ensure
+			valid_when_true: Result implies is_valid_display_name (a_name)
+			marked_when_true: Result implies a_name.to_string_32.starts_with ({CHAT_EVENT_KINDS}.Bot_marker)
+		end
+
 	is_forbidden_in_name (a_code: NATURAL_32): BOOLEAN
 			-- A control, a zero-width or format character, or a bidi override?
 		do

@@ -3,11 +3,22 @@ note
 		A logged-in client, or a bot's long-lived token. The client holds
 		the token; the server holds only its SHA-256 (DR-006), so a copy of
 		the database yields no usable credential.
+
+		Value semantics (Issue 23 / M-D3): `make' copies its incoming text,
+		`is_equal' compares by value, `duplicate' builds an independent copy.
+		The `token_hash' attribute stays STRING_8; moving it to
+		READABLE_/IMMUTABLE_ types is a Phase 4 task.
 	]"
 	author: "Larry Rix"
 
 class
 	CHAT_SESSION
+
+inherit
+	ANY
+		redefine
+			is_equal
+		end
 
 create
 	make
@@ -24,7 +35,7 @@ feature {NONE} -- Initialization
 		do
 			id := a_id
 			user_id := a_user_id
-			token_hash := a_token_hash.to_string_8
+			create token_hash.make_from_string (a_token_hash)
 			created_at := a_created_at
 			last_seen_at := a_created_at
 			expires_at := a_expires_at
@@ -32,6 +43,7 @@ feature {NONE} -- Initialization
 		ensure
 			set: id = a_id and user_id = a_user_id and is_bot_token = a_is_bot_token
 			hash_set: token_hash.same_string (a_token_hash)
+			owns_text: token_hash /= a_token_hash
 			seen_at_creation: last_seen_at = a_created_at
 		end
 
@@ -49,6 +61,41 @@ feature -- Status report
 			Result := not (a_now < expires_at)
 		ensure
 			definition: Result = not (a_now < expires_at)
+		end
+
+feature -- Comparison
+
+	is_equal (a_other: like Current): BOOLEAN
+			-- Do `Current' and `a_other' carry the same values, text compared by content?
+		do
+			Result := id = a_other.id
+				and user_id = a_other.user_id
+				and token_hash.same_string (a_other.token_hash)
+				and created_at ~ a_other.created_at
+				and last_seen_at ~ a_other.last_seen_at
+				and expires_at ~ a_other.expires_at
+				and is_bot_token = a_other.is_bot_token
+		ensure then
+			definition: Result = (id = a_other.id
+				and user_id = a_other.user_id
+				and token_hash.same_string (a_other.token_hash)
+				and created_at ~ a_other.created_at
+				and last_seen_at ~ a_other.last_seen_at
+				and expires_at ~ a_other.expires_at
+				and is_bot_token = a_other.is_bot_token)
+		end
+
+feature -- Duplication
+
+	duplicate: like Current
+			-- An independent copy with fresh strings, equal to `Current' by value.
+		do
+			create Result.make (id, user_id, token_hash, created_at, expires_at, is_bot_token)
+			Result.touch (last_seen_at)
+		ensure
+			equal_value: Result ~ Current
+			distinct: Result /= Current
+			own_text: Result.token_hash /= token_hash
 		end
 
 feature -- Element change
