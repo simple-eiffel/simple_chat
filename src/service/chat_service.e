@@ -283,7 +283,7 @@ feature -- Administration
 	create_user (a_username: READABLE_STRING_8; a_display_name, a_password: READABLE_STRING_GENERAL; a_is_admin: BOOLEAN): CHAT_RESULT [CHAT_USER]
 		require
 			valid_username: (create {CHAT_USER_RULES}).is_valid_username (a_username)
-			valid_display: (create {CHAT_USER_RULES}).is_valid_display_name (a_display_name)
+			valid_display: (create {CHAT_USER_RULES}).is_valid_human_display_name (a_display_name)
 			password_long_enough: a_password.count >= config.password_minimum
 		do
 			create Result.make_error (not_implemented_error)
@@ -300,7 +300,7 @@ feature -- Administration
 			-- The one way the first admin comes to exist (`--create-admin'); refused once any admin exists.
 		require
 			valid_username: (create {CHAT_USER_RULES}).is_valid_username (a_username)
-			valid_display: (create {CHAT_USER_RULES}).is_valid_display_name (a_display_name)
+			valid_display: (create {CHAT_USER_RULES}).is_valid_human_display_name (a_display_name)
 			password_long_enough: a_password.count >= config.password_minimum
 		do
 			create Result.make_error (not_implemented_error)
@@ -316,7 +316,7 @@ feature -- Administration
 			-- A bot user and its one-time-shown token.
 		require
 			valid_username: (create {CHAT_USER_RULES}).is_valid_username (a_username)
-			valid_display: (create {CHAT_USER_RULES}).is_valid_display_name (a_display_name)
+			valid_display: (create {CHAT_USER_RULES}).is_marked_display_name (a_display_name)
 		do
 			create Result.make_error (not_implemented_error)
 			-- Implementation in Phase 4
