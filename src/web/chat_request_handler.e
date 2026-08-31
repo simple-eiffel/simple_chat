@@ -114,10 +114,19 @@ feature -- Request reading (contract support)
 		end
 
 	json_body (a_request: SIMPLE_WEB_SERVER_REQUEST): detachable SIMPLE_JSON_OBJECT
-			-- The body as a JSON object, or Void.
+			-- The body as a JSON object; Void when it is not one, or is larger than any
+			-- lawful JSON request (`Max_json_body_bytes') - refused before parsing.
 		do
-			Result := codec.object_from_bytes (a_request.body)
+			if a_request.body.count <= Max_json_body_bytes then
+				Result := codec.object_from_bytes (a_request.body)
+			end
+		ensure
+			bounded: attached Result implies a_request.body.count <= Max_json_body_bytes
 		end
+
+	Max_json_body_bytes: INTEGER = 65536
+			-- Far above any lawful message (4000 characters of UTF-8 plus the envelope);
+			-- image bytes travel on their own route with the upload limit, not here.
 
 	json_string (a_object: detachable SIMPLE_JSON_OBJECT; a_key: STRING_32): STRING_32
 			-- The string under `a_key', or empty.
@@ -226,6 +235,7 @@ feature {NONE} -- Handlers
 			l_alarm: separate POLL_ALARM
 			l_wait: POLL_WAIT
 			l_reply: CHAT_REPLY
+			l_failed: BOOLEAN
 		do
 			l_room := room_id_of (a_request)
 			if not attached bearer_token (a_request) as t then
@@ -236,22 +246,35 @@ feature {NONE} -- Handlers
 				l_since := integer_query (a_request, "since", 0).max (0)
 				l_limit := integer_query (a_request, "limit", Default_page).max (1).min (Page_maximum).to_integer_32
 				l_seconds := integer_query (a_request, "seconds", Default_wait_seconds).max (0).min (Max_wait_seconds).to_integer_32
-				create l_waiter.make (l_room)
-				l_ticket := api_subscribe (shared_api, t, l_room, l_waiter)
-				if l_ticket = 0 then
-					l_reply := api_events (shared_api, t, l_room, l_since, l_limit, Empty_array)
+				if l_failed then
+						-- The rescue below already unsubscribed; answer instead of dying subscribed.
+					reply (a_response, failed_reply)
 				else
-					l_reply := api_events (shared_api, t, l_room, l_since, l_limit, Empty_array)
-					if l_reply.is_empty_page and l_seconds > 0 then
-						create l_alarm.make (l_waiter, l_seconds)
-						start_alarm (l_alarm)
-						create l_wait.make
-						l_wait.wait_for (l_waiter)
-						l_reply := api_events (shared_api, t, l_room, l_since, l_limit, l_wait.statuses_json)
+					create l_waiter.make (l_room)
+					l_ticket := api_subscribe (shared_api, t, l_room, l_waiter)
+					if l_ticket = 0 then
+						l_reply := api_events (shared_api, t, l_room, l_since, l_limit, Empty_array)
+					else
+						l_reply := api_events (shared_api, t, l_room, l_since, l_limit, Empty_array)
+						if l_reply.is_empty_page and l_seconds > 0 then
+							create l_alarm.make (l_waiter, l_seconds)
+							start_alarm (l_alarm)
+							create l_wait.make
+							l_wait.wait_for (l_waiter)
+							l_reply := api_events (shared_api, t, l_room, l_since, l_limit, l_wait.statuses_json)
+						end
+						api_unsubscribe (shared_api, l_ticket)
 					end
+					reply (a_response, l_reply)
+				end
+			end
+		rescue
+			if not l_failed then
+				l_failed := True
+				if l_ticket > 0 then
 					api_unsubscribe (shared_api, l_ticket)
 				end
-				reply (a_response, l_reply)
+				retry
 			end
 		end
 
@@ -286,13 +309,23 @@ feature {NONE} -- Handlers
 			l_name, l_caption: STRING_32
 		do
 			if attached bearer_token (a_request) as t then
-				l_name := header_32 (a_request, "X-File-Name")
-				l_caption := header_32 (a_request, "X-Caption")
-				reply (a_response, api_post_image (shared_api, t, room_id_of (a_request), a_request.body, l_name, l_caption))
+				if a_request.body.count > Max_image_body_bytes then
+						-- Refused before any parsing or copying; the API still enforces the
+						-- configuration's exact `upload_bytes' behind this coarse gate.
+					reply (a_response, too_large_reply)
+				else
+					l_name := header_32 (a_request, "X-File-Name")
+					l_caption := header_32 (a_request, "X-Caption")
+					reply (a_response, api_post_image (shared_api, t, room_id_of (a_request), a_request.body, l_name, l_caption))
+				end
 			else
 				reply (a_response, unauthorized_reply)
 			end
 		end
+
+	Max_image_body_bytes: INTEGER = 16777216
+			-- 16 MiB: above any lawful configuration (default upload_bytes is 8 MiB), so the
+			-- gate never refuses what the service would accept; it only stops a flood early.
 
 	handle_attachment (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
 		do
@@ -537,6 +570,21 @@ feature {NONE} -- Replies
 			given: not a_what.is_empty
 		do
 			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "missing or invalid " + a_what, 400))
+		end
+
+	failed_reply: CHAT_REPLY
+			-- 500: the wait could not be completed; the subscription is already released.
+		do
+			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "the wait failed; ask again", 500))
+		ensure
+			server_error: Result.status = 500
+		end
+
+	too_large_reply: CHAT_REPLY
+		do
+			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_too_large, "the upload is larger than any allowed image", 413))
+		ensure
+			too_large: Result.status = 413
 		end
 
 	not_yet_reply: CHAT_REPLY

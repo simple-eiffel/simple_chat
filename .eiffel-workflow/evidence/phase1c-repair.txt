@@ -57,3 +57,16 @@ Open before Phase 3 (/eiffel.tasks):
   - Facade wiring of DISPATCHER_HOST.launch (deliberately left for the bus/web pass).
 
 # Status: COMPLETE except the bus/web re-review rerun noted above
+
+Task 4 addendum (2026-08-31): bus/web/facade/ops re-review RERUN and repaired.
+  Report: phase2b-part-bus-web-ops.md - 18 FIXED, 3 DISSOLVED, 5 PARTIAL, 1 OPEN,
+  4 NEW (2 MEDIUM, 2 LOW); NO SCOOP validity errors; handle_wait proven NOT to hold
+  the API during the 25 s wait. Fixed now: NEW-1 (restart cannot launch a second
+  dispatcher; launched_once postcondition), M-C (handle_wait rescue releases the
+  subscription and answers 500), NEW-2 (json bodies > 64 KiB and image bodies
+  > 16 MiB refused before parsing, 413). Carried as named Phase-4 tasks, each tied
+  to its dependency: M-A (STREAM_SINK byte count under real sockets), M-F (per-IP
+  lockout needs simple_web peer address), M-G (facade door_matches_config), M-J
+  (absolute caddy.exe discovery), Issue 27 (kill proof needs simple_process
+  wait/kill), NEW-LOW pair (web start claims running pre-bind; wall-clock in
+  needs_session), and the mandatory Phase 5 cross-processor doorbell assault.

@@ -93,7 +93,9 @@ feature -- Core Operations
 			if attached config as c then
 				shared_put (Config_path_key, {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (c.source_path))
 				api := shared_api
-				if c.ai_enabled and then attached api as a then
+				if c.ai_enabled and then dispatcher_host = Void and then attached api as a then
+						-- Once per process: `shared_api' (and the bus behind it) survives stop/start,
+						-- so a second launch would subscribe a second dispatcher and answer twice.
 					create l_host.make
 					l_host.launch (a)
 					dispatcher_host := l_host
@@ -118,7 +120,8 @@ feature -- Core Operations
 			running_or_reported: is_running xor (last_error /= Void)
 			api_up: is_running implies api /= Void
 			dispatcher_up: (attached config as c2 and then c2.ai_enabled) implies (attached dispatcher_host as h and then h.is_launched)
-			no_dispatcher_unasked: (attached config as c3 and then not c3.ai_enabled) implies dispatcher_host = Void
+			no_dispatcher_unasked: (attached config as c3 and then not c3.ai_enabled and old dispatcher_host = Void) implies dispatcher_host = Void
+			launched_once: (old dispatcher_host) /= Void implies dispatcher_host = old dispatcher_host
 			door_started: is_running implies (attached front_door as d implies (d.is_serving or d.last_error /= Void))
 		end
 
