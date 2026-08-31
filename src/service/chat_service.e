@@ -41,6 +41,7 @@ feature {NONE} -- Initialization
 			create hasher.make
 			create issuer.make
 			create crypto.make
+			create last_issued_token.make_empty
 			configure_limits
 		ensure
 			set: store = a_store and bus = a_bus and limits = a_limits and config = a_config and log = a_log
@@ -75,6 +76,11 @@ feature -- Access (the parts the contracts speak of)
 	config: SERVER_CONFIG
 	hasher: PASSWORD_HASHER
 
+	last_issued_token: STRING_8
+			-- The clear token of the latest successful `authenticate' (DR-006:
+			-- the store keeps only its hash). The login reply is the one place
+			-- it travels (CHAT_API, Task 2); empty before the first success.
+
 feature -- Authentication
 
 	authenticate (a_username, a_password: READABLE_STRING_GENERAL; a_client_ip: READABLE_STRING_8): CHAT_RESULT [CHAT_SESSION]
@@ -84,9 +90,49 @@ feature -- Authentication
 			username_given: not a_username.is_empty
 			password_given: not a_password.is_empty
 			ip_given: not a_client_ip.is_empty
+		local
+			l_user_key, l_ip_key: STRING_8
+			l_user_allowed, l_ip_allowed: BOOLEAN
+			l_issued: TUPLE [token: STRING_8; session: CHAT_SESSION]
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			l_user_key := login_user_key (a_username)
+			l_ip_key := login_ip_key (a_client_ip)
+			l_user_allowed := limits.is_allowed (l_user_key)
+			l_ip_allowed := limits.is_allowed (l_ip_key)
+			if not is_plausible_username (a_username) then
+				if l_ip_allowed then
+					limits.record (l_ip_key)
+				end
+				create Result.make_error (bad_credentials_error)
+			elseif not l_user_allowed or not l_ip_allowed then
+				if is_known_person (a_username) and l_user_allowed then
+					limits.record (l_user_key)
+				end
+				if l_ip_allowed then
+					limits.record (l_ip_key)
+				end
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_locked_out, "Too many login failures; try again later.", 429))
+				log.warn ("login locked out")
+			elseif attached store.user_by_username (a_username.to_string_8) as l_user then
+				if l_user.is_bot or not l_user.is_active then
+					limits.record (l_user_key)
+					limits.record (l_ip_key)
+					create Result.make_error (bad_credentials_error)
+				elseif hasher.verify (a_password, l_user.password_hash) then
+					l_issued := issuer.issue (l_user, config.session_days.to_integer_64 * Day_seconds, False)
+					store.put_session (l_issued.session)
+					last_issued_token := l_issued.token
+					log.info ("login ok user=" + l_user.id.out)
+					create Result.make_success (l_issued.session)
+				else
+					limits.record (l_user_key)
+					limits.record (l_ip_key)
+					create Result.make_error (bad_credentials_error)
+				end
+			else
+				limits.record (l_ip_key)
+				create Result.make_error (bad_credentials_error)
+			end
 		ensure
 			never_void: Result /= Void
 			success_has_session: Result.is_success implies attached Result.value
@@ -111,7 +157,13 @@ feature -- Authentication
 		require
 			token_shape: a_token.count = 64
 		do
-			-- Implementation in Phase 4: store.session_by_hash (issuer.hash_of (a_token)), expiry checked
+			if attached store.session_by_hash (token_hash_of (a_token)) as l_session then
+				if l_session.is_expired_at (now) then
+					store.remove_session (l_session.token_hash)
+				else
+					Result := l_session
+				end
+			end
 		ensure
 			not_expired: attached Result as s implies not s.is_expired_at (now)
 			right_one: attached Result as s2 implies s2.token_hash.same_string (token_hash_of (a_token))
@@ -119,7 +171,7 @@ feature -- Authentication
 
 	revoke (a_session: CHAT_SESSION)
 		do
-			-- Implementation in Phase 4
+			store.remove_session (a_session.token_hash)
 		ensure
 			gone: store.session_by_hash (a_session.token_hash) = Void
 		end
@@ -136,9 +188,26 @@ feature -- Posting
 			member: store.is_member (a_sender.id, a_room.id)
 			body_given: not a_body.is_empty
 			within_limit: a_body.count <= config.message_characters
+		local
+			l_body: STRING_32
+			l_event: CHAT_EVENT
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			if not limits.is_allowed (post_key (a_sender.id)) then
+				create Result.make_error (rate_limited_error)
+			elseif not a_sender.is_bot and then a_body.to_string_32.starts_with ({CHAT_EVENT_KINDS}.Bot_marker) then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "The bot marker is reserved for bot messages.", 403))
+			else
+				l_body := a_body.to_string_32
+				if a_sender.is_bot and then not l_body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker) then
+					l_body := {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " " + l_body
+				end
+				l_event := store.append_event (create {CHAT_EVENT_DRAFT}.make (a_room.id, a_sender.id,
+					{CHAT_EVENT_KINDS}.Kind_message, l_body, Void, create {SIMPLE_JSON_OBJECT}.make, a_sender.is_bot))
+				limits.record (post_key (a_sender.id))
+				bus.ring (a_room.id)
+				log.info ("post message event=" + l_event.id.out + " room=" + a_room.id.out + " sender=" + a_sender.id.out)
+				create Result.make_success (l_event)
+			end
 		ensure
 			never_void: Result /= Void
 			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
@@ -164,9 +233,19 @@ feature -- Posting
 			attachment_stored: store.has_attachment (a_attachment.id)
 			own_upload: a_attachment.uploader_id = a_sender.id
 			caption_within_limit: a_caption.count <= config.message_characters
+		local
+			l_event: CHAT_EVENT
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			if not limits.is_allowed (post_key (a_sender.id)) then
+				create Result.make_error (rate_limited_error)
+			else
+				l_event := store.append_event (create {CHAT_EVENT_DRAFT}.make (a_room.id, a_sender.id,
+					{CHAT_EVENT_KINDS}.Kind_image, a_caption, a_attachment, create {SIMPLE_JSON_OBJECT}.make, a_sender.is_bot))
+				limits.record (post_key (a_sender.id))
+				bus.ring (a_room.id)
+				log.info ("post image event=" + l_event.id.out + " room=" + a_room.id.out + " sender=" + a_sender.id.out)
+				create Result.make_success (l_event)
+			end
 		ensure
 			never_void: Result /= Void
 			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
@@ -186,9 +265,14 @@ feature -- Posting
 			room_stored: a_room.is_stored
 			room_known: store.has_room (a_room.id)
 			text_given: not a_text.is_empty
+		local
+			l_event: CHAT_EVENT
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			l_event := store.append_event (create {CHAT_EVENT_DRAFT}.make (a_room.id, 0,
+				{CHAT_EVENT_KINDS}.Kind_system, a_text, Void, create {SIMPLE_JSON_OBJECT}.make, False))
+			bus.ring (a_room.id)
+			log.info ("post system event=" + l_event.id.out + " room=" + a_room.id.out)
+			create Result.make_success (l_event)
 		ensure
 			never_void: Result /= Void
 			system_kind: (Result.is_success and then attached Result.value as e) implies (e.is_system and e.sender_id = 0 and e.room_id = a_room.id)
@@ -206,7 +290,7 @@ feature -- Posting
 			text_given: not a_text.is_empty
 			text_bounded: a_text.count <= {CHAT_STATUS}.Text_maximum
 		do
-			-- Implementation in Phase 4: bus.ring_status (create {CHAT_STATUS}.make (...))
+			bus.ring_status (create {CHAT_STATUS}.make (a_room.id, a_from.display_name, a_text))
 		ensure
 			not_stored: store.last_event_id = old store.last_event_id
 			rung: bus.status_count = old bus.status_count + 1
@@ -259,13 +343,31 @@ feature -- Uploads
 	store_upload (a_uploader: CHAT_USER; a_original_name: READABLE_STRING_GENERAL; a_bytes: SPECIAL [NATURAL_8]): CHAT_RESULT [CHAT_ATTACHMENT]
 			-- Keep `a_bytes' as uploads/<sha256>.<ext> if they are a PNG or
 			-- JPEG by signature and within the size limit (intent-v2 Q5).
+			-- Task 1 stores the metadata row only; writing the bytes to disk
+			-- belongs to the SQLite/deploy task.
 		require
 			active: a_uploader.is_active and a_uploader.is_stored
 			has_bytes: a_bytes.count > 0
 			valid_name: (create {CHAT_ATTACHMENT_RULES}).is_valid_name (a_original_name)
+		local
+			l_mime: STRING_8
+			l_attachment: CHAT_ATTACHMENT
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			if a_bytes.count > config.upload_bytes then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_too_large, "The upload is larger than the server allows.", 413))
+			elseif not is_image_signature (a_bytes) then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_bad_type, "Only PNG and JPEG images are accepted.", 415))
+			else
+				if is_png_signature (a_bytes) then
+					l_mime := {CHAT_ATTACHMENT}.Mime_png
+				else
+					l_mime := {CHAT_ATTACHMENT}.Mime_jpeg
+				end
+				create l_attachment.make (0, a_uploader.id, a_original_name, l_mime, a_bytes.count, sha256_hex_of (a_bytes), now)
+				store.add_attachment (l_attachment)
+				log.info ("upload attachment=" + l_attachment.id.out + " uploader=" + a_uploader.id.out + " bytes=" + a_bytes.count.out)
+				create Result.make_success (l_attachment)
+			end
 		ensure
 			never_void: Result /= Void
 			limited: a_bytes.count > config.upload_bytes implies not Result.is_success
@@ -285,9 +387,20 @@ feature -- Administration
 			valid_username: (create {CHAT_USER_RULES}).is_valid_username (a_username)
 			valid_display: (create {CHAT_USER_RULES}).is_valid_human_display_name (a_display_name)
 			password_long_enough: a_password.count >= config.password_minimum
+		local
+			l_user: CHAT_USER
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			if store.has_username (a_username) then
+				create Result.make_error (exists_error)
+			else
+				create l_user.make (0, a_username, a_display_name, hasher.hash (a_password), a_is_admin, False, now)
+				store.add_user (l_user)
+				if attached store.default_room as l_room then
+					store.add_membership (create {CHAT_MEMBERSHIP}.make (l_room.id, l_user.id, {CHAT_MEMBERSHIP}.Role_member, now))
+				end
+				log.info ("user created id=" + l_user.id.out)
+				create Result.make_success (l_user)
+			end
 		ensure
 			never_void: Result /= Void
 			duplicate_refused: old store.has_username (a_username) implies not Result.is_success
@@ -303,8 +416,11 @@ feature -- Administration
 			valid_display: (create {CHAT_USER_RULES}).is_valid_human_display_name (a_display_name)
 			password_long_enough: a_password.count >= config.password_minimum
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4: if not store.has_admin then create_user (..., True)
+			if store.has_admin then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_exists, "An administrator already exists.", 409))
+			else
+				Result := create_user (a_username, a_display_name, a_password, True)
+			end
 		ensure
 			never_void: Result /= Void
 			refused_when_admin_exists: old store.has_admin implies not Result.is_success
@@ -317,9 +433,23 @@ feature -- Administration
 		require
 			valid_username: (create {CHAT_USER_RULES}).is_valid_username (a_username)
 			valid_display: (create {CHAT_USER_RULES}).is_marked_display_name (a_display_name)
+		local
+			l_bot: CHAT_USER
+			l_issued: TUPLE [token: STRING_8; session: CHAT_SESSION]
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			if store.has_username (a_username) then
+				create Result.make_error (exists_error)
+			else
+				create l_bot.make (0, a_username, a_display_name, "", False, True, now)
+				store.add_user (l_bot)
+				if attached store.default_room as l_room then
+					store.add_membership (create {CHAT_MEMBERSHIP}.make (l_room.id, l_bot.id, {CHAT_MEMBERSHIP}.Role_member, now))
+				end
+				l_issued := issuer.issue (l_bot, Bot_token_lifetime_seconds, True)
+				store.put_session (l_issued.session)
+				log.info ("bot created id=" + l_bot.id.out)
+				create Result.make_success ([l_bot, l_issued.token])
+			end
 		ensure
 			never_void: Result /= Void
 			duplicate_refused: old store.has_username (a_username) implies not Result.is_success
@@ -334,8 +464,15 @@ feature -- Administration
 			stored: a_user.is_stored
 			password_long_enough: a_password.count >= config.password_minimum
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4: hash, update_user, remove_sessions_of
+			if attached store.user (a_user.id) as l_user and then not l_user.is_bot then
+				l_user.set_password_hash (hasher.hash (a_password))
+				store.update_user (l_user)
+				store.remove_sessions_of (a_user.id)
+				log.info ("password reset user=" + a_user.id.out)
+				create Result.make_success (l_user)
+			else
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "That user is not stored here.", 404))
+			end
 		ensure
 			never_void: Result /= Void
 			verifiable: Result.is_success implies (attached store.user (a_user.id) as u and then hasher.verify (a_password, u.password_hash))
@@ -349,8 +486,16 @@ feature -- Administration
 			old_given: not a_old.is_empty
 			new_long_enough: a_new.count >= config.password_minimum
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			if not hasher.verify (a_old, a_user.password_hash) then
+				create Result.make_error (bad_credentials_error)
+			elseif attached store.user (a_user.id) as l_user and then not l_user.is_bot then
+				l_user.set_password_hash (hasher.hash (a_new))
+				store.update_user (l_user)
+				log.info ("password changed user=" + a_user.id.out)
+				create Result.make_success (l_user)
+			else
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "That user is not stored here.", 404))
+			end
 		ensure
 			never_void: Result /= Void
 			old_required: not (old hasher.verify (a_old, a_user.password_hash)) implies not Result.is_success
@@ -361,7 +506,7 @@ feature -- Administration
 		require
 			bot: a_bot.is_bot and a_bot.is_stored
 		do
-			-- Implementation in Phase 4: store.remove_sessions_of (a_bot.id)
+			store.remove_sessions_of (a_bot.id)
 		ensure
 			revoked: not store.has_session_of (a_bot.id)
 		end
@@ -441,6 +586,10 @@ feature -- Access (contract support)
 	Minute_seconds: INTEGER = 60
 	Ten_minutes_seconds: INTEGER = 600
 	Hour_seconds: INTEGER = 3600
+	Day_seconds: INTEGER = 86400
+
+	Bot_token_lifetime_seconds: INTEGER = 315360000
+			-- Ten years: a bot token lives until it is revoked.
 
 	is_plausible_username (a_username: READABLE_STRING_GENERAL): BOOLEAN
 			-- ASCII and within the username rules - the only names a lookup may be attempted for.
@@ -484,6 +633,22 @@ feature {NONE} -- Implementation
 	log: CHAT_LOG
 	issuer: SESSION_ISSUER
 	crypto: SIMPLE_ENCRYPTION
+
+	bad_credentials_error: CHAT_ERROR
+			-- The one refusal a guesser sees (no username oracle).
+		do
+			create Result.make ({CHAT_ERROR}.Code_bad_credentials, "The username or password is not right.", 401)
+		end
+
+	rate_limited_error: CHAT_ERROR
+		do
+			create Result.make ({CHAT_ERROR}.Code_rate_limited, "Too many posts; wait a moment.", 429)
+		end
+
+	exists_error: CHAT_ERROR
+		do
+			create Result.make ({CHAT_ERROR}.Code_exists, "That username is already taken.", 409)
+		end
 
 	not_implemented_error: CHAT_ERROR
 			-- Phase 1 stub outcome.

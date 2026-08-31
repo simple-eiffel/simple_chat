@@ -1,0 +1,382 @@
+note
+	description: "[
+		CHAT_SERVICE's Phase 4 bodies under assault, over the memory store:
+		the first admin's uniqueness, login lockout and recovery, the user
+		limiter never fed by made-up names, the marker law on both kinds of
+		author, the post limit hitting and recovering, the upload rules
+		(signature, size, hash and path pinned), gapless paging, session
+		round trips for people and bots, and the password commands.
+		Hand-computed expectations throughout.
+	]"
+	author: "Larry Rix"
+
+class
+	SERVICE_ASSAULT
+
+inherit
+	TEST_SET_BASE
+
+feature -- Administration
+
+	test_first_admin_created_once
+		local
+			l_service: CHAT_SERVICE
+			l_result: CHAT_RESULT [CHAT_USER]
+		do
+			l_service := service
+			l_result := l_service.create_first_admin ("larry", {STRING_32} "Larry", {STRING_32} "open sesame 42")
+			assert ("admin created", l_result.is_success and attached l_result.value as u and then (u.is_admin and u.is_stored and l_service.store.has_admin))
+			assert ("joined the default room", attached l_result.value as u2 and then l_service.store.is_member (u2.id, l_service.store.default_room_id))
+			l_result := l_service.create_first_admin ("mallory", {STRING_32} "Mallory", {STRING_32} "open sesame 42")
+			assert ("second admin refused", not l_result.is_success and attached l_result.error as e and then e.code.same_string ({CHAT_ERROR}.Code_exists))
+			l_result := l_service.create_user ("larry", {STRING_32} "Larry Two", {STRING_32} "open sesame 42", False)
+			assert ("duplicate username refused", not l_result.is_success and attached l_result.error as e2 and then e2.code.same_string ({CHAT_ERROR}.Code_exists))
+			l_result := l_service.create_user ("nick", {STRING_32} "Nick", {STRING_32} "open sesame 42", False)
+			assert ("second person fresh", l_result.is_success and l_service.store.user_count = 2)
+		end
+
+	test_reset_password_revokes_sessions
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_login: CHAT_RESULT [CHAT_SESSION]
+			l_result: CHAT_RESULT [CHAT_USER]
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_login := l_service.authenticate ("larry", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("logged in", l_login.is_success and l_service.store.has_session_of (l_admin.id))
+			l_result := l_service.reset_password (l_admin, {STRING_32} "brand new pass 7")
+			assert ("reset succeeds and revokes", l_result.is_success and not l_service.store.has_session_of (l_admin.id))
+			l_login := l_service.authenticate ("larry", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("old password dead", not l_login.is_success)
+			l_login := l_service.authenticate ("larry", {STRING_32} "brand new pass 7", "127.0.0.1")
+			assert ("new password lives", l_login.is_success)
+		end
+
+	test_change_password_needs_the_old_one
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_result: CHAT_RESULT [CHAT_USER]
+			l_login: CHAT_RESULT [CHAT_SESSION]
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_result := l_service.change_password (l_admin, {STRING_32} "not the old one", {STRING_32} "wanted new pass")
+			assert ("wrong old refused", not l_result.is_success and attached l_result.error as e and then e.code.same_string ({CHAT_ERROR}.Code_bad_credentials))
+			l_login := l_service.authenticate ("larry", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("old still works after the refusal", l_login.is_success)
+			l_result := l_service.change_password (l_admin, {STRING_32} "open sesame 42", {STRING_32} "wanted new pass")
+			assert ("right old accepted", l_result.is_success)
+			l_login := l_service.authenticate ("larry", {STRING_32} "wanted new pass", "127.0.0.1")
+			assert ("new password lives", l_login.is_success)
+		end
+
+feature -- Authentication
+
+	test_login_lockout_and_recovery
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_login: CHAT_RESULT [CHAT_SESSION]
+			i, l_limit: INTEGER
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_limit := l_service.config.login_failures_per_10_minutes
+			from i := 1 until i > l_limit loop
+				l_login := l_service.authenticate ("larry", {STRING_32} "not the password", "10.0.0.9")
+				assert ("wrong password refused", not l_login.is_success and attached l_login.error as e and then e.code.same_string ({CHAT_ERROR}.Code_bad_credentials))
+				i := i + 1
+			end
+			assert ("failures counted per user and address", l_service.limits.total (l_service.login_user_key ("larry")) = l_limit
+				and l_service.limits.total (l_service.login_ip_key ("10.0.0.9")) = l_limit)
+			assert ("locked now", not l_service.limits.is_allowed (l_service.login_user_key ("larry")))
+			l_login := l_service.authenticate ("larry", {STRING_32} "open sesame 42", "10.0.0.9")
+			assert ("right password still locked out", not l_login.is_success and attached l_login.error as e2 and then e2.code.same_string ({CHAT_ERROR}.Code_locked_out))
+			assert ("lockout itself uncounted", l_service.limits.total (l_service.login_user_key ("larry")) = l_limit)
+			l_service.limits.advance (601)
+			l_login := l_service.authenticate ("larry", {STRING_32} "open sesame 42", "10.0.0.9")
+			assert ("window passed, login works", l_login.is_success and attached l_login.value as l_session and then l_session.user_id = l_admin.id)
+		end
+
+	test_unknown_names_never_fill_the_user_limiter
+		local
+			l_service: CHAT_SERVICE
+			l_login: CHAT_RESULT [CHAT_SESSION]
+		do
+			l_service := service
+			l_login := l_service.authenticate ("ghost_rider", {STRING_32} "whatever pass", "10.0.0.7")
+			assert ("unknown name refused", not l_login.is_success)
+			assert ("no user-key entry", l_service.limits.count (l_service.login_user_key ("ghost_rider")) = 0
+				and l_service.limits.total (l_service.login_user_key ("ghost_rider")) = 0)
+			assert ("address counted", l_service.limits.total (l_service.login_ip_key ("10.0.0.7")) = 1)
+			l_login := l_service.authenticate ({STRING_32} "Not A Valid Name!", {STRING_32} "whatever pass", "10.0.0.7")
+			assert ("implausible refused", not l_login.is_success)
+			assert ("address counted again", l_service.limits.total (l_service.login_ip_key ("10.0.0.7")) = 2)
+		end
+
+	test_session_round_trip
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_login: CHAT_RESULT [CHAT_SESSION]
+			l_token: STRING_8
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_login := l_service.authenticate ("larry", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("login succeeds", l_login.is_success)
+			l_token := l_service.last_issued_token
+			assert ("clear token issued, 64 characters", l_token.count = 64)
+			assert ("only the hash is stored", attached l_login.value as l_session and then
+				(l_session.token_hash.same_string (l_service.token_hash_of (l_token)) and not l_session.token_hash.same_string (l_token)))
+			assert ("token finds its live session", attached l_service.session_for_token (l_token) as l_found and then l_found.user_id = l_admin.id)
+			if attached l_login.value as l_session2 then
+				l_service.revoke (l_session2)
+			end
+			assert ("revoked token finds nothing", l_service.session_for_token (l_token) = Void)
+		end
+
+	test_bot_token_round_trip_and_bot_login_refused
+		local
+			l_service: CHAT_SERVICE
+			l_bot_result: CHAT_RESULT [TUPLE [bot: CHAT_USER; token: STRING_8]]
+			l_login: CHAT_RESULT [CHAT_SESSION]
+		do
+			l_service := service
+			l_bot_result := l_service.create_bot ("robot", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Robot")
+			assert ("bot exists", l_bot_result.is_success)
+			if attached l_bot_result.value as t then
+				assert ("bot token finds a bot session", attached l_service.session_for_token (t.token) as l_session and then
+					(l_session.is_bot_token and l_session.user_id = t.bot.id))
+				l_login := l_service.authenticate ("robot", {STRING_32} "any password here", "127.0.0.1")
+				assert ("bots cannot password-login", not l_login.is_success)
+				assert ("the refusal is counted for the known name", l_service.limits.total (l_service.login_user_key ("robot")) = 1)
+				l_service.revoke_bot_token (t.bot)
+				assert ("revoked bot token gone", l_service.session_for_token (t.token) = Void and not l_service.store.has_session_of (t.bot.id))
+			end
+		end
+
+feature -- Posting
+
+	test_bot_marker_is_the_bots_alone
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_room: CHAT_ROOM
+			l_bot_result: CHAT_RESULT [TUPLE [bot: CHAT_USER; token: STRING_8]]
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_room := main_room (l_service)
+			l_bot_result := l_service.create_bot ("robot", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Robot")
+			assert ("bot created with a 64-character token", l_bot_result.is_success and attached l_bot_result.value as t and then (t.bot.is_bot and t.token.count = 64))
+			if attached l_bot_result.value as t2 then
+				l_result := l_service.post_message (t2.bot, l_room, {STRING_32} "beep")
+				assert ("marker prepended once", l_result.is_success and attached l_result.value as e and then
+					(e.body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker) and e.body.ends_with ({STRING_32} " beep") and e.is_bot_authored))
+				l_result := l_service.post_message (t2.bot, l_room, {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " already marked")
+				assert ("marked body kept as is", l_result.is_success and attached l_result.value as e2 and then
+					e2.body.same_string ({CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " already marked"))
+			end
+			l_result := l_service.post_message (l_admin, l_room, {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " pretending")
+			assert ("person with the marker refused", not l_result.is_success and attached l_result.error as e3 and then e3.code.same_string ({CHAT_ERROR}.Code_refused))
+			l_result := l_service.post_message (l_admin, l_room, {STRING_32} "an honest hello")
+			assert ("person's body kept exactly", l_result.is_success and attached l_result.value as e4 and then
+				(e4.body.same_string ({STRING_32} "an honest hello") and not e4.is_bot_authored))
+		end
+
+	test_post_rate_limit_hits_and_recovers
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_room: CHAT_ROOM
+			l_result: CHAT_RESULT [CHAT_EVENT]
+			i: INTEGER
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_room := main_room (l_service)
+			from i := 1 until i > l_service.config.posts_per_minute loop
+				l_result := l_service.post_message (l_admin, l_room, "m" + i.out)
+				assert ("post accepted", l_result.is_success)
+				i := i + 1
+			end
+			l_result := l_service.post_message (l_admin, l_room, {STRING_32} "one too many")
+			assert ("limit reached", not l_result.is_success and attached l_result.error as e and then e.code.same_string ({CHAT_ERROR}.Code_rate_limited))
+			assert ("nothing appended", l_service.store.last_event_id = l_service.config.posts_per_minute.to_integer_64)
+			l_service.limits.advance (61)
+			l_result := l_service.post_message (l_admin, l_room, {STRING_32} "after the window")
+			assert ("window passed, posting works", l_result.is_success and l_service.store.last_event_id = l_service.config.posts_per_minute.to_integer_64 + 1)
+		end
+
+	test_image_system_and_status_posts
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_room: CHAT_ROOM
+			l_upload: CHAT_RESULT [CHAT_ATTACHMENT]
+			l_result: CHAT_RESULT [CHAT_EVENT]
+			l_before: INTEGER_64
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_room := main_room (l_service)
+			l_upload := l_service.store_upload (l_admin, {STRING_32} "pic.png", png_bytes (16))
+			assert ("upload ok", l_upload.is_success)
+			if attached l_upload.value as a then
+				l_result := l_service.post_image (l_admin, l_room, a, {STRING_32} "sunset over the lake")
+				assert ("image event carries caption and attachment", l_result.is_success and attached l_result.value as e and then
+					(e.is_image and e.body.same_string ({STRING_32} "sunset over the lake") and attached e.attachment as ea and then ea.id = a.id))
+			end
+			l_result := l_service.post_system (l_room, {STRING_32} "the server greets the room")
+			assert ("system event from sender zero", l_result.is_success and attached l_result.value as e2 and then (e2.is_system and e2.sender_id = 0))
+			l_before := l_service.store.last_event_id
+			l_service.publish_status (l_room, l_admin, {STRING_32} "thinking...")
+			assert ("status rung, nothing stored", l_service.bus.status_count = 1 and l_service.store.last_event_id = l_before)
+		end
+
+feature -- Reading
+
+	test_events_since_pages_gapless
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_room: CHAT_ROOM
+			l_result: CHAT_RESULT [CHAT_EVENT]
+			l_page: ARRAYED_LIST [CHAT_EVENT]
+			l_seen, l_cursor: INTEGER_64
+			i: INTEGER
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			l_room := main_room (l_service)
+			from i := 1 until i > 5 loop
+				l_result := l_service.post_message (l_admin, l_room, "page me " + i.out)
+				assert ("posted", l_result.is_success)
+				i := i + 1
+			end
+			from
+				l_cursor := 0
+			until
+				l_service.events_since (l_room, l_cursor, 2).is_empty
+			loop
+				l_page := l_service.events_since (l_room, l_cursor, 2)
+				assert ("page bounded", l_page.count <= 2)
+				across l_page as e loop
+					assert ("gapless ascent", e.id = l_seen + 1)
+					l_seen := e.id
+				end
+				l_cursor := l_page.last.id
+			end
+			assert ("all five paged", l_seen = 5)
+			l_page := l_service.events_before (l_room, 4, 2)
+			assert ("history page is 2 and 3, ascending", l_page.count = 2 and l_page [1].id = 2 and l_page [2].id = 3)
+		end
+
+feature -- Uploads
+
+	test_upload_signature_size_and_pinning
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_result: CHAT_RESULT [CHAT_ATTACHMENT]
+			l_bytes: SPECIAL [NATURAL_8]
+			l_rules: CHAT_ATTACHMENT_RULES
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			create l_rules
+			l_bytes := png_bytes (64)
+			l_result := l_service.store_upload (l_admin, {STRING_32} "photo.png", l_bytes)
+			assert ("png accepted", l_result.is_success and attached l_result.value as a and then
+				(a.mime.same_string ({CHAT_ATTACHMENT}.Mime_png) and a.size = 64 and l_service.store.has_attachment (a.id)))
+			assert ("hash and path pinned", attached l_result.value as a2 and then
+				(a2.sha256.same_string (l_service.sha256_hex_of (l_bytes)) and a2.stored_relpath.same_string (l_rules.stored_path_for (a2.sha256, a2.mime))))
+			l_result := l_service.store_upload (l_admin, {STRING_32} "photo.jpg", jpeg_bytes (32))
+			assert ("jpeg detected", l_result.is_success and attached l_result.value as a3 and then
+				(a3.mime.same_string ({CHAT_ATTACHMENT}.Mime_jpeg) and a3.stored_relpath.ends_with (".jpg")))
+			create l_bytes.make_filled ({NATURAL_8} 65, 16)
+			l_result := l_service.store_upload (l_admin, {STRING_32} "notes.txt", l_bytes)
+			assert ("junk refused", not l_result.is_success and attached l_result.error as e and then e.code.same_string ({CHAT_ERROR}.Code_bad_type))
+			l_result := l_service.store_upload (l_admin, {STRING_32} "big.png", png_bytes ((l_service.config.upload_bytes + 1).to_integer_32))
+			assert ("oversize refused", not l_result.is_success and attached l_result.error as e2 and then e2.code.same_string ({CHAT_ERROR}.Code_too_large))
+			assert ("only the two stored", l_service.store.attachment_count = 2)
+		end
+
+feature {NONE} -- Fixtures
+
+	service: CHAT_SERVICE
+			-- A fresh service over an open memory store with one room "main",
+			-- default configuration, a 3600-second limiter and a redacting log.
+		local
+			l_config: SERVER_CONFIG
+			l_store: MEMORY_CHAT_STORE
+			l_bus: EVENT_BUS
+			l_limits: RATE_LIMITER
+			l_log: CHAT_LOG
+			l_logger: SIMPLE_LOGGER
+			l_now: SIMPLE_DATE_TIME
+		do
+			create l_config.make_defaults
+			create l_store.make
+			l_store.open
+			create l_now.make_now
+			l_store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", l_now))
+			create l_bus.make
+			create l_limits.make (3600)
+			create l_logger
+			create l_log.make (l_logger)
+			create Result.make (l_store, l_bus, l_limits, l_config, l_log)
+		end
+
+	admin_of (a_service: CHAT_SERVICE): CHAT_USER
+			-- The first admin "larry" (password "open sesame 42"), created through the service.
+		do
+			if attached a_service.create_first_admin ("larry", {STRING_32} "Larry", {STRING_32} "open sesame 42").value as l_user then
+				Result := l_user
+			else
+				check first_admin_created: False then end
+			end
+		end
+
+	main_room (a_service: CHAT_SERVICE): CHAT_ROOM
+		do
+			if attached a_service.store.default_room as l_room then
+				Result := l_room
+			else
+				check default_room_exists: False then end
+			end
+		end
+
+	png_bytes (a_count: INTEGER): SPECIAL [NATURAL_8]
+			-- `a_count' zero bytes beginning with the eight-byte PNG signature.
+		require
+			room_for_signature: a_count >= 8
+		do
+			create Result.make_filled ({NATURAL_8} 0, a_count)
+			Result [0] := {NATURAL_8} 0x89
+			Result [1] := {NATURAL_8} 0x50
+			Result [2] := {NATURAL_8} 0x4E
+			Result [3] := {NATURAL_8} 0x47
+			Result [4] := {NATURAL_8} 0x0D
+			Result [5] := {NATURAL_8} 0x0A
+			Result [6] := {NATURAL_8} 0x1A
+			Result [7] := {NATURAL_8} 0x0A
+		end
+
+	jpeg_bytes (a_count: INTEGER): SPECIAL [NATURAL_8]
+			-- `a_count' zero bytes beginning with the JPEG signature FF D8 FF.
+		require
+			room_for_signature: a_count >= 3
+		do
+			create Result.make_filled ({NATURAL_8} 0, a_count)
+			Result [0] := {NATURAL_8} 0xFF
+			Result [1] := {NATURAL_8} 0xD8
+			Result [2] := {NATURAL_8} 0xFF
+		end
+
+end
