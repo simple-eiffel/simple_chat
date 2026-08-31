@@ -50,6 +50,16 @@ feature -- Access
 
 feature -- Status report
 
+	permits_via (a_choice: READABLE_STRING_GENERAL): BOOLEAN
+			-- May a member steer this participant with "via a_choice"?
+			-- False here: a plain participant has no via edge, and the
+			-- dispatcher refuses such a request explicitly rather than
+			-- dropping the choice silently (NEW-10). Tools redefine this
+			-- to their configured shaper choices (`allows_via').
+		do
+			Result := False
+		end
+
 	has_capacity: BOOLEAN
 			-- May one more request be answered now?
 		do

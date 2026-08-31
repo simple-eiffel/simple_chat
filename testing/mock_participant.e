@@ -35,6 +35,9 @@ feature -- Access
 
 	scripted_text: STRING_32
 	should_fail: BOOLEAN
+	should_raise: BOOLEAN
+			-- Raise inside `answer' (an engine that breaks its "never raises"
+			-- promise), for the dispatcher's rescue path (NEW-7).
 
 feature -- Element change
 
@@ -45,10 +48,23 @@ feature -- Element change
 			set: should_fail = a_fail
 		end
 
+	set_should_raise (a_raise: BOOLEAN)
+		do
+			should_raise := a_raise
+		ensure
+			set: should_raise = a_raise
+		end
+
 feature -- Basic operations
 
 	answer (a_request: PARTICIPANT_REQUEST): PARTICIPANT_ANSWER
+		local
+			l_boom: DEVELOPER_EXCEPTION
 		do
+			if should_raise then
+				create l_boom
+				l_boom.raise
+			end
 			calls := calls + 1
 			if should_fail then
 				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "scripted failure", 503))

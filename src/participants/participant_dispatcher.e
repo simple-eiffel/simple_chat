@@ -1,30 +1,38 @@
 note
 	description: "[
 		The room member that turns an addressed message into a participant's
-		reply. It lives on its own processor (D1, approach section 8): the
-		bus wakes it with an asynchronous `wake', which only notes the room;
-		`dispatch_pending' - called by the dispatcher's driver, whose SCOOP
-		wait condition is `has_pending' - drains the noted rooms one at a
-		time: it pulls the page after that room's cursor from the API as
-		bytes, decodes a copy here (CHAT_JSON), and hands each event to
-		`handle_event'. Nothing of the API's processor is ever held: `api'
-		is touched only inside routines that take it as a separate
-		argument, only bytes and scalars cross, and every reply goes back
-		through `dispatcher_post'. Phase 4 builds the registry, parser and
-		log on this processor.
+		reply. It lives on its own processor (D1, approach section 8) and
+		drives itself (NEW-1): the bus's asynchronous `wake' notes the room
+		and immediately drains everything pending (`dispatch_pending') -
+		SCOOP runs the wakes one at a time on this processor, so a wake
+		arriving while one drains simply waits its turn and the poster
+		never blocks. Draining pulls the page after each room's cursor from
+		the API as bytes, decodes a copy here (CHAT_JSON), and hands each
+		event to `handle_event'. Nothing of the API's processor is ever
+		held: `api' is touched only inside routines that take it as a
+		separate argument, only bytes and scalars cross, and every reply
+		goes back through `dispatcher_post'. `make' builds its own
+		registry, parser and log on this processor, so a separate creator
+		(DISPATCHER_HOST) can bring the dispatcher up with just the API and
+		the store's last id.
 
 		`handle_event' is idempotent (`answered_model' remembers every
-		request taken), so a page delivered twice, a restart from
-		`start_after' (the store's last id, Issue 16) or a hand-fed event
-		can never answer twice (Issue 9). A request is asked of its
-		participant only when the bot can post in that room
+		request taken; ids at or below `pruned_floor' can never recur, so
+		`answered' stays bounded - NEW-6), so a page delivered twice, a
+		restart from `start_after' (the store's last id, Issue 16) or a
+		hand-fed event can never answer twice (Issue 9). A request is asked
+		of its participant only when the bot can post in that room
 		(`only_member_rooms') and the asker's rate limit allows it
 		(`rate_limited_not_asked', `asked_once', `limit_recorded' - Issue
-		15); refusals and apologies are posted as answers; a post the
-		service refuses is an `answer_failure'. One request at a time per
-		participant, in order, behind a bounded FIFO (`Max_queue_depth').
-		Bot-authored, system and image events are never requests (no echo
-		loops).
+		15); a request whose `via' names a participant is charged under
+		BOTH keys for the same asker (`via_charged'); a `via' the target
+		does not permit is an explicit refusal, never silently dropped
+		(NEW-10); refusals and apologies are posted as answers; a post the
+		service refuses is an `answer_failure'; an engine that raises is
+		one `answer_failure' with its queue slot released, and the
+		dispatcher lives on (NEW-7). One request at a time per participant,
+		in order, behind a bounded FIFO (`Max_queue_depth'). Bot-authored,
+		system and image events are never requests (no echo loops).
 	]"
 	author: "Larry Rix"
 
@@ -39,16 +47,26 @@ create
 
 feature {NONE} -- Initialization
 
-	make (a_api: separate CHAT_API; a_parser: ADDRESS_PARSER; a_log: CHAT_LOG; a_start_after: INTEGER_64)
-			-- A dispatcher over `a_api' that never looks at events up to `a_start_after'
-			-- (the store's last id at start: `dispatcher_start_after').
+	make (a_api: separate CHAT_API; a_start_after: INTEGER_64)
+			-- A dispatcher over `a_api' that never looks at events up to
+			-- `a_start_after' (the store's last id at start:
+			-- `dispatcher_start_after'). Builds its own registry, parser and
+			-- log HERE, so a creator on another processor needs to pass only
+			-- what crosses processors cleanly (NEW-1); participants are then
+			-- registered through `registry'.
 		require
 			start_non_negative: a_start_after >= 0
+		local
+			l_registry: PARTICIPANT_REGISTRY
+			l_logger: SIMPLE_LOGGER
 		do
 			api := a_api
-			parser := a_parser
-			log := a_log
+			create l_registry.make
+			create parser.make (l_registry)
+			create l_logger
+			create log.make (l_logger)
 			start_after := a_start_after
+			pruned_floor := a_start_after
 			subscriber_name := "dispatcher"
 			create pending_rooms.make (4)
 			create cursors.make (4)
@@ -57,9 +75,11 @@ feature {NONE} -- Initialization
 			queue_depths.compare_objects
 			create codec.make
 			create last_ask_key.make_empty
+			create last_via_key.make_empty
 		ensure
-			set: parser = a_parser and log = a_log
 			starts_where_told: start_after = a_start_after
+			floor_at_start: pruned_floor = a_start_after
+			own_registry: registry.count = 0
 			fresh: wake_count = 0 and requests_seen = 0 and answers_posted = 0 and answer_failures = 0 and asks = 0
 			nothing_pending: pending_rooms_model.is_empty
 			no_cursors: cursors_model.is_empty
@@ -142,6 +162,58 @@ feature -- Access
 
 	last_page_count: INTEGER
 			-- How many events the latest page decoded to; 0 for an undecodable one.
+
+	last_via_key: STRING_8
+			-- The via participant's limiter key the latest granted ask was
+			-- also charged to (Issue 15, `via_charged'); empty when the
+			-- latest request named no via participant.
+
+	last_answer_raised: BOOLEAN
+			-- Did the latest request's engine raise (NEW-7)? Such a request
+			-- is accounted as one `answer_failure' with its queue slot
+			-- released; the dispatcher lives on.
+
+	pruned_floor: INTEGER_64
+			-- Ids at or below it can never be handled again and are pruned
+			-- from `answered' (NEW-6): every handled event's room is in
+			-- `cursors' with a cursor at or above its id, and a page only
+			-- hands over ids above its room's cursor.
+
+	minimum_cursor: INTEGER_64
+			-- The lowest room cursor; `start_after' when no room was pulled yet.
+		do
+			Result := start_after
+			if not cursors.is_empty then
+				across cursors as ic loop
+					if @ic.is_first or ic < Result then
+						Result := ic
+					end
+				end
+			end
+		ensure
+			at_least_start: Result >= start_after
+		end
+
+	request_via_of (a_event: CHAT_EVENT): detachable STRING_32
+			-- The `via' choice `a_event''s request makes, or Void (contract support).
+		do
+			if attached parser.parse (a_event.body) as r and then attached r.via as v then
+				Result := v.twin
+			end
+		end
+
+	via_target_of (a_event: CHAT_EVENT): detachable PARTICIPANT
+			-- The registered participant a request's `via' names, or Void -
+			-- "via plain", and via choices that name no participant, give
+			-- Void. Such a request is charged under BOTH keys (Issue 15).
+		do
+			if attached request_via_of (a_event) as v then
+				Result := registry.find (v)
+			end
+		ensure
+			only_with_via: Result /= Void implies request_via_of (a_event) /= Void
+			registered: attached Result as p implies registry.has (p.handle)
+		end
 
 	cursor_of (a_room_id: INTEGER_64): INTEGER_64
 			-- The last event id examined in `a_room_id'; `start_after' before any pull.
@@ -233,16 +305,24 @@ feature -- Status report
 feature -- Basic operations
 
 	wake (a_room_id: INTEGER_64)
-			-- Note that `a_room_id' has news; the work waits for `dispatch_pending'.
+			-- Note that `a_room_id' has news, then drain everything pending
+			-- (NEW-1: the dispatcher drives itself). SCOOP runs wakes one at
+			-- a time on this processor: the bus's `wake_one' is an
+			-- asynchronous command, so the poster never waits, and a wake
+			-- arriving while this one drains is queued behind it - the
+			-- drain it triggers sees anything this one left.
 		do
 			wake_count := wake_count + 1
 			if not pending_rooms.has (a_room_id) then
 				pending_rooms.extend (a_room_id)
 			end
+			dispatch_pending
 		ensure then
-			queued: pending_rooms_model.has (a_room_id)
-			only_queued: pending_rooms_model |=| ((old pending_rooms_model) & a_room_id)
-			no_work: cursors_model |=| old cursors_model and answered_model |=| old answered_model and requests_seen = old requests_seen
+			drained: pending_rooms_model.is_empty
+			monotone: across cursors as ic all
+				((old cursors_model).domain.has (@ic.key) implies ic >= (old cursors_model) [@ic.key])
+				and (not (old cursors_model).domain.has (@ic.key) implies ic >= start_after) end
+			floor_current: pruned_floor = minimum_cursor
 		end
 
 	receive_status (a_status: separate CHAT_STATUS)
@@ -253,9 +333,11 @@ feature -- Basic operations
 		end
 
 	dispatch_pending
-			-- Drain the noted rooms in order: for each, pull the pages after its
-			-- cursor from the API and handle every event. A wake queued behind
-			-- this call (SCOOP runs them one at a time) waits for the next call.
+			-- Drain the noted rooms in order: for each, pull the pages after
+			-- its cursor from the API and handle every event; then prune the
+			-- taken ids nothing can deliver again (NEW-6). A wake queued
+			-- behind this call (SCOOP runs them one at a time) waits for the
+			-- next call.
 		local
 			l_room, l_before: INTEGER_64
 			l_more: BOOLEAN
@@ -277,12 +359,14 @@ feature -- Basic operations
 					l_more := last_page_count >= Pull_limit and cursor_of (l_room) > l_before
 				end
 			end
+			prune_answered
 		ensure
 			drained: pending_rooms_model.is_empty
 			monotone: across cursors as ic all
 				((old cursors_model).domain.has (@ic.key) implies ic >= (old cursors_model) [@ic.key])
 				and (not (old cursors_model).domain.has (@ic.key) implies ic >= start_after) end
-			answered_only_grows: (old answered_model) <= answered_model
+			floor_current: pruned_floor = minimum_cursor
+			kept_above_floor: across answered as ic all @ic.key > pruned_floor end
 			wakes_untouched: wake_count = old wake_count
 		end
 
@@ -317,31 +401,63 @@ feature -- Basic operations
 		end
 
 	handle_event (a_event: CHAT_EVENT)
-			-- Take `a_event' as a request if it is one and has not been taken:
-			-- ask the participant - when the bot can post there, the queue has
-			-- room and the asker's limit allows - and post the reply, a refusal
-			-- or an apology.
+			-- Take `a_event' as a request if it is one and has not been taken
+			-- (ids at or below `pruned_floor' count as taken - NEW-6): ask
+			-- the participant - when the bot can post there, the request's
+			-- `via' (if any) is one the target permits (else an explicit
+			-- refusal, NEW-10), the queue has room and the asker's limit
+			-- allows, under the via participant's key too when the `via'
+			-- names one (Issue 15) - and post the reply, a refusal or an
+			-- apology. An engine that raises is retried into the accounting
+			-- branch once: one `answer_failure', the queue slot released,
+			-- the dispatcher alive (NEW-7).
 		local
 			l_answer: PARTICIPANT_ANSWER
+			l_failed, l_taken, l_queued: BOOLEAN
 		do
-			if not answered.has (a_event.id) and then attached target_of (a_event) as l_target then
+			if not l_failed then
+				last_answer_raised := False
+			end
+			if l_failed then
+				-- The engine (or the posting path after it) raised: the
+				-- request was taken on the first attempt; release the slot
+				-- and account the failure.
+				if l_queued and then attached target_of (a_event) as l_crashed and then queue_depth_of (l_crashed) > 0 then
+					dequeue (l_crashed)
+					l_queued := False
+				end
+				answer_failures := answer_failures + 1
+				last_answer_raised := True
+				log.error ({STRING_32} "dispatcher: participant raised answering event " + a_event.id.out)
+			elseif a_event.id > pruned_floor and then not answered.has (a_event.id) and then attached target_of (a_event) as l_target then
 				answered.put (a_event.id, a_event.id)
 				requests_seen := requests_seen + 1
+				l_taken := True
 				last_ask_granted := False
+				create last_via_key.make_empty
 				last_can_post := can_post (api, l_target.bot_user.id, a_event.room_id)
 				if not last_can_post then
 					answer_failures := answer_failures + 1
+				elseif attached request_via_of (a_event) as l_choice and then not l_target.permits_via (l_choice) then
+					post_answer (l_target, a_event.room_id, Via_refused_text + l_choice)
 				elseif queue_depth_of (l_target) >= Max_queue_depth then
 					post_answer (l_target, a_event.room_id, Busy_text)
 				else
 					last_ask_key := l_target.limit_key (a_event.sender_id)
-					last_ask_granted := try_ask (api, last_ask_key)
+					if attached via_target_of (a_event) as l_via_target and then l_via_target /= l_target then
+						last_via_key := l_via_target.limit_key (a_event.sender_id)
+						last_ask_granted := try_ask (api, last_ask_key) and then try_ask (api, last_via_key)
+					else
+						last_ask_granted := try_ask (api, last_ask_key)
+					end
 					if not last_ask_granted then
 						post_answer (l_target, a_event.room_id, Limited_text)
 					else
 						enqueue (l_target)
+						l_queued := True
 						l_answer := l_target.answer (request_of (a_event, l_target))
 						dequeue (l_target)
+						l_queued := False
 						asks := asks + 1
 						if l_answer.is_success then
 							post_answer (l_target, a_event.room_id, l_answer.text)
@@ -352,27 +468,43 @@ feature -- Basic operations
 				end
 			end
 		ensure
-			skipped_when_seen: (old answered_model).has (a_event.id) implies (requests_seen = old requests_seen and asks = old asks
+			ancient_skipped: a_event.id <= (old pruned_floor) implies (requests_seen = old requests_seen and answered_model |=| old answered_model)
+			skipped_when_seen: ((old answered_model).has (a_event.id) or a_event.id <= (old pruned_floor)) implies (requests_seen = old requests_seen and asks = old asks
 				and answers_posted = old answers_posted and answer_failures = old answer_failures and target_calls (a_event) = old target_calls (a_event))
-			seen_once: (not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies answered_model |=| ((old answered_model) & a_event.id)
-			others_unmarked: not (not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies answered_model |=| old answered_model
-			counts_requests: (not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies requests_seen = old requests_seen + 1
+			seen_once: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies answered_model |=| ((old answered_model) & a_event.id)
+			others_unmarked: not (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies answered_model |=| old answered_model
+			counts_requests: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies requests_seen = old requests_seen + 1
 			ignores_bots: a_event.is_bot_authored implies requests_seen = old requests_seen
 			ignores_unaddressed: not parser.is_addressed (a_event.body) implies requests_seen = old requests_seen
 			ignores_non_messages: not a_event.is_message implies requests_seen = old requests_seen
-			accounted: (not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies answers_posted + answer_failures = old answers_posted + old answer_failures + 1
+			accounted: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and target_of (a_event) /= Void) implies answers_posted + answer_failures = old answers_posted + old answer_failures + 1
 			nothing_for_non_requests: target_of (a_event) = Void implies (answers_posted = old answers_posted and answer_failures = old answer_failures and asks = old asks)
-			only_member_rooms: (not (old answered_model).has (a_event.id) and target_of (a_event) /= Void and not last_can_post) implies
+			only_member_rooms: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and target_of (a_event) /= Void and not last_can_post) implies
 				(target_calls (a_event) = old target_calls (a_event) and answers_posted = old answers_posted and answer_failures = old answer_failures + 1)
 			rate_limited_not_asked: not last_ask_granted implies target_calls (a_event) = old target_calls (a_event)
-			asked_once: (not (old answered_model).has (a_event.id) and target_of (a_event) /= Void and last_ask_granted) implies
+			via_refused_is_told: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and attached target_of (a_event) as t
+				and then (last_can_post and then attached request_via_of (a_event) as v and then not t.permits_via (v))) implies
+				(asks = old asks and target_calls (a_event) = old target_calls (a_event))
+			asked_once: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and target_of (a_event) /= Void and last_ask_granted and not last_answer_raised) implies
 				(target_calls (a_event) = old target_calls (a_event) + 1 and asks = old asks + 1)
-			limit_recorded: (not (old answered_model).has (a_event.id) and last_ask_granted and attached target_of (a_event) as p) implies
+			engine_failure_accounted: last_answer_raised implies (answer_failures = old answer_failures + 1 and answers_posted = old answers_posted)
+			limit_recorded: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and last_ask_granted and attached target_of (a_event) as p) implies
 				last_ask_key.same_string (p.limit_key (a_event.sender_id))
+			via_charged: (a_event.id > (old pruned_floor) and not (old answered_model).has (a_event.id) and last_ask_granted
+				and attached via_target_of (a_event) as vt and then vt /= target_of (a_event)) implies
+				last_via_key.same_string (vt.limit_key (a_event.sender_id))
+				-- Both keys were asked, target's first, then the via participant's, for the same asker; both granted, or the
+				-- request was refused (Limited_text). A via-key refusal after the target grant leaves the target's charge
+				-- spent and the request refused: refusal is accounted, never refunded.
 			refused_when_full: (old target_queue_depth (a_event)) >= Max_queue_depth implies target_calls (a_event) = old target_calls (a_event)
 			queue_settled: target_queue_depth (a_event) = old target_queue_depth (a_event)
 			cursors_unchanged: cursors_model |=| old cursors_model
 			nothing_queued: pending_rooms_model |=| old pending_rooms_model
+		rescue
+			if l_taken and not l_failed then
+				l_failed := True
+				retry
+			end
 		end
 
 feature {NONE} -- The API, only as a separate argument
@@ -498,6 +630,33 @@ feature {NONE} -- Implementation
 			one_less: queue_depth_of (a_participant) = old queue_depth_of (a_participant) - 1
 		end
 
+	prune_answered
+			-- Drop every taken id at or below `minimum_cursor' (NEW-6): its
+			-- room's cursor is already past it, so no page can deliver it
+			-- again; `pruned_floor' remembers the line and `handle_event'
+			-- treats ids at or below it as already taken.
+		local
+			l_floor: INTEGER_64
+			l_dead: ARRAYED_LIST [INTEGER_64]
+		do
+			l_floor := minimum_cursor
+			create l_dead.make (8)
+			across answered as ic loop
+				if @ic.key <= l_floor then
+					l_dead.extend (@ic.key)
+				end
+			end
+			across l_dead as d loop
+				answered.remove (d)
+			end
+			pruned_floor := l_floor
+		ensure
+			floor_set: pruned_floor = minimum_cursor
+			kept_above: across answered as ic all @ic.key > pruned_floor end
+			nothing_added: answered_model <= old answered_model
+			floor_monotone: pruned_floor >= old pruned_floor
+		end
+
 	apology_for (a_error: CHAT_ERROR): STRING_32
 			-- What the room sees when a participant could not answer.
 		do
@@ -518,13 +677,19 @@ feature -- Constants
 
 	Limited_text: STRING_32 = "You have reached your limit with me for now - please try again later."
 
+	Via_refused_text: STRING_32 = "I do not take that via choice - ask without via, or with one I allow: "
+			-- Posted when a request's `via' names something its target does
+			-- not permit: an explicit refusal, never a silent drop (NEW-10).
+
 invariant
 	named: not subscriber_name.is_empty
 	start_non_negative: start_after >= 0
 	counts_non_negative: wake_count >= 0 and requests_seen >= 0 and answers_posted >= 0 and answer_failures >= 0 and asks >= 0
 	answers_cover_requests: answers_posted + answer_failures <= requests_seen
 	asks_within_requests: asks <= requests_seen
-	requests_are_answered_ids: requests_seen = answered.count
+	requests_cover_answered_ids: requests_seen >= answered.count
+	answered_bounded: across answered as ic all @ic.key > pruned_floor end
+	floor_at_least_start: pruned_floor >= start_after
 	cursors_after_start: across cursors as ic all ic >= start_after end
 	queues_bounded: across queue_depths as ic all ic >= 0 and ic <= Max_queue_depth end
 	pending_distinct: pending_rooms_model.count = pending_rooms.count

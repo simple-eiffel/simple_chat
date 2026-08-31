@@ -13,6 +13,9 @@ class
 
 inherit
 	TOOL_PARTICIPANT
+		redefine
+			accepts_request
+		end
 
 create
 	make
@@ -42,14 +45,31 @@ feature -- Access
 
 	database_path: STRING_32
 
+	program_path: STRING_32
+			-- <Precursor>: the database this tool opens read-only (no child
+			-- process runs; `command_line_of' names what would be opened).
+		do
+			Result := database_path
+		ensure then
+			definition: Result = database_path
+		end
+
 feature -- Status report
 
-	is_safe_argument (a_text: READABLE_STRING_GENERAL): BOOLEAN
+	accepts_word (a_text: READABLE_STRING_GENERAL): BOOLEAN
 			-- A shape slug and nothing else.
 		do
 			Result := is_slug (a_text)
 		ensure then
 			definition: Result = is_slug (a_text)
+		end
+
+	accepts_request (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- <Precursor>: exactly one slug - a multi-word request is not a query.
+		do
+			Result := words_of (a_text).count = 1
+		ensure then
+			one_word: Result = (words_of (a_text).count = 1)
 		end
 
 	is_slug (a_text: READABLE_STRING_GENERAL): BOOLEAN

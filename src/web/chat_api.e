@@ -388,7 +388,7 @@ feature -- Answers: account and administration
 			counted: request_count = old request_count + 1
 		end
 
-feature {PARTICIPANT_DISPATCHER} -- The dispatcher's processor
+feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 
 	dispatcher_start_after: INTEGER_64
 			-- Where a new dispatcher begins: the store's last event id, so a
@@ -397,6 +397,17 @@ feature {PARTICIPANT_DISPATCHER} -- The dispatcher's processor
 			Result := service.store.last_event_id
 		ensure
 			definition: Result = service.store.last_event_id
+		end
+
+	dispatcher_subscribe (a_subscriber: separate EVENT_SUBSCRIBER)
+			-- Ring `a_subscriber' for every room from now on (NEW-1): the
+			-- dispatcher is this process, so no token and no room check.
+			-- The ticket is `last_subscription'.
+		do
+			service.bus.subscribe (a_subscriber)
+			last_subscription := service.bus.last_ticket
+		ensure
+			live: last_subscription > 0 and service.bus.is_subscribed (last_subscription)
 		end
 
 	dispatcher_page (a_room_id, a_since_id: INTEGER_64; a_limit: INTEGER): STRING_8

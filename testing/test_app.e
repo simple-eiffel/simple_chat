@@ -133,6 +133,11 @@ feature {NONE} -- Initialization
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_ignores_bots_and_answers_once, "dispatcher_ignores_bots_and_answers_once")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_restart_cursor_honoured, "dispatcher_restart_cursor_honoured")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_per_room_cursors, "dispatcher_per_room_cursors")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_metacharacter_law, "metacharacter_law")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_claude_sandbox_memory_files, "claude_sandbox_memory_files")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_grants_and_charges_via, "dispatcher_grants_and_charges_via")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_survives_raising_engine, "dispatcher_survives_raising_engine")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_prunes_answered, "dispatcher_prunes_answered")
 
 			print ("=== TODO: PHASE 5 (skeletal) ===%N")
 			run_test (agent t.test_post_message_appends_and_rings, "post_message_appends_and_rings (skeletal)")

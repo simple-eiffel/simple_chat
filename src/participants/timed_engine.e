@@ -2,11 +2,16 @@ note
 	description: "[
 		What every engine that waits on something outside the process
 		reports (Issue 26): the ceiling it was given, how long the last
-		call took, and whether it overran. The ceiling is advisory until
-		simple_process can kill a child: a hung engine is reported as
-		timed out, never clamped into the bound - `elapsed_seconds' is
-		always the truth, and an overrun is always an error in the engine's
-		own contract (`timeout_is_error').
+		call took, and whether it overran. For a child process the ceiling
+		is enforceable - SIMPLE_ASYNC_PROCESS has `wait_seconds' and `kill',
+		and Phase 4 tool bodies must use them. For an HTTP engine it is
+		advisory until the client library takes a timeout: OLLAMA_CLIENT
+		(simple_ai_client) has no timeout API today (its chat request
+		carries no --max-time), and CLAUDE_CODE_CLIENT.set_timeout_seconds
+		is advisory. Either way a hung or late engine is reported as timed
+		out, never clamped into the bound - `elapsed_seconds' is always the
+		truth, and an overrun is always an error in the engine's own
+		contract (`timeout_is_error').
 	]"
 	author: "Larry Rix"
 

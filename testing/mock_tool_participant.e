@@ -1,8 +1,10 @@
 note
 	description: "[
 		A scripted TOOL_PARTICIPANT for the assault suite: the template of
-		TOOL_PARTICIPANT with an allowlist that refuses shell punctuation
-		and an engine that answers with a fixed output at once.
+		TOOL_PARTICIPANT with the base metacharacter law as its whole
+		allowlist (`accepts_word' is True, so what the base law refuses is
+		exactly what this tool refuses - NEW-2 under test) and an engine
+		that answers with a fixed output at once.
 	]"
 	author: "Larry Rix"
 
@@ -36,20 +38,19 @@ feature -- Access
 
 	scripted_output: STRING_32
 
+	program_path: STRING_32
+			-- <Precursor>: a fixed name for the command-line law under test.
+		do
+			Result := {STRING_32} "mock.exe"
+		end
+
 feature -- Status report
 
-	is_safe_argument (a_text: READABLE_STRING_GENERAL): BOOLEAN
-			-- Printable ASCII, 1..`Argument_maximum', not an option, and none of | ; & < > ` $.
-		local
-			i: INTEGER
-			c: NATURAL_32
+	accepts_word (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- Everything the base law admits: this mock's allowlist IS the
+			-- base law, so its refusals are exactly `obeys_base_law''s.
 		do
-			Result := a_text.count >= 1 and a_text.count <= Argument_maximum and then a_text.code (1) /= 45
-			from i := 1 until i > a_text.count or not Result loop
-				c := a_text.code (i)
-				Result := c >= 32 and c <= 126 and c /= 124 and c /= 59 and c /= 38 and c /= 60 and c /= 62 and c /= 96 and c /= 36
-				i := i + 1
-			end
+			Result := True
 		end
 
 feature {NONE} -- Implementation
