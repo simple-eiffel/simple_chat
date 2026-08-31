@@ -349,6 +349,7 @@ feature -- Uploads
 			active: a_uploader.is_active and a_uploader.is_stored
 			has_bytes: a_bytes.count > 0
 			valid_name: (create {CHAT_ATTACHMENT_RULES}).is_valid_name (a_original_name)
+			uploader_known: store.has_user (a_uploader.id)
 		local
 			l_mime: STRING_8
 			l_attachment: CHAT_ATTACHMENT

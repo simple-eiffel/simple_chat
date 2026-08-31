@@ -125,6 +125,20 @@ feature {NONE} -- Initialization
 			run_test (agent (create {SERVICE_ASSAULT}).test_reset_password_revokes_sessions, "reset_password_revokes_sessions")
 			run_test (agent (create {SERVICE_ASSAULT}).test_change_password_needs_the_old_one, "change_password_needs_the_old_one")
 
+			print ("=== API (Phase 4) ===%N")
+			run_test (agent (create {API_ASSAULT}).test_api_login_carries_token_once, "api_login_carries_token_once")
+			run_test (agent (create {API_ASSAULT}).test_api_login_failure_and_lockout, "api_login_failure_and_lockout")
+			run_test (agent (create {API_ASSAULT}).test_api_bot_login_refused_and_bot_token_posts, "api_bot_login_refused_and_bot_token_posts")
+			run_test (agent (create {API_ASSAULT}).test_api_me_rooms_members_guards, "api_me_rooms_members_guards")
+			run_test (agent (create {API_ASSAULT}).test_api_events_paging_and_merged_statuses, "api_events_paging_and_merged_statuses")
+			run_test (agent (create {API_ASSAULT}).test_api_post_message_echo_and_rate_limit, "api_post_message_echo_and_rate_limit")
+			run_test (agent (create {API_ASSAULT}).test_api_post_image_upload_rules_and_attachment, "api_post_image_upload_rules_and_attachment")
+			run_test (agent (create {API_ASSAULT}).test_api_change_password_flow, "api_change_password_flow")
+			run_test (agent (create {API_ASSAULT}).test_api_admin_gate_and_create_user, "api_admin_gate_and_create_user")
+			run_test (agent (create {API_ASSAULT}).test_api_admin_reset_password_kills_sessions, "api_admin_reset_password_kills_sessions")
+			run_test (agent (create {API_ASSAULT}).test_api_admin_bot_token_once_and_revoke, "api_admin_bot_token_once_and_revoke")
+			run_test (agent (create {API_ASSAULT}).test_api_participants_and_backup_answers, "api_participants_and_backup_answers")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 

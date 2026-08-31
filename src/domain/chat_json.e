@@ -557,6 +557,10 @@ feature -- Constants (wire keys)
 	Key_token: STRING_32 = "token"
 	Key_member: STRING_32 = "member"
 	Key_code: STRING_32 = "code"
+	Key_users: STRING_32 = "users"
+	Key_participants: STRING_32 = "participants"
+	Key_handle: STRING_32 = "handle"
+	Key_path: STRING_32 = "path"
 
 	Nesting_maximum: INTEGER = 32
 			-- Deeper JSON is refused before parsing: nothing on the wire nests past four.
