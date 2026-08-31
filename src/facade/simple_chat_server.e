@@ -5,7 +5,9 @@ note
 		Holds no domain rule. Under SCOOP (D1) the service, store, bus,
 		limiter and participants are built on the API's own processor
 		(CHAT_SHARED.shared_api) from the settings this facade shares
-		before starting; the door and DNS are supplied by the application
+		before starting; the participant dispatcher is launched on its own
+		processor through DISPATCHER_HOST when the configuration has
+		participants; the door and DNS are supplied by the application
 		(its `ops' cluster) through the library's contracts.
 	]"
 	author: "Larry Rix"
@@ -86,10 +88,16 @@ feature -- Core Operations
 			not_running: not is_running
 		local
 			l_web: CHAT_WEB_APP
+			l_host: DISPATCHER_HOST
 		do
 			if attached config as c then
 				shared_put (Config_path_key, {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (c.source_path))
 				api := shared_api
+				if c.ai_enabled and then attached api as a then
+					create l_host.make
+					l_host.launch (a)
+					dispatcher_host := l_host
+				end
 				create l_web.make (c)
 				l_web.start
 				web_app := l_web
@@ -109,6 +117,8 @@ feature -- Core Operations
 		ensure
 			running_or_reported: is_running xor (last_error /= Void)
 			api_up: is_running implies api /= Void
+			dispatcher_up: (attached config as c2 and then c2.ai_enabled) implies (attached dispatcher_host as h and then h.is_launched)
+			no_dispatcher_unasked: (attached config as c3 and then not c3.ai_enabled) implies dispatcher_host = Void
 			door_started: is_running implies (attached front_door as d implies (d.is_serving or d.last_error /= Void))
 		end
 
@@ -156,7 +166,7 @@ feature -- Status
 			create Result.make (api /= Void, attached web_app as w and then w.is_running,
 				attached front_door as d and then d.is_serving,
 				attached dynamic_dns as n and then n.last_result.same_string ({DYNAMIC_DNS}.Result_ok),
-				False)
+				attached dispatcher_host as h and then h.is_launched)
 		end
 
 feature -- Access
@@ -171,6 +181,9 @@ feature {NONE} -- Implementation
 	front_door: detachable FRONT_DOOR
 	dynamic_dns: detachable DYNAMIC_DNS
 	log: detachable CHAT_LOG
+
+	dispatcher_host: detachable DISPATCHER_HOST
+			-- The participant dispatcher's home, once `start' launched it (ai_enabled only).
 
 invariant
 	running_implies_configured: is_running implies is_configured
