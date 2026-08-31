@@ -109,6 +109,48 @@ feature -- Store laws
 			assert ("revocation empties the user's sessions", not s.has_session_of (1) and s.session_count = 0)
 		end
 
+	test_oracle_copies_strings
+			-- Issue 23 / M-D3: the oracle stores and returns fresh strings -
+			-- mutating a returned object's text never reaches the store, and
+			-- what was stored compares `~' with what comes back. The memory
+			-- store always opens, with nothing to explain (M-D8).
+		local
+			s: MEMORY_CHAT_STORE
+			u: CHAT_USER
+			e: CHAT_EVENT
+			l_now: SIMPLE_DATE_TIME
+			l_payload, l_fluent: SIMPLE_JSON_OBJECT
+		do
+			s := populated_store
+			assert ("memory opens with nothing to explain", s.is_open and s.last_open_error = Void)
+			if attached s.user (1) as u1 then
+				u1.display_name.append ({STRING_32} "!")
+				assert ("display mutation does not reach the oracle",
+					attached s.user (1) as u2 and then u2.display_name.same_string ({STRING_32} "Larry"))
+			else
+				assert ("user 1 exists", False)
+			end
+			create l_now.make_now
+			create u.make (0, "zed", {STRING_32} "Zed", hex32 + "$600000$" + hex64, False, False, l_now)
+			s.add_user (u)
+			assert ("stored user equals the argument by value, as a distinct object",
+				attached s.user (u.id) as u3 and then (u3 ~ u and u3 /= u))
+			create l_payload.make
+			l_fluent := l_payload.put_string ({STRING_32} "v", {STRING_32} "k")
+			e := s.append_event (create {CHAT_EVENT_DRAFT}.make (1, 1, {CHAT_EVENT_KINDS}.Kind_message, {STRING_32} "hello", Void, l_payload, False))
+			assert ("returned event equals the stored one by value, as a distinct object",
+				attached s.event (e.id) as f and then (f ~ e and f /= e))
+			e.body.append ({STRING_32} " changed")
+			l_fluent := e.payload.put_string ({STRING_32} "evil", {STRING_32} "k")
+			if attached s.event (e.id) as f2 then
+				assert ("body mutation does not reach the oracle", f2.body.same_string ({STRING_32} "hello"))
+				assert ("payload mutation does not reach the oracle",
+					attached f2.payload.string_item ({STRING_32} "k") as v and then v.same_string ({STRING_32} "v"))
+			else
+				assert ("event stored", False)
+			end
+		end
+
 feature -- Domain rules
 
 	test_attachment_path_is_pinned_to_its_hash

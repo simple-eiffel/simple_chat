@@ -11,11 +11,26 @@ note
 		sender - so the marker authenticates, not merely decorates. System
 		events have sender 0 and nothing else does; an attachment rides
 		only on an image event and is always a stored one.
+
+		Value semantics (Issue 23 / M-D3): `make' copies its incoming text
+		(`payload' and `attachment' are shared at creation - the store
+		duplicates at its boundary), `is_equal' compares field by field -
+		the payload by its JSON text, the attachment by its own `is_equal' -
+		and `duplicate' builds an independent copy with a duplicated
+		attachment and a re-parsed payload. The attributes stay
+		STRING_8/STRING_32; moving them to READABLE_/IMMUTABLE_ types is a
+		Phase 4 task.
 	]"
 	author: "Larry Rix"
 
 class
 	CHAT_EVENT
+
+inherit
+	ANY
+		redefine
+			is_equal
+		end
 
 create
 	make
@@ -38,9 +53,9 @@ feature {NONE} -- Initialization
 			id := a_id
 			room_id := a_room_id
 			sender_id := a_sender_id
-			kind := a_kind.to_string_8
+			create kind.make_from_string (a_kind)
 			created_at := a_created_at
-			body := a_body.to_string_32
+			create body.make_from_string_general (a_body)
 			attachment := a_attachment
 			payload := a_payload
 			is_bot_authored := a_bot
@@ -48,6 +63,7 @@ feature {NONE} -- Initialization
 			set: id = a_id and room_id = a_room_id and sender_id = a_sender_id
 			kind_set: kind.same_string (a_kind)
 			body_set: body.same_string_general (a_body)
+			owns_text: kind /= a_kind and body /= a_body
 			bot_set: is_bot_authored = a_bot
 			created_set: created_at = a_created_at
 			attachment_set: attachment = a_attachment
@@ -94,6 +110,69 @@ feature -- Conversion
 		ensure
 			attached_result: Result /= Void
 			carries_id: Result.integer_item ({CHAT_JSON}.Key_id) = id
+		end
+
+feature -- Comparison
+
+	is_equal (a_other: like Current): BOOLEAN
+			-- Do `Current' and `a_other' carry the same values: text by
+			-- content, the payload by its JSON text, the attachment by its
+			-- own `is_equal'?
+		do
+			Result := id = a_other.id
+				and room_id = a_other.room_id
+				and sender_id = a_other.sender_id
+				and kind.same_string (a_other.kind)
+				and created_at ~ a_other.created_at
+				and body.same_string (a_other.body)
+				and is_bot_authored = a_other.is_bot_authored
+				and attachment ~ a_other.attachment
+				and payload.to_json_string.same_string (a_other.payload.to_json_string)
+		ensure then
+			definition: Result = (id = a_other.id
+				and room_id = a_other.room_id
+				and sender_id = a_other.sender_id
+				and kind.same_string (a_other.kind)
+				and created_at ~ a_other.created_at
+				and body.same_string (a_other.body)
+				and is_bot_authored = a_other.is_bot_authored
+				and attachment ~ a_other.attachment
+				and payload.to_json_string.same_string (a_other.payload.to_json_string))
+		end
+
+feature -- Duplication
+
+	duplicate: like Current
+			-- An independent copy with fresh strings, a duplicated
+			-- attachment and a re-parsed payload, equal to `Current' by value.
+		local
+			l_attachment: detachable CHAT_ATTACHMENT
+		do
+			if attached attachment as a then
+				l_attachment := a.duplicate
+			end
+			create Result.make (id, room_id, sender_id, kind, created_at, body, l_attachment, payload_copy, is_bot_authored)
+		ensure
+			equal_value: Result ~ Current
+			distinct: Result /= Current
+			own_text: Result.kind /= kind and Result.body /= body
+			own_payload: Result.payload /= payload
+		end
+
+	payload_copy: SIMPLE_JSON_OBJECT
+			-- A fresh payload, re-parsed from `payload's JSON text.
+		local
+			l_text: STRING_32
+		do
+			l_text := payload.to_json_string
+			if not l_text.is_empty and then attached (create {SIMPLE_JSON}).parse_message (l_text) as v and then v.is_object then
+				Result := v.as_object
+			else
+				create Result.make
+			end
+		ensure
+			fresh: Result /= payload
+			same_text: Result.to_json_string.same_string (payload.to_json_string)
 		end
 
 feature -- Validation (contract support)

@@ -4,8 +4,9 @@ note
 		sessions, behind one contract. Two implementations: SQLite for the
 		server, memory for the tests - the memory store is the oracle the
 		SQLite store is checked against, and since D5 it has the disk's
-		value semantics: it stores and returns copies, so a change to a
-		returned object reaches the store only through a command.
+		value semantics: it stores and returns copies - deep for text since
+		Issue 23: `duplicate's with fresh strings and payloads - so a change
+		to a returned object reaches the store only through a command.
 
 		Event ids are strictly increasing across the whole store (DR-001);
 		`events_since' is the catch-up primitive every client and every
@@ -31,13 +32,21 @@ feature -- Status report
 feature -- Lifecycle
 
 	open
-			-- Open (creating if absent) and bring the schema to the current version.
+			-- Open (creating if absent) and bring the schema to the current
+			-- version - or refuse and explain in `last_open_error' (M-D8): a
+			-- database ahead of {CHAT_SCHEMA}.Current_version, or otherwise
+			-- unusable, is refused, never migrated down.
 		require
 			not_open: not is_open
 		deferred
 		ensure
-			open: is_open
-			schema_current: schema_version = {CHAT_SCHEMA}.Current_version
+			opened_or_explained: is_open xor (last_open_error /= Void)
+			schema_current_when_open: is_open implies schema_version = {CHAT_SCHEMA}.Current_version
+		end
+
+	last_open_error: detachable CHAT_ERROR
+			-- Why the last `open' did not open; Void after a successful one.
+		deferred
 		end
 
 	close

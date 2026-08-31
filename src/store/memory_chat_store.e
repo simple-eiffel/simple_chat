@@ -8,7 +8,11 @@ note
 		Value semantics (D5): what goes in is copied, what comes out is a
 		copy, exactly as a database behaves. A caller that changes a
 		returned user without `update_user' changes nothing here - which is
-		how the oracle catches a service that forgets to persist.
+		how the oracle catches a service that forgets to persist. Since
+		Issue 23 the copies are `duplicate's - fresh strings, a fresh
+		payload - so even mutating a returned object's TEXT reaches nothing
+		here, and the domain's value-based `is_equal' keeps every MML model
+		clause true across those copies.
 	]"
 	author: "Larry Rix"
 
@@ -108,12 +112,16 @@ feature -- Status report
 
 	is_open: BOOLEAN
 
+	last_open_error: detachable CHAT_ERROR
+			-- Never attached: the memory store always opens (M-D8).
+
 feature -- Lifecycle
 
 	open
 		do
 			is_open := True
 		ensure then
+			always_opens: is_open and last_open_error = Void
 			nothing_else_changed: events_model |=| old events_model and users_model |=| old users_model
 				and sessions_model |=| old sessions_model
 		end
@@ -169,7 +177,7 @@ feature -- Events
 			create l_now.make_now
 			create Result.make (last_event_id + 1, a_draft.room_id, a_draft.sender_id, a_draft.kind, l_now,
 				a_draft.body, a_draft.attachment, a_draft.payload, a_draft.is_bot_authored)
-			events.extend (Result)
+			events.extend (Result.duplicate)
 			last_event_id := Result.id
 		ensure then
 			appended_at_end: events_model |=| ((old events_model) & Result)
@@ -185,7 +193,7 @@ feature -- Events
 		do
 			across events as ic until Result /= Void loop
 				if ic.id = a_id then
-					Result := ic
+					Result := ic.duplicate
 				end
 			end
 		ensure then
@@ -197,7 +205,7 @@ feature -- Events
 			create Result.make (a_limit.min (16))
 			across events as ic until Result.count >= a_limit loop
 				if ic.room_id = a_room_id and ic.id > a_since_id then
-					Result.extend (ic)
+					Result.extend (ic.duplicate)
 				end
 			end
 		ensure then
@@ -221,7 +229,7 @@ feature -- Events
 			until
 				i > l_all.count
 			loop
-				Result.extend (l_all [i])
+				Result.extend (l_all [i].duplicate)
 				i := i + 1
 			end
 		ensure then
@@ -269,7 +277,7 @@ feature -- Users
 		do
 			next_user_id := next_user_id + 1
 			a_user.set_id (next_user_id)
-			users_table.force (a_user.twin, a_user.id)
+			users_table.force (a_user.duplicate, a_user.id)
 		ensure then
 			added: users_model |=| (old users_model).updated (a_user.id, a_user)
 			events_unchanged: events_model |=| old events_model
@@ -280,7 +288,7 @@ feature -- Users
 
 	update_user (a_user: CHAT_USER)
 		do
-			users_table.force (a_user.twin, a_user.id)
+			users_table.force (a_user.duplicate, a_user.id)
 		ensure then
 			replaced: users_model |=| (old users_model).updated (a_user.id, a_user)
 			same_users: users_model.domain |=| (old users_model).domain
@@ -291,7 +299,7 @@ feature -- Users
 	user (a_user_id: INTEGER_64): detachable CHAT_USER
 		do
 			if attached users_table [a_user_id] as u then
-				Result := u.twin
+				Result := u.duplicate
 			end
 		ensure then
 			from_model: attached Result as u implies users_model.domain.has (a_user_id)
@@ -302,7 +310,7 @@ feature -- Users
 		do
 			across users_table as ic until Result /= Void loop
 				if ic.username.same_string (a_username) then
-					Result := ic.twin
+					Result := ic.duplicate
 				end
 			end
 		end
@@ -311,7 +319,7 @@ feature -- Users
 		do
 			create Result.make (users_table.count)
 			across users_table as ic loop
-				Result.extend (ic.twin)
+				Result.extend (ic.duplicate)
 			end
 		ensure then
 			all_of_them: Result.count = users_model.count
@@ -330,7 +338,7 @@ feature -- Rooms and membership
 		do
 			next_room_id := next_room_id + 1
 			a_room.set_id (next_room_id)
-			rooms.force (a_room.twin, a_room.id)
+			rooms.force (a_room.duplicate, a_room.id)
 			if default_room_id = 0 then
 				default_room_id := a_room.id
 			end
@@ -344,7 +352,7 @@ feature -- Rooms and membership
 	room (a_room_id: INTEGER_64): detachable CHAT_ROOM
 		do
 			if attached rooms [a_room_id] as r then
-				Result := r.twin
+				Result := r.duplicate
 			end
 		ensure then
 			from_model: attached Result as r implies rooms_model.domain.has (a_room_id)
@@ -382,14 +390,14 @@ feature -- Rooms and membership
 		do
 			across memberships as ic until Result /= Void loop
 				if ic.user_id = a_user_id and ic.room_id = a_room_id then
-					Result := ic.twin
+					Result := ic.duplicate
 				end
 			end
 		end
 
 	add_membership (a_membership: CHAT_MEMBERSHIP)
 		do
-			memberships.extend (a_membership.twin)
+			memberships.extend (a_membership.duplicate)
 		ensure then
 			related: membership_model |=| (old membership_model).extended (a_membership.user_id, a_membership.room_id)
 			one_more: memberships.count = old memberships.count + 1
@@ -404,7 +412,7 @@ feature -- Attachments
 		do
 			next_attachment_id := next_attachment_id + 1
 			a_attachment.set_id (next_attachment_id)
-			attachments.force (a_attachment.twin, a_attachment.id)
+			attachments.force (a_attachment.duplicate, a_attachment.id)
 		ensure then
 			added: attachments_model |=| (old attachments_model).updated (a_attachment.id, a_attachment)
 			events_unchanged: events_model |=| old events_model
@@ -421,7 +429,7 @@ feature -- Attachments
 	attachment (a_attachment_id: INTEGER_64): detachable CHAT_ATTACHMENT
 		do
 			if attached attachments [a_attachment_id] as a then
-				Result := a.twin
+				Result := a.duplicate
 			end
 		ensure then
 			from_model: attached Result as a implies attachments_model.domain.has (a_attachment_id)
@@ -430,6 +438,8 @@ feature -- Attachments
 feature -- Sessions
 
 	put_session (a_session: CHAT_SESSION)
+		local
+			l_dup: CHAT_SESSION
 		do
 			if a_session.id = 0 then
 				if attached sessions [a_session.token_hash] as s then
@@ -439,7 +449,8 @@ feature -- Sessions
 					a_session.set_id (next_session_id)
 				end
 			end
-			sessions.force (a_session.twin, a_session.token_hash)
+			l_dup := a_session.duplicate
+			sessions.force (l_dup, l_dup.token_hash)
 		ensure then
 			stored_by_hash: sessions_model |=| (old sessions_model).updated (a_session.token_hash, a_session)
 			users_unchanged: users_model |=| old users_model
@@ -449,7 +460,7 @@ feature -- Sessions
 	session_by_hash (a_token_hash: READABLE_STRING_8): detachable CHAT_SESSION
 		do
 			if attached sessions [a_token_hash.to_string_8] as s then
-				Result := s.twin
+				Result := s.duplicate
 			end
 		ensure then
 			definition: (Result /= Void) = sessions_model.domain.has (a_token_hash.to_string_8)

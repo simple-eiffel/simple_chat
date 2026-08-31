@@ -4,9 +4,10 @@ note
 		here and nowhere else. Invariants pin what the rest of the system
 		relies on: localhost binding, a known door, a hostname when a door
 		is public, positive limits, validated DDNS domains and a token when
-		DDNS is on, unique participant handles (case-insensitively). The
-		lists are copies on the way out, so no caller can edit them past
-		the `fresh_*' preconditions.
+		DDNS is on, unique participant handles, bot usernames and aliases
+		(case-insensitively; an alias is never a handle, in either
+		direction - M-D7). The lists are copies on the way out, so no
+		caller can edit them past the `fresh_*' preconditions.
 
 		A file that fails validation leaves `is_valid' False and names each
 		field in `validation_errors'; the field values are then the
@@ -179,6 +180,30 @@ feature -- Status report
 			Result := across participant_list as p some p.handle.same_string_general (a_handle.as_lower) end
 		end
 
+	has_participant_bot_username (a_username: READABLE_STRING_8): BOOLEAN
+			-- Is `a_username' already some entry's bot username? (Bot
+			-- usernames are lowercase by CHAT_USER_RULES, so exact
+			-- comparison is case-insensitive comparison.)
+		do
+			Result := across participant_list as p some p.bot_username.same_string (a_username) end
+		end
+
+	has_participant_alias (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- Is `a_text' (any case) one of some entry's aliases?
+		do
+			Result := across participant_list as p some p.has_alias (a_text) end
+		end
+
+	is_free_address (a_text: STRING_32): BOOLEAN
+			-- Is `a_text' (any case) neither a participant handle nor an
+			-- alias here? (M-D7: every way to address a participant is
+			-- unique across the whole configuration.)
+		do
+			Result := not has_participant_handle (a_text) and not has_participant_alias (a_text)
+		ensure
+			definition: Result = (not has_participant_handle (a_text) and not has_participant_alias (a_text))
+		end
+
 feature -- Element change (tests and the CLI)
 
 	set_port (a_port: INTEGER)
@@ -225,12 +250,16 @@ feature -- Element change (tests and the CLI)
 	add_participant (a_participant: PARTICIPANT_CONFIG)
 		require
 			fresh_handle: not has_participant_handle (a_participant.handle)
+			handle_not_an_alias: not has_participant_alias (a_participant.handle)
+			fresh_bot_username: not has_participant_bot_username (a_participant.bot_username)
+			fresh_aliases: a_participant.aliases_model.for_all (agent is_free_address)
 		do
 			participant_list.extend (a_participant)
 		ensure
 			added: participants_model |=| ((old participants_model) & a_participant)
 			errors_unchanged: errors_model |=| old errors_model
 			present: has_participant_handle (a_participant.handle)
+			bot_username_present: has_participant_bot_username (a_participant.bot_username)
 		end
 
 feature -- Validation (contract support)
@@ -289,6 +318,10 @@ invariant
 	ddns_interval_sane: ddns_interval_seconds >= {DYNAMIC_DNS}.Minimum_interval_seconds
 	unique_handles: across participant_list as p all
 		(across participant_list as q all (p.handle.same_string (q.handle)) implies (p = q) end) end
+	unique_bot_usernames: across participant_list as p all
+		(across participant_list as q all (p.bot_username.same_string (q.bot_username)) implies (p = q) end) end
+	aliases_never_handles: across participant_list as p all
+		(across participant_list as q all not p.has_alias (q.handle) end) end
 	models_consistent: participants_model.count = participant_list.count and errors_model.count = error_list.count
 	valid_means_no_errors: is_valid = errors_model.is_empty
 	loaded_is_valid: is_loaded implies is_valid

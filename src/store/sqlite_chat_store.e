@@ -41,11 +41,22 @@ feature -- Status report
 			Result := attached db as d and then d.is_open
 		end
 
+	last_open_error: detachable CHAT_ERROR
+			-- Why the last `open' did not open: a database ahead of
+			-- {CHAT_SCHEMA}.Current_version, an unusable file, or - today -
+			-- the Phase 4 stub. Void after a successful `open'.
+
 feature -- Lifecycle
 
 	open
 		do
-			-- Implementation in Phase 4: create db.make (path); WAL; schema.migrate (db)
+			-- Implementation in Phase 4: create db.make (path); WAL mode;
+			-- when version_of (db) > {CHAT_SCHEMA}.Current_version, set
+			-- `last_open_error' ({CHAT_ERROR}.Code_unavailable) and close the
+			-- file - refused, never migrated down (M-D8); otherwise
+			-- schema.migrate (db) and clear `last_open_error'. Until then the
+			-- stub refuses honestly: it explains itself instead of opening.
+			create last_open_error.make ({CHAT_ERROR}.Code_not_implemented, "SQLite store arrives in Phase 4", 503)
 		end
 
 	close
@@ -74,7 +85,8 @@ feature -- Events
 		local
 			l_now: SIMPLE_DATE_TIME
 		do
-			-- Implementation in Phase 4 (INSERT under `lock', read back last_insert_row_id)
+			-- Implementation in Phase 4 (INSERT on the API's processor - D1,
+			-- no lock anywhere in simple_chat; read back last_insert_row_id)
 			create l_now.make_now
 			create Result.make (last_event_id + 1, a_draft.room_id, a_draft.sender_id, a_draft.kind, l_now,
 				a_draft.body, a_draft.attachment, a_draft.payload, a_draft.is_bot_authored)
