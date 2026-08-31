@@ -136,7 +136,7 @@ feature -- Tools
 			a := t.answer (request ({STRING_32} "Gen 1:1 | dir", Void))
 			assert ("unsafe refused on the raw path", not a.is_success and t.runs = 0 and t.executed_model.is_empty)
 			a := t.answer (request ({STRING_32} "  Gen 1:1 ", Void))
-			assert ("safe text ran once", a.is_success and t.runs = 1 and t.executed_query.same_string ({STRING_32} "Gen 1:1") and t.executed_model.count = 1)
+			assert ("safe text ran once", a.is_success and t.runs = 1 and t.executed_query.same_string ({STRING_32} "Gen 1:1") and t.executed_model.count = 2)
 			assert ("reply echoes what ran", a.text.has_substring ({STRING_32} "Gen 1:1") and a.text.has_substring ({STRING_32} "In the beginning"))
 			assert ("no false footer", not a.text.has_substring ({TOOL_PARTICIPANT}.Phrased_by_prefix) and not t.last_response_shaped)
 			create evil.make ({STRING_32} "@evil", {STRING_32} "Gen 1:1 | dir")
@@ -193,10 +193,11 @@ feature -- Tools
 			assert ("echo that cannot fit refused", not a.is_success and t.runs = 0)
 			create l_long.make_filled ('b', 70000)
 			t := mock_tool ({STRING_32} "@tool", l_long)
-			create l_args.make (1)
-			l_args.extend ({STRING_32} "Gen 1:1")
+			create l_args.make (2)
+			l_args.extend ({STRING_32} "Gen")
+			l_args.extend ({STRING_32} "1:1")
 			l_output := t.run_tool (l_args)
-			assert ("output cut at the maximum", l_output.count = {TOOL_PARTICIPANT}.Output_maximum and t.runs = 1 and t.executed_model.count = 1)
+			assert ("output cut at the maximum", l_output.count = {TOOL_PARTICIPANT}.Output_maximum and t.runs = 1 and t.executed_model.count = 2)
 			a := t.answer (request ({STRING_32} "Gen 1:1", Void))
 			assert ("reply cut to the room's limit", a.is_success and a.text.count <= 400 and a.text.starts_with ({STRING_32} "> Gen 1:1"))
 		end
@@ -208,20 +209,57 @@ feature -- Tools
 			a: PARTICIPANT_ANSWER
 		do
 			create b.make ({STRING_32} "@tools-larry", bot ("tools", {STRING_32} "Tools"), {STRING_32} "bible.exe", 1200, 30)
-			assert ("verse", b.is_safe_argument ({STRING_32} "Gen 1:1"))
-			assert ("range with a book number", b.is_safe_argument ({STRING_32} "1 John 3:16-18"))
-			assert ("version prefix", b.is_safe_argument ({STRING_32} "kjv Ps 23"))
-			assert ("slash command with one word", b.is_safe_argument ({STRING_32} "/lex H7225"))
-			assert ("pipe refused", not b.is_safe_argument ({STRING_32} "Gen 1:1 | dir"))
-			assert ("option refused", not b.is_safe_argument ({STRING_32} "-rf"))
-			assert ("empty refused", not b.is_safe_argument ({STRING_32} ""))
-			assert ("two words after a command refused", not b.is_safe_argument ({STRING_32} "/lex a b"))
-			assert ("no digit is no reference", not b.is_safe_argument ({STRING_32} "Genesis"))
+			assert ("verse", b.accepts ({STRING_32} "Gen 1:1") and b.arguments_of ({STRING_32} "Gen 1:1").count = 2)
+			assert ("range with a book number", b.accepts ({STRING_32} "1 John 3:16-18"))
+			assert ("version prefix", b.accepts ({STRING_32} "kjv Ps 23"))
+			assert ("allowed commands", b.accepts ({STRING_32} "/define H1254") and b.accepts ({STRING_32} "/versions") and b.accepts ({STRING_32} "/search bara"))
+			assert ("closed set is closed", b.Allowed_commands.count = 18)
+			assert ("state changers refused", not b.accepts ({STRING_32} "/reload") and not b.accepts ({STRING_32} "/cache clear")
+				and not b.accepts ({STRING_32} "/quit") and not b.accepts ({STRING_32} "/default kjv")
+				and not b.accepts ({STRING_32} "/load kjv") and not b.accepts ({STRING_32} "/repl") and not b.accepts ({STRING_32} "/exit"))
+			assert ("unknown command refused", not b.accepts ({STRING_32} "/lex H7225") and not b.accepts ({STRING_32} "/research why"))
+			assert ("pipe refused", not b.accepts ({STRING_32} "Gen 1:1 | dir"))
+			assert ("option refused", not b.accepts ({STRING_32} "-rf"))
+			assert ("empty refused", not b.accepts ({STRING_32} ""))
+			assert ("two words after a command refused", not b.accepts ({STRING_32} "/define a b"))
+			assert ("no digit is no reference", not b.accepts ({STRING_32} "Genesis"))
+			assert ("command line shape", b.command_line_of (b.arguments_of ({STRING_32} "Gen 1:1")).same_string ("bible.exe Gen 1:1"))
 			a := b.answer (request ({STRING_32} "Gen 1:1", Void))
 			assert ("stub engine says nothing, honestly", not a.is_success and b.runs = 1 and b.executed_query.same_string ({STRING_32} "Gen 1:1"))
 			create s.make ({STRING_32} "@shape-larry", bot ("shape", {STRING_32} "Shape"), {STRING_32} "shape.db", 1200, 30)
-			assert ("slug", s.is_safe_argument ({STRING_32} "beachhead_that_moves") and s.is_slug ({STRING_32} "a1"))
-			assert ("not a slug", not s.is_safe_argument ({STRING_32} "Beachhead") and not s.is_safe_argument ({STRING_32} "a b") and not s.is_safe_argument ({STRING_32} ""))
+			assert ("slug", s.accepts ({STRING_32} "beachhead_that_moves") and s.is_slug ({STRING_32} "a1"))
+			assert ("not a slug", not s.accepts ({STRING_32} "Beachhead") and not s.accepts ({STRING_32} "a b") and not s.accepts ({STRING_32} ""))
+		end
+
+	test_metacharacter_law
+			-- NEW-2: the base law of every tool refuses each shell
+			-- metacharacter, whitespace, controls and options in any single
+			-- argument, and the sanctioned joining is program + words with
+			-- single spaces.
+		local
+			t: MOCK_TOOL_PARTICIPANT
+			l_bad: STRING_32
+			i: INTEGER
+			c: CHARACTER_8
+		do
+			t := mock_tool ({STRING_32} "@tool", {STRING_32} "out")
+			from i := 1 until i > {TOOL_PARTICIPANT}.Forbidden_argument_characters.count loop
+				c := {TOOL_PARTICIPANT}.Forbidden_argument_characters [i]
+				l_bad := {STRING_32} "a"
+				l_bad.append_character (c.to_character_32)
+				l_bad.append ({STRING_32} "b")
+				assert ("metacharacter refused: " + c.out, not t.is_safe_argument (l_bad))
+				i := i + 1
+			end
+			assert ("all seventeen probed", {TOOL_PARTICIPANT}.Forbidden_argument_characters.count = 17)
+			assert ("blank refused", not t.is_safe_argument ({STRING_32} "a b"))
+			assert ("control refused", not t.is_safe_argument ({STRING_32} "a%Tb"))
+			assert ("option refused", not t.is_safe_argument ({STRING_32} "-x"))
+			assert ("empty refused", not t.is_safe_argument ({STRING_32} ""))
+			assert ("plain words accepted", t.is_safe_argument ({STRING_32} "Gen") and t.is_safe_argument ({STRING_32} "1:1") and t.is_safe_argument ({STRING_32} "/define"))
+			assert ("request splits to words", t.arguments_of ({STRING_32} "  Gen 1:1  ").count = 2 and t.accepts ({STRING_32} "Gen 1:1"))
+			assert ("one bad word gates all", t.arguments_of ({STRING_32} "Gen 1:1 | dir").is_empty and t.arguments_of ({STRING_32} "Gen 1:1 $x").is_empty)
+			assert ("command line is program plus words", t.command_line_of (t.arguments_of ({STRING_32} "Gen 1:1")).same_string ("mock.exe Gen 1:1"))
 		end
 
 feature -- Sandboxes
@@ -241,6 +279,11 @@ feature -- Sandboxes
 			assert ("empty refused", not a.is_safe_image_path ({STRING_32} ""))
 			assert ("too long refused", not a.is_safe_image_path (create {STRING_32}.make_filled ('a', 197) + {STRING_32} ".png"))
 			assert ("200 accepted", a.is_safe_image_path (create {STRING_32}.make_filled ('a', 196) + {STRING_32} ".png"))
+			assert ("device names refused", not a.is_safe_image_path ({STRING_32} "CON.png") and not a.is_safe_image_path ({STRING_32} "nul.jpg")
+				and not a.is_safe_image_path ({STRING_32} "COM1.png") and not a.is_safe_image_path ({STRING_32} "shots/PRN.png")
+				and not a.is_safe_image_path ({STRING_32} "aux.tar.png") and not a.is_safe_image_path ({STRING_32} "lpt9.PNG"))
+			assert ("device lookalikes kept", a.is_safe_image_path ({STRING_32} "CONX.png") and a.is_safe_image_path ({STRING_32} "null.png")
+				and a.is_safe_image_path ({STRING_32} "com10.png") and a.is_safe_image_path ({STRING_32} "lpt0.png"))
 		end
 
 	test_image_path_outside_sandbox_refused
@@ -264,15 +307,24 @@ feature -- Sandboxes
 		local
 			c: CLAUDE_CODE_CLIENT
 			p: CLAUDE_CODE_PARTICIPANT
+			l_data: STRING_32
 		do
 			create c.make
-			create p.make ({STRING_32} "@claude", bot ("claude", {STRING_32} "Claude"), c, {STRING_32} "D:\prod\simple_chat\data\participants\claude", 1200, 120)
+			l_data := {STRING_32} "C:\Users\Public\sc_chat_probe_ok\data"
+			create p.make ({STRING_32} "@claude", bot ("claude", {STRING_32} "Claude"), c,
+				l_data, l_data + {STRING_32} "\participants\claude", 1200, 120)
 			assert ("sandboxed", p.tools_disabled and p.is_sandbox_directory (p.working_directory))
 			assert ("client pinned", c.working_directory.same_string (p.working_directory))
-			assert ("vault refused", not p.is_sandbox_directory_for ({STRING_32} "C:\Users\LJR19\OneDrive\Documents\Obsidian Vault\Scholars\participants\claude", {STRING_32} "@claude"))
-			assert ("another handle's directory refused", not p.is_sandbox_directory_for ({STRING_32} "data\participants\qwen", {STRING_32} "@claude"))
-			assert ("no participants segment refused", not p.is_sandbox_directory_for ({STRING_32} "data\claude", {STRING_32} "@claude"))
-			assert ("forward slashes and a trailing separator", p.is_sandbox_directory_for ({STRING_32} "data/participants/claude/", {STRING_32} "@claude"))
+			assert ("client stripped", c.tools_disabled and c.strict_mcp_config and attached c.setting_sources as ss and then ss.is_empty)
+			assert ("client timed", c.timeout_seconds = 120)
+			assert ("vault refused", not p.is_sandbox_directory_for ({STRING_32} "C:\Users\LJR19\OneDrive\Documents\Obsidian Vault\Scholars\participants\claude",
+				{STRING_32} "C:\Users\LJR19\OneDrive\Documents\Obsidian Vault\Scholars", {STRING_32} "@claude"))
+			assert ("relative refused", not p.is_sandbox_directory_for ({STRING_32} "data\participants\claude", {STRING_32} "data", {STRING_32} "@claude"))
+			assert ("dot dot segment refused", not p.is_sandbox_directory_for (l_data + {STRING_32} "\participants\x\..\claude", l_data, {STRING_32} "@claude"))
+			assert ("another handle's directory refused", not p.is_sandbox_directory_for (l_data + {STRING_32} "\participants\qwen", l_data, {STRING_32} "@claude"))
+			assert ("no participants segment refused", not p.is_sandbox_directory_for (l_data + {STRING_32} "\members\claude", l_data, {STRING_32} "@claude"))
+			assert ("outside the data dir refused", not p.is_sandbox_directory_for ({STRING_32} "C:\Users\Public\sc_chat_probe_other\data\participants\claude", l_data, {STRING_32} "@claude"))
+			assert ("forward slashes and a trailing separator", p.is_sandbox_directory_for ({STRING_32} "C:/Users/Public/sc_chat_probe_ok/data/participants/claude/", l_data, {STRING_32} "@claude"))
 			assert ("no sessions yet", p.sessions_model.is_empty and p.session_of (1) = Void)
 			p.remember_session (1, {STRING_32} "sess-1")
 			p.remember_session (2, {STRING_32} "sess-2")
@@ -280,6 +332,41 @@ feature -- Sandboxes
 			assert ("per room", attached p.session_of (1) as s1 and then s1.same_string ({STRING_32} "sess-1b"))
 			assert ("other room kept", attached p.session_of (2) as s2 and then s2.same_string ({STRING_32} "sess-2"))
 			assert ("two rooms", p.sessions_model.count = 2)
+		end
+
+	test_claude_sandbox_memory_files
+			-- The ancestor walk (Issue 33): a clean temp tree is a sandbox;
+			-- the same tree with a CLAUDE.md planted two levels above the
+			-- sandbox is not. Planted under the public scratch area, deleted
+			-- after.
+		local
+			c: CLAUDE_CODE_CLIENT
+			p: CLAUDE_CODE_PARTICIPANT
+			l_data, l_sandbox: STRING_32
+			l_dir: DIRECTORY
+			l_file: RAW_FILE
+		do
+			create c.make
+			create p.make ({STRING_32} "@claude", bot ("claude", {STRING_32} "Claude"), c,
+				{STRING_32} "C:\Users\Public\sc_chat_probe_ok\data",
+				{STRING_32} "C:\Users\Public\sc_chat_probe_ok\data\participants\claude", 1200, 120)
+			l_data := {STRING_32} "C:\Users\Public\sc_chat_probe_bad\data"
+			l_sandbox := l_data + {STRING_32} "\participants\claude"
+			assert ("clean tree accepted", p.is_sandbox_directory_for (l_sandbox, l_data, {STRING_32} "@claude") and not p.has_memory_files_above (l_sandbox))
+			create l_dir.make (l_data)
+			l_dir.recursive_create_dir
+			create l_file.make_with_name (l_data + {STRING_32} "\CLAUDE.md")
+			l_file.create_read_write
+			l_file.put_string ("planted")
+			l_file.close
+			assert ("planted memory two levels up refused", p.has_memory_files_above (l_sandbox)
+				and not p.is_sandbox_directory_for (l_sandbox, l_data, {STRING_32} "@claude"))
+			l_file.delete
+			assert ("clean again once removed", not p.has_memory_files_above (l_sandbox))
+			create l_dir.make ({STRING_32} "C:\Users\Public\sc_chat_probe_bad")
+			if l_dir.exists then
+				l_dir.recursive_delete
+			end
 		end
 
 	test_claude_vault_directory_refused
@@ -291,7 +378,9 @@ feature -- Sandboxes
 			if not l_tried then
 				l_tried := True
 				create c.make
-				create p.make ({STRING_32} "@claude", bot ("claude", {STRING_32} "Claude"), c, {STRING_32} "C:\Users\LJR19\OneDrive\Documents\Obsidian Vault\Scholars", 1200, 120)
+				create p.make ({STRING_32} "@claude", bot ("claude", {STRING_32} "Claude"), c,
+					{STRING_32} "C:\Users\LJR19\OneDrive\Documents\Obsidian Vault",
+					{STRING_32} "C:\Users\LJR19\OneDrive\Documents\Obsidian Vault\participants\claude", 1200, 120)
 				l_created := True
 			end
 			assert ("the vault is refused as a working directory", not l_created)
@@ -359,7 +448,7 @@ feature -- Dispatcher
 			assert ("unaddressed ignored", d.requests_seen = 1)
 			d.wake (1)
 			d.wake (1)
-			assert ("two wakes, one pending room", d.pending_count = 1 and d.is_pending (1) and d.wake_count = 2)
+			assert ("wakes drain themselves", d.pending_count = 0 and not d.is_pending (1) and d.wake_count = 2)
 			d.dispatch_pending
 			assert ("drained against an empty store", not d.has_pending and d.requests_seen = 1 and d.cursor_of (1) = 0)
 			l_page := page_bytes (<<message (9, 1, 7, {STRING_32} "@mock again", False)>>)
@@ -397,18 +486,98 @@ feature -- Dispatcher
 			d.wake (1)
 			d.wake (2)
 			d.wake (1)
-			assert ("two rooms pending", d.pending_count = 2 and d.wake_count = 3)
+			assert ("wakes drain, three counted", d.pending_count = 0 and d.wake_count = 3)
 			d.dispatch_pending
 			assert ("both drained, cursors kept", not d.has_pending and d.cursor_of (1) = 3 and d.cursor_of (2) = 7)
+		end
+
+	test_dispatcher_grants_and_charges_via
+			-- The granted path (NEW-11): a stored bot member, a real ask, a
+			-- posted answer; a `via' naming a participant is charged under
+			-- both keys (Issue 15, `via_charged'); a via-key refusal after
+			-- the target grant refuses the request; an unpermitted `via' is
+			-- an explicit refusal with no ask (NEW-10).
+		local
+			d: PARTICIPANT_DISPATCHER
+		do
+			d := posting_dispatcher (0)
+			d.handle_event (message (11, 1, 7, {STRING_32} "@mock hi", False))
+				-- The service's post_message body is a Phase 4 stub (501), so a
+				-- posted answer lands in the accounting sum, not in answers_posted;
+				-- what this test pins is the GRANTED path: ask, engine, account.
+			assert ("granted, asked, accounted", d.last_can_post and d.last_ask_granted and d.asks = 1 and d.answers_posted + d.answer_failures = 1)
+			assert ("asked the engine", attached last_mock as m1 and then m1.calls = 1)
+			assert ("charged the asker", d.last_ask_key.same_string ("p:@mock:7") and d.last_via_key.is_empty)
+			d.handle_event (message (12, 1, 7, {STRING_32} "@tool Gen 1:1 via @mock", False))
+			assert ("via charged under both keys", d.last_ask_granted and d.last_ask_key.same_string ("p:@tool:7")
+				and d.last_via_key.same_string ("p:@mock:7") and d.asks = 2 and d.answers_posted + d.answer_failures = 2)
+			assert ("tool ran", attached last_tool as t1 and then t1.runs = 1)
+			if attached last_limits as ll then
+				ll.set_limit ("p:@mock:", 1, 3600)
+			end
+			d.handle_event (message (13, 1, 7, {STRING_32} "@tool Gen 1:1 via @mock", False))
+			assert ("via key exhausted refuses after the target grant", not d.last_ask_granted and d.asks = 2 and d.answers_posted + d.answer_failures = 3)
+			assert ("tool not run again", attached last_tool as t2 and then t2.runs = 1)
+			d.handle_event (message (14, 1, 7, {STRING_32} "@mock hi via plain", False))
+			assert ("unpermitted via refused explicitly", d.answers_posted + d.answer_failures = 4 and d.asks = 2)
+			assert ("engine untouched by the refusal", attached last_mock as m2 and then m2.calls = 1)
+		end
+
+	test_dispatcher_survives_raising_engine
+			-- NEW-7: an engine that raises is one answer_failure with the
+			-- queue slot released; the dispatcher lives on and answers the
+			-- next request.
+		local
+			d: PARTICIPANT_DISPATCHER
+		do
+			d := posting_dispatcher (0)
+			if attached last_mock as m then
+				m.set_should_raise (True)
+			end
+			d.handle_event (message (21, 1, 7, {STRING_32} "@mock boom", False))
+			assert ("raise became a failure", d.answer_failures = 1 and d.answers_posted = 0 and d.last_answer_raised and d.requests_seen = 1)
+			assert ("slot released", attached last_mock as m3 and then d.queue_depth_of (m3) = 0)
+			if attached last_mock as m then
+				m.set_should_raise (False)
+			end
+			d.handle_event (message (22, 1, 7, {STRING_32} "@mock again", False))
+			assert ("dispatcher alive and answering", d.answers_posted + d.answer_failures = 2 and d.asks = 1
+				and not d.last_answer_raised and d.requests_seen = 2)
+			assert ("engine asked again", attached last_mock as m4 and then m4.calls = 1)
+		end
+
+	test_dispatcher_prunes_answered
+			-- NEW-6: taken ids at or below the lowest room cursor are pruned
+			-- after a drain, and ids at or below the floor are never retaken.
+		local
+			d: PARTICIPANT_DISPATCHER
+		do
+			d := dispatcher (0)
+			d.handle_page (1, page_bytes (<<message (5, 1, 7, {STRING_32} "@mock hi", False)>>))
+			assert ("taken", d.has_answered (5) and d.cursor_of (1) = 5 and d.requests_seen = 1)
+			d.wake (1)
+			assert ("pruned at the cursor", not d.has_answered (5) and d.pruned_floor = 5)
+			d.handle_page (1, page_bytes (<<message (5, 1, 7, {STRING_32} "@mock hi", False)>>))
+			assert ("replayed page not retaken", d.requests_seen = 1)
+			d.handle_event (message (4, 1, 7, {STRING_32} "@mock old", False))
+			assert ("ancient id skipped", d.requests_seen = 1 and not d.has_answered (4))
 		end
 
 feature {NONE} -- Fixtures
 
 	last_mock: detachable MOCK_PARTICIPANT
-			-- The "@mock" participant of the latest `dispatcher'.
+			-- The "@mock" participant of the latest `dispatcher' / `posting_dispatcher'.
+
+	last_tool: detachable MOCK_TOOL_PARTICIPANT
+			-- The "@tool" participant of the latest `posting_dispatcher'.
+
+	last_limits: detachable RATE_LIMITER
+			-- The limiter behind the latest fixture's API.
 
 	dispatcher (a_start_after: INTEGER_64): PARTICIPANT_DISPATCHER
-			-- A dispatcher over a CHAT_API on the memory store, with "@mock" registered.
+			-- A dispatcher over a CHAT_API on the memory store, with "@mock"
+			-- registered through the dispatcher's own registry (NEW-1: `make'
+			-- builds registry, parser and log itself).
 		local
 			l_config: SERVER_CONFIG
 			l_store: MEMORY_CHAT_STORE
@@ -418,8 +587,6 @@ feature {NONE} -- Fixtures
 			l_logger: SIMPLE_LOGGER
 			l_service: CHAT_SERVICE
 			l_api: CHAT_API
-			l_registry: PARTICIPANT_REGISTRY
-			l_parser: ADDRESS_PARSER
 			l_mock: MOCK_PARTICIPANT
 		do
 			create l_config.make_defaults
@@ -431,12 +598,55 @@ feature {NONE} -- Fixtures
 			create l_log.make (l_logger)
 			create l_service.make (l_store, l_bus, l_limits, l_config, l_log)
 			create l_api.make (l_service, l_config)
-			create l_registry.make
 			create l_mock.make ({STRING_32} "@mock", bot ("mock", {STRING_32} "Mock"), {STRING_32} "In the beginning God created")
-			l_registry.register (l_mock)
 			last_mock := l_mock
-			create l_parser.make (l_registry)
-			create Result.make (l_api, l_parser, l_log, a_start_after)
+			last_limits := l_limits
+			create Result.make (l_api, a_start_after)
+			Result.registry.register (l_mock)
+		end
+
+	posting_dispatcher (a_start_after: INTEGER_64): PARTICIPANT_DISPATCHER
+			-- Like `dispatcher', but the bot user is stored, active and a
+			-- member of room 1, so the granted path runs; "@tool" (a mock
+			-- tool offering the "@mock" via choice) is registered beside
+			-- "@mock", both posting as the same stored bot.
+		local
+			l_config: SERVER_CONFIG
+			l_store: MEMORY_CHAT_STORE
+			l_bus: EVENT_BUS
+			l_limits: RATE_LIMITER
+			l_log: CHAT_LOG
+			l_logger: SIMPLE_LOGGER
+			l_service: CHAT_SERVICE
+			l_api: CHAT_API
+			l_mock: MOCK_PARTICIPANT
+			l_tool: MOCK_TOOL_PARTICIPANT
+			l_bot: CHAT_USER
+			l_now: SIMPLE_DATE_TIME
+		do
+			create l_config.make_defaults
+			create l_store.make
+			l_store.open
+			create l_now.make_now
+			create l_bot.make (0, "mock", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Mock", "", False, True, l_now)
+			l_store.add_user (l_bot)
+			l_store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", l_now))
+			l_store.add_membership (create {CHAT_MEMBERSHIP}.make (l_store.default_room_id, l_bot.id, {CHAT_MEMBERSHIP}.Role_member, l_now))
+			create l_bus.make
+			create l_limits.make (3600)
+			create l_logger
+			create l_log.make (l_logger)
+			create l_service.make (l_store, l_bus, l_limits, l_config, l_log)
+			create l_api.make (l_service, l_config)
+			create l_mock.make ({STRING_32} "@mock", l_bot, {STRING_32} "In the beginning God created")
+			create l_tool.make ({STRING_32} "@tool", l_bot, {STRING_32} "In the beginning God created the heavens and the earth.")
+			l_tool.add_shaper (create {MOCK_SHAPER}.make ({STRING_32} "@mock", {STRING_32} "Gen 1:1"))
+			last_mock := l_mock
+			last_tool := l_tool
+			last_limits := l_limits
+			create Result.make (l_api, a_start_after)
+			Result.registry.register (l_mock)
+			Result.registry.register (l_tool)
 		end
 
 	registry_with (a_handle: STRING_32): PARTICIPANT_REGISTRY

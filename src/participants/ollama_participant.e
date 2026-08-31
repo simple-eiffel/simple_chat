@@ -2,9 +2,11 @@ note
 	description: "[
 		`@qwen' and friends: a local model through OLLAMA_CLIENT as a room
 		member - the cheapest AI in the room. Bounded in time like every
-		engine (TIMED_ENGINE, Issue 26): the configured `timeout_seconds'
-		reaches it, an overrun is an error, and `elapsed_seconds' is never
-		clamped.
+		engine (TIMED_ENGINE, Issue 26): the bound is advisory pending an
+		OLLAMA_CLIENT timeout API in simple_ai_client (its chat request
+		carries no curl --max-time today), so `last_timed_out' derives from
+		`elapsed_seconds', an overrun is an error, and `elapsed_seconds' is
+		never clamped.
 	]"
 	author: "Larry Rix"
 

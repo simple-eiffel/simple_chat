@@ -10,6 +10,17 @@ note
 		(Issues 31, 38): what ran is exactly what `arguments_of' - the one
 		gate - made of the request text or of the query shaper's output.
 
+		The metacharacter law (NEW-2): simple_process launches one command
+		STRING (CreateProcess), not an argv array, so "argv, never a shell
+		string" holds by construction of the arguments instead. Every
+		element passes the base law before any tool's own rule: printable
+		ASCII, no blank, none of `Forbidden_argument_characters' (quote,
+		apostrophe, percent, caret, ampersand, pipe, redirection, semicolon,
+		parentheses, bang, dollar, star, question mark, backquote,
+		backslash), never an option, bounded. `command_line_of' is the only
+		sanctioned joining: the program's path, then the elements separated
+		by single spaces - a line whose shape safe words fully determine.
+
 		`via' chooses the shaper for one request at both edges
 		(`effective_query_shaper', `effective_response_shaper'; the choices
 		are `shapers_model', "plain" always among them); the reply echoes
@@ -31,6 +42,9 @@ deferred class
 
 inherit
 	PARTICIPANT
+		redefine
+			permits_via
+		end
 
 	TIMED_ENGINE
 
@@ -144,6 +158,11 @@ feature -- Access
 	last_shaper_error: detachable CHAT_ERROR
 			-- Why a shaper failed during the last `answer', or Void.
 
+	last_raw_had_footer: BOOLEAN
+			-- Did the last run's raw output itself contain the footer text
+			-- ("%Nphrased by ")? Kept so `no_false_disclosure' stays
+			-- satisfiable when a tool's own output quotes the phrase (NEW-8).
+
 	shaper_for (a_choice: READABLE_STRING_GENERAL): SHAPER
 			-- The shaper `via a_choice' selects.
 		require
@@ -192,15 +211,66 @@ feature -- Status report
 			definition: Result = shapers_model.domain.has (a_choice.to_string_32.as_lower)
 		end
 
+	permits_via (a_choice: READABLE_STRING_GENERAL): BOOLEAN
+			-- <Precursor>: a tool takes exactly its configured shaper choices.
+		do
+			Result := allows_via (a_choice)
+		ensure then
+			definition: Result = allows_via (a_choice)
+		end
+
 	is_safe_argument (a_text: READABLE_STRING_GENERAL): BOOLEAN
-			-- Does `a_text' match this tool's allowlist of argument shapes?
-			-- The allowlist is the tool's; these are the laws every allowlist obeys.
-		deferred
+			-- Is `a_text' one safe argv element: the base law of every tool
+			-- (`obeys_base_law', NEW-2) - checked first - and then this
+			-- tool's own `accepts_word'?
+		do
+			Result := obeys_base_law (a_text) and then accepts_word (a_text)
 		ensure
+			definition: Result = (obeys_base_law (a_text) and then accepts_word (a_text))
 			never_empty: Result implies not a_text.is_empty
 			bounded: Result implies a_text.count <= Argument_maximum
 			printable: Result implies is_printable_ascii (a_text)
 			no_option: Result implies a_text.code (1) /= 45
+			no_blank: Result implies not a_text.has (' ')
+			no_shell_metacharacters: Result implies not has_any_of (a_text, Forbidden_argument_characters)
+		end
+
+	obeys_base_law (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- The metacharacter law every tool obeys before its own rule
+			-- (NEW-2): 1..`Argument_maximum' characters, each in 33..126 (no
+			-- control character, no blank), none of
+			-- `Forbidden_argument_characters', and not beginning with "-"
+			-- (a leading "/" is admitted: it is bible.exe's own command
+			-- prefix, not a Windows option).
+		local
+			i: INTEGER
+		do
+			Result := not a_text.is_empty and a_text.count <= Argument_maximum and then a_text.code (1) /= 45
+			from i := 1 until i > a_text.count or not Result loop
+				Result := a_text.code (i) >= 33 and a_text.code (i) <= 126
+					and not Forbidden_argument_characters.has_code (a_text.code (i))
+				i := i + 1
+			end
+		ensure
+			never_empty: Result implies not a_text.is_empty
+			bounded: Result implies a_text.count <= Argument_maximum
+			no_blank: Result implies not a_text.has (' ')
+			no_metacharacters: Result implies not has_any_of (a_text, Forbidden_argument_characters)
+		end
+
+	accepts_word (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- Does `a_text' - one blank-free word past the base law - match
+			-- this tool's own allowlist?
+		deferred
+		end
+
+	accepts_request (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- This tool's rule over the whole trimmed request, on top of the
+			-- per-word law: True here; descendants narrow it (a Bible
+			-- request needs a digit or an allowed command; a shape request
+			-- is one slug).
+		do
+			Result := True
 		end
 
 	is_printable_ascii (a_text: READABLE_STRING_GENERAL): BOOLEAN
@@ -215,24 +285,106 @@ feature -- Status report
 			end
 		end
 
+	has_any_of (a_text: READABLE_STRING_GENERAL; a_set: READABLE_STRING_8): BOOLEAN
+			-- Does `a_text' contain any character of `a_set'?
+		local
+			i: INTEGER
+		do
+			from i := 1 until i > a_text.count or Result loop
+				Result := a_set.has_code (a_text.code (i))
+				i := i + 1
+			end
+		end
+
 feature -- Conversion (contract support)
 
 	arguments_of (a_text: READABLE_STRING_GENERAL): ARRAYED_LIST [STRING_32]
-			-- The argument list `a_text' becomes: one element - the text without
-			-- surrounding blanks - when the allowlist accepts it; empty otherwise.
-			-- The one gate both paths pass through.
-		local
-			l_trimmed: STRING_32
+			-- The argument list `a_text' becomes: its blank-separated words,
+			-- when the tool's whole-request rule holds (`accepts_request')
+			-- and every word passes `is_safe_argument'; empty otherwise.
+			-- The one gate both paths pass through; `command_line_of' joins
+			-- the elements with single spaces, so the command line's shape
+			-- is fully determined here (NEW-2).
 		do
-			l_trimmed := trimmed (a_text)
-			create Result.make (1)
-			if is_safe_argument (l_trimmed) then
-				Result.extend (l_trimmed)
+			if accepts (a_text) then
+				Result := words_of (trimmed (a_text))
+			else
+				create Result.make (0)
 			end
 		ensure
 			all_safe: across Result as a all is_safe_argument (a) end
-			gated: Result.is_empty = not is_safe_argument (trimmed (a_text))
-			one_at_most: Result.count <= 1
+			gated: Result.is_empty = not accepts (a_text)
+			whole_request: not Result.is_empty implies Result.count = words_of (trimmed (a_text)).count
+		end
+
+	accepts (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- Does the one gate pass `a_text': some words, the whole-request
+			-- rule, and every word safe? (`arguments_of' is empty exactly
+			-- when this is False.)
+		local
+			l_words: ARRAYED_LIST [STRING_32]
+		do
+			l_words := words_of (trimmed (a_text))
+			Result := not l_words.is_empty and then accepts_request (trimmed (a_text))
+			across l_words as w loop
+				Result := Result and then is_safe_argument (w)
+			end
+		ensure
+			some_words: Result implies not words_of (trimmed (a_text)).is_empty
+			request_accepted: Result implies accepts_request (trimmed (a_text))
+			words_safe: Result implies across words_of (trimmed (a_text)) as w all is_safe_argument (w) end
+		end
+
+	words_of (a_text: READABLE_STRING_GENERAL): ARRAYED_LIST [STRING_32]
+			-- The blank-separated words of `a_text', in order.
+		local
+			i: INTEGER
+			l_word: STRING_32
+		do
+			create Result.make (4)
+			create l_word.make_empty
+			from i := 1 until i > a_text.count loop
+				if a_text.code (i) = 32 or a_text.code (i) = 9 or a_text.code (i) = 10 or a_text.code (i) = 13 then
+					if not l_word.is_empty then
+						Result.extend (l_word)
+						create l_word.make_empty
+					end
+				else
+					l_word.append_code (a_text.code (i))
+				end
+				i := i + 1
+			end
+			if not l_word.is_empty then
+				Result.extend (l_word)
+			end
+		ensure
+			no_empty_words: across Result as w all not w.is_empty end
+		end
+
+	command_line_of (a_arguments: LIST [STRING_32]): STRING_8
+			-- The one command string a Phase 4 body may hand simple_process
+			-- (NEW-2): `program_path', one space, and the arguments joined
+			-- by single spaces - nothing else. With every element past
+			-- `is_safe_argument', no quoting, redirection, expansion or
+			-- option can occur on the joined line.
+		require
+			some_arguments: not a_arguments.is_empty
+			all_safe: across a_arguments as a all is_safe_argument (a) end
+			program_ascii: program_path.is_valid_as_string_8
+		do
+			Result := program_path.to_string_8
+			Result.append_character (' ')
+			Result.append (echo_of (a_arguments).to_string_8)
+		ensure
+			shape: Result.same_string (program_path.to_string_8 + " " + echo_of (a_arguments).to_string_8)
+		end
+
+	program_path: STRING_32
+			-- The path of what this tool runs or opens: the first token of
+			-- `command_line_of'.
+		deferred
+		ensure
+			given: not Result.is_empty
 		end
 
 	trimmed (a_text: READABLE_STRING_GENERAL): STRING_32
@@ -314,6 +466,7 @@ feature -- Basic operations
 			calls := calls + 1
 			last_shaper_error := Void
 			last_response_shaped := False
+			last_raw_had_footer := False
 			create last_shaped_query.make_empty
 			create l_query.make_empty
 			create l_text.make_empty
@@ -343,6 +496,7 @@ feature -- Basic operations
 					l_error := refusal ("the request is too long to echo within the reply limit")
 				else
 					l_output := run_tool (l_args)
+					last_raw_had_footer := l_output.has_substring (Footer_break + Phrased_by_prefix)
 					if last_timed_out then
 						l_error := unavailable ("the tool did not finish within " + timeout_seconds.out + " seconds")
 					elseif l_output.is_empty then
@@ -382,7 +536,7 @@ feature -- Basic operations
 			reply_echoes_query: Result.is_success implies Result.text.has_substring (executed_query)
 			disclosure_consistent: Result.is_success implies last_response_shaped = (effective_response_shaper (a_request).cost_tier > {SHAPER}.Tier_none)
 			phrasing_disclosed: (Result.is_success and last_response_shaped) implies Result.text.has_substring (Phrased_by_prefix + effective_response_shaper (a_request).name)
-			no_false_disclosure: (Result.is_success and not last_response_shaped) implies not Result.text.has_substring (Footer_break + Phrased_by_prefix)
+			no_false_disclosure: (Result.is_success and not last_response_shaped and not last_raw_had_footer) implies not Result.text.has_substring (Footer_break + Phrased_by_prefix)
 			shaper_failure_is_error: attached last_shaper_error as e implies (not Result.is_success and Result.error = e)
 		end
 
@@ -418,9 +572,15 @@ feature -- Basic operations
 feature {NONE} -- Implementation
 
 	run_arguments (a_arguments: ARRAYED_LIST [STRING_32]): STRING_32
-			-- The engine: Phase 4 starts the child process or runs the query
-			-- with `a_arguments' as its argument list and records the timing
+			-- The engine: a Phase 4 body that starts a child process builds
+			-- its one command string with `command_line_of' (never any other
+			-- joining) and enforces `timeout_seconds' with
+			-- SIMPLE_ASYNC_PROCESS.wait_seconds and kill (Issue 26: the
+			-- bound is enforceable for children); a query engine runs the
+			-- parameterized query. Either way it records the timing
 			-- (`record_run'); an empty result means the tool said nothing.
+			-- Deferred: the template cannot own the child, so the bound
+			-- lives in each engine body, under TIMED_ENGINE's contracts.
 		require
 			all_safe: across a_arguments as a all is_safe_argument (a) end
 		deferred
@@ -490,6 +650,13 @@ feature -- Constants
 
 	Argument_maximum: INTEGER = 512
 			-- The longest argument any tool accepts.
+
+	Forbidden_argument_characters: STRING_8 = "%"'%%^&|<>;()!$*?`\"
+			-- The cmd.exe and CreateProcess metacharacters no argument may
+			-- carry (NEW-2): quote, apostrophe, percent, caret, ampersand,
+			-- pipe, redirection, semicolon, parentheses, bang, dollar, star,
+			-- question mark, backquote, backslash. Blanks and control
+			-- characters are refused separately by `obeys_base_law'.
 
 	Output_maximum: INTEGER = 65536
 			-- Raw tool output is cut here.
