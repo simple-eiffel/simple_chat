@@ -139,6 +139,12 @@ feature {NONE} -- Initialization
 			run_test (agent (create {API_ASSAULT}).test_api_admin_bot_token_once_and_revoke, "api_admin_bot_token_once_and_revoke")
 			run_test (agent (create {API_ASSAULT}).test_api_participants_and_backup_answers, "api_participants_and_backup_answers")
 
+			print ("=== STORE EQUIVALENCE (Phase 4) ===%N")
+			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_store_equivalence_drive, "store_equivalence_drive")
+			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_survives_close_and_reopen, "sqlite_survives_close_and_reopen")
+			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_refuses_ahead_schema, "sqlite_refuses_ahead_schema")
+			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_backs_up_a_behind_file, "sqlite_backs_up_a_behind_file")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 

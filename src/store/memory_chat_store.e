@@ -34,6 +34,7 @@ feature {NONE} -- Initialization
 			create rooms.make (4)
 			create memberships.make (16)
 			create attachments.make (16)
+			create attachment_bytes_table.make (8)
 			create sessions.make (16)
 		ensure
 			not_open: not is_open
@@ -435,6 +436,29 @@ feature -- Attachments
 			from_model: attached Result as a implies attachments_model.domain.has (a_attachment_id)
 		end
 
+	put_attachment_bytes (a_attachment_id: INTEGER_64; a_bytes: SPECIAL [NATURAL_8])
+		do
+			attachment_bytes_table.force (copied_bytes (a_bytes), a_attachment_id)
+		ensure then
+			events_unchanged: events_model |=| old events_model
+			users_unchanged: users_model |=| old users_model
+			attachments_unchanged: attachments_model |=| old attachments_model
+		end
+
+	attachment_bytes (a_attachment_id: INTEGER_64): detachable SPECIAL [NATURAL_8]
+		do
+			if attached attachment_bytes_table [a_attachment_id] as l_bytes then
+				Result := copied_bytes (l_bytes)
+			end
+		ensure then
+			a_copy: attached Result as b implies b /= attachment_bytes_table [a_attachment_id]
+		end
+
+	has_attachment_bytes (a_attachment_id: INTEGER_64): BOOLEAN
+		do
+			Result := attachment_bytes_table.has (a_attachment_id)
+		end
+
 feature -- Sessions
 
 	put_session (a_session: CHAT_SESSION)
@@ -508,9 +532,31 @@ feature {NONE} -- Implementation
 	rooms: HASH_TABLE [CHAT_ROOM, INTEGER_64]
 	memberships: ARRAYED_LIST [CHAT_MEMBERSHIP]
 	attachments: HASH_TABLE [CHAT_ATTACHMENT, INTEGER_64]
+	attachment_bytes_table: HASH_TABLE [SPECIAL [NATURAL_8], INTEGER_64]
 	sessions: HASH_TABLE [CHAT_SESSION, STRING_8]
 
 	next_user_id, next_room_id, next_attachment_id, next_session_id: INTEGER_64
+
+	copied_bytes (a_bytes: SPECIAL [NATURAL_8]): SPECIAL [NATURAL_8]
+			-- An independent copy of `a_bytes' (D5 at the byte level).
+		local
+			i: INTEGER
+		do
+			create Result.make_empty (a_bytes.count)
+			from
+				i := 0
+			until
+				i >= a_bytes.count
+			loop
+				Result.extend (a_bytes [i])
+				i := i + 1
+			variant
+				a_bytes.count - i
+			end
+		ensure
+			fresh: Result /= a_bytes
+			same_size: Result.count = a_bytes.count
+		end
 
 invariant
 	ids_never_exceed_last: across events as e all e.id <= last_event_id end
@@ -524,6 +570,7 @@ invariant
 	memberships_reference: across memberships as m all rooms.has (m.room_id) and users_table.has (m.user_id) end
 	sessions_reference: across sessions as s all users_table.has (s.user_id) end
 	attachments_reference: across attachments as a all users_table.has (a.uploader_id) end
+	bytes_only_for_stored: across attachment_bytes_table as b all attachments.has (@b.key) end
 	unique_usernames: across users_table as u all (across users_table as v all u.username.same_string (v.username) implies u.id = v.id end) end
 	unique_pairs: across memberships as a all (across memberships as b all (a.user_id = b.user_id and a.room_id = b.room_id) implies a = b end) end
 	default_room_exists: default_room_id > 0 implies rooms.has (default_room_id)

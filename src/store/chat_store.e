@@ -408,6 +408,44 @@ feature -- Attachments
 			consistent: (Result /= Void) = has_attachment (a_attachment_id)
 		end
 
+	put_attachment_bytes (a_attachment_id: INTEGER_64; a_bytes: SPECIAL [NATURAL_8])
+			-- Keep the uploaded file's bytes beside the stored attachment
+			-- row. The sha256 of what `attachment_bytes' returns equals the
+			-- record's - checked by the equivalence assault; hashing is not
+			-- cheap enough to state here.
+		require
+			open: is_open
+			stored: has_attachment (a_attachment_id)
+			has_bytes: a_bytes.count > 0
+			sized_like_record: attached attachment (a_attachment_id) as a and then a.size = a_bytes.count
+		deferred
+		ensure
+			kept: has_attachment_bytes (a_attachment_id)
+			size_preserved: attached attachment_bytes (a_attachment_id) as b and then b.count = a_bytes.count
+			events_untouched: last_event_id = old last_event_id and event_count = old event_count
+			attachments_untouched: attachment_count = old attachment_count
+			users_untouched: user_count = old user_count
+		end
+
+	attachment_bytes (a_attachment_id: INTEGER_64): detachable SPECIAL [NATURAL_8]
+			-- A copy of the kept bytes, or Void when none were kept.
+		require
+			open: is_open
+		deferred
+		ensure
+			consistent: (Result /= Void) = has_attachment_bytes (a_attachment_id)
+			sized_like_record: attached Result as b implies (attached attachment (a_attachment_id) as a and then a.size = b.count)
+		end
+
+	has_attachment_bytes (a_attachment_id: INTEGER_64): BOOLEAN
+			-- Were bytes kept for `a_attachment_id'?
+		require
+			open: is_open
+		deferred
+		ensure
+			only_for_stored: Result implies has_attachment (a_attachment_id)
+		end
+
 feature -- Sessions
 
 	put_session (a_session: CHAT_SESSION)
