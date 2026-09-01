@@ -281,6 +281,82 @@ feature -- Thick client stack (intent-v3): real tests against the scripted trans
 			assert ("closed", not s.is_open and not k.is_open)
 		end
 
+	test_web_stream_sink_over_mock_response
+			-- The three Phase-1 stubs live: chunks recorded, counts honest, close honest.
+		local
+			l_response: SIMPLE_WEB_SERVER_RESPONSE
+			k: WEB_STREAM_SINK
+		do
+			create l_response.make_mock
+			l_response.send_stream_head (200, "text/event-stream")
+			create k.make (l_response)
+			assert ("open with nothing", k.is_open and k.bytes_written = 0)
+			k.write ("abc")
+			k.write ("de")
+			k.flush
+			assert ("counted", k.bytes_written = 5)
+			assert ("recorded in order", l_response.mock_body.same_string ("abcde"))
+			k.close
+			assert ("closed", not k.is_open)
+			assert ("bytes kept after close", k.bytes_written = 5)
+		end
+
+	test_sse_stream_over_web_sink
+			-- The full SSE law over the real adapter (mock response behind it).
+		local
+			l_response: SIMPLE_WEB_SERVER_RESPONSE
+			k: WEB_STREAM_SINK
+			s: SSE_STREAM
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+			l_now: SIMPLE_DATE_TIME
+			l_payload: SIMPLE_JSON_OBJECT
+		do
+			create l_response.make_mock
+			l_response.send_stream_head (200, "text/event-stream")
+			create k.make (l_response)
+			create s.make (k)
+			s.open (1, 0)
+			assert ("preamble on the wire", l_response.mock_body.starts_with (": simple_chat stream"))
+			create l_now.make (2026, 9, 1, 12, 0, 0)
+			create l_payload.make
+			create l_events.make (1)
+			l_events.extend (create {CHAT_EVENT}.make (1, 1, 5, {CHAT_EVENT_KINDS}.Kind_message, l_now, {STRING_32} "one", Void, l_payload, False))
+			s.deliver (create {CHAT_PAGE}.make (l_events, create {ARRAYED_LIST [CHAT_STATUS]}.make (0)))
+			s.heartbeat
+			assert ("event then heartbeat on the wire", l_response.mock_body.has_substring ("id: 1%Nevent: message%N") and l_response.mock_body.ends_with (": hb%N%N"))
+			s.close
+			assert ("all closed", not s.is_open and not k.is_open)
+		end
+
+	test_client_address_door_rule
+			-- M-F closed: the peer wins except behind the public loopback door (DR-010).
+		local
+			h: CHAT_REQUEST_HANDLER
+			r: SIMPLE_WEB_SERVER_REQUEST
+		do
+			create h.make
+				-- No peer supplied (an in-process request): the "local" bucket, never empty.
+			create r.make_mock ("GET", "/login")
+			assert ("local when unknown", h.client_address (r, False).same_string ("local"))
+				-- A public peer is itself; X-Forwarded-For from a non-door peer is ignored.
+			create r.make_mock ("GET", "/login")
+			r.set_mock_remote_address ("203.0.113.9")
+			r.set_mock_header ("X-Forwarded-For", "10.0.0.1, 10.0.0.2")
+			assert ("peer wins", h.client_address (r, True).same_string ("203.0.113.9"))
+				-- The loopback door on a public server: the rightmost forwarded entry wins.
+			create r.make_mock ("GET", "/login")
+			r.set_mock_remote_address ("127.0.0.1")
+			r.set_mock_header ("X-Forwarded-For", "10.0.0.1, 198.51.100.7")
+			assert ("rightmost behind the door", h.client_address (r, True).same_string ("198.51.100.7"))
+				-- The same door peer on a private server: no trust, the peer itself.
+			create r.make_mock ("GET", "/login")
+			r.set_mock_remote_address ("127.0.0.1")
+			r.set_mock_header ("X-Forwarded-For", "10.0.0.1")
+			assert ("no trust when private", h.client_address (r, False).same_string ("127.0.0.1"))
+				-- Different addresses land in different lockout buckets (M-F).
+			assert ("distinct buckets", not h.client_address (r, False).same_string ("203.0.113.9"))
+		end
+
 	test_event_json_round_trip
 		local
 			j: CHAT_JSON

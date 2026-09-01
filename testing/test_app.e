@@ -46,6 +46,9 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_poll_waiter_counts_only_its_room, "poll_waiter_counts_only_its_room")
 			run_test (agent t.test_event_bus_tickets, "event_bus_tickets")
 			run_test (agent t.test_sse_stream_delivers_in_order, "sse_stream_delivers_in_order")
+			run_test (agent t.test_web_stream_sink_over_mock_response, "web_stream_sink_over_mock_response")
+			run_test (agent t.test_sse_stream_over_web_sink, "sse_stream_over_web_sink")
+			run_test (agent t.test_client_address_door_rule, "client_address_door_rule")
 			run_test (agent t.test_event_json_round_trip, "event_json_round_trip")
 
 			print ("=== CLIENT (Phase 1b) ===%N")

@@ -75,23 +75,60 @@ feature -- Request reading (contract support)
 		end
 
 	client_ip (a_request: SIMPLE_WEB_SERVER_REQUEST): STRING_8
-			-- The peer address, or the rightmost X-Forwarded-For entry when the peer is the door (DR-010).
-			-- Phase 4: simple_web must expose the peer address; until then the peer is taken as local.
+			-- The peer address, or the rightmost X-Forwarded-For entry when the
+			-- peer is the door (DR-010): `client_address' with this process's
+			-- configuration. Different clients land in different lockout
+			-- buckets now that simple_web reports the peer (M-F closed).
 		do
-			if trusts_forwarded_headers (a_request) and then attached a_request.header ("X-Forwarded-For") as f and then not f.is_empty then
-				Result := rightmost_address (f)
+			Result := client_address (a_request, api_is_public (shared_api))
+		ensure
+			given: not Result.is_empty
+			peer_when_untrusted: not trusts_forwarded_headers (a_request) implies Result.same_string (peer_address (a_request))
+			rightmost_when_trusted: (trusts_forwarded_headers (a_request) and then attached a_request.header ("X-Forwarded-For") as f and then not f.is_empty)
+				implies Result.same_string (rightmost_address (f))
+		end
+
+	client_address (a_request: SIMPLE_WEB_SERVER_REQUEST; a_public: BOOLEAN): STRING_8
+			-- The rule behind `client_ip', with the configuration's kind as an
+			-- argument so it is testable without the process-wide API: when the
+			-- immediate peer is the loopback door AND the server is public, the
+			-- rightmost X-Forwarded-For entry wins (the door appends the true
+			-- peer last); otherwise the peer itself, forwarded headers ignored.
+		do
+			if a_public and then peer_address (a_request).same_string (Loopback)
+				and then attached a_request.header ("X-Forwarded-For") as l_forwarded and then not l_forwarded.is_empty
+			then
+				Result := rightmost_address (l_forwarded)
 			else
-				Result := Loopback
+				Result := peer_address (a_request)
 			end
 		ensure
 			given: not Result.is_empty
-			peer_when_untrusted: not trusts_forwarded_headers (a_request) implies Result.same_string (Loopback)
+			peer_when_not_door: not (a_public and peer_address (a_request).same_string (Loopback)) implies Result.same_string (peer_address (a_request))
+		end
+
+	peer_address (a_request: SIMPLE_WEB_SERVER_REQUEST): STRING_8
+			-- The connection's peer as simple_web reports it; "local" when the
+			-- connector supplies none (an in-process request), so the limiter
+			-- always has a non-empty bucket key.
+		do
+			Result := a_request.remote_address
+			if Result.is_empty then
+				Result := Local_peer
+			end
+		ensure
+			given: not Result.is_empty
+			faithful: not a_request.remote_address.is_empty implies Result.same_string (a_request.remote_address)
 		end
 
 	trusts_forwarded_headers (a_request: SIMPLE_WEB_SERVER_REQUEST): BOOLEAN
-			-- Only when the immediate peer is 127.0.0.1 (the door). Phase 4: the peer address.
+			-- Only when the immediate peer is 127.0.0.1 (the door) and the
+			-- configuration is public: exactly then the door speaks for the
+			-- client (DR-010).
 		do
-			Result := False
+			Result := peer_address (a_request).same_string (Loopback) and then api_is_public (shared_api)
+		ensure
+			definition: Result = (peer_address (a_request).same_string (Loopback) and api_is_public (shared_api))
 		end
 
 	room_id_of (a_request: SIMPLE_WEB_SERVER_REQUEST): INTEGER_64
@@ -167,6 +204,13 @@ feature -- Constants
 	Token_length: INTEGER = 64
 	Bearer_prefix: STRING_8 = "Bearer "
 	Loopback: STRING_8 = "127.0.0.1"
+	Local_peer: STRING_8 = "local"
+	Sse_content_type: STRING_8 = "text/event-stream"
+	Max_stream_seconds: INTEGER = 3600
+			-- A stream's hard lifetime: EWF's standalone connector never reports
+			-- a hung-up client (see WEB_STREAM_SINK), so without this bound a
+			-- dead bot would pin its request processor forever. Clients
+			-- reconnect with ?since= and lose nothing.
 	Default_page: INTEGER_64 = 100
 	Page_maximum: INTEGER_64 = 500
 	Default_wait_seconds: INTEGER_64 = 25
@@ -279,10 +323,123 @@ feature {NONE} -- Handlers
 		end
 
 	handle_stream (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
-			-- SSE for bots and curl: the same waiter loop as `handle_wait', repeated,
-			-- over a WEB_STREAM_SINK - needs simple_web's streaming response (Phase 4, Spike A).
+			-- SSE for bots and curl: text/event-stream over simple_web's streaming
+			-- response - the `handle_wait' choreography repeated over a
+			-- WEB_STREAM_SINK. The request's processor is pinned for the
+			-- stream's life: that is the design (bots and curl hold one
+			-- connection each; people use /wait).
+			--
+			-- The stream ends when the connector reports the client gone (a
+			-- raising connector; EWF's standalone one is silent - see
+			-- WEB_STREAM_SINK), when membership is revoked (subscribe refused,
+			-- or a later page refused), when page bytes go bad, or when
+			-- `Max_stream_seconds' passes - the bound a silent connector makes
+			-- necessary. Clients reconnect with ?since= and lose nothing.
+		local
+			l_room: INTEGER_64
+			l_ticket: INTEGER
+			l_waiter: separate POLL_WAITER
+			l_alarm: separate POLL_ALARM
+			l_wait: POLL_WAIT
+			l_reply: CHAT_REPLY
+			l_sink: WEB_STREAM_SINK
+			l_stream: detachable SSE_STREAM
+			l_deadline, l_now: SIMPLE_DATE_TIME
+			l_failed: BOOLEAN
 		do
-			reply (a_response, not_yet_reply)
+			l_room := room_id_of (a_request)
+			if l_failed then
+				if not a_response.is_streaming then
+					reply (a_response, failed_reply)
+				end
+					-- Mid-stream failure: the connection simply ends; the
+					-- subscription was already released in the rescue.
+			elseif not attached bearer_token (a_request) as t then
+				reply (a_response, unauthorized_reply)
+			elseif l_room = 0 then
+				reply (a_response, bad_request_reply ("room id"))
+			else
+				l_reply := api_events (shared_api, t, l_room, integer_query (a_request, "since", 0).max (0), Default_page.to_integer_32, Empty_array)
+				if l_reply.status /= 200 then
+						-- Refused before any streaming: the error travels as plain JSON.
+					reply (a_response, l_reply)
+				else
+					a_response.send_stream_head (200, Sse_content_type)
+					create l_sink.make (a_response)
+					create l_stream.make (l_sink)
+					l_stream.open (l_room, integer_query (a_request, "since", 0).max (0))
+					stream_page (l_stream, l_reply)
+					l_deadline := (create {SIMPLE_DATE_TIME}.make_now).plus_seconds (Max_stream_seconds)
+					from
+						create l_now.make_now
+					until
+						not l_stream.is_open or l_deadline < l_now
+					loop
+						create l_waiter.make (l_room)
+						l_ticket := api_subscribe (shared_api, t, l_room, l_waiter)
+						if l_ticket = 0 then
+								-- Membership revoked (or the room gone): the stream ends.
+							l_stream.close
+						else
+							l_reply := api_events (shared_api, t, l_room, l_stream.last_delivered_id, Default_page.to_integer_32, Empty_array)
+							if l_reply.is_empty_page then
+								create l_alarm.make (l_waiter, Default_wait_seconds.to_integer_32)
+								start_alarm (l_alarm)
+								create l_wait.make
+								l_wait.wait_for (l_waiter)
+								l_reply := api_events (shared_api, t, l_room, l_stream.last_delivered_id, Default_page.to_integer_32, l_wait.statuses_json)
+							end
+							api_unsubscribe (shared_api, l_ticket)
+							l_ticket := 0
+							if l_stream.is_open then
+								stream_page (l_stream, l_reply)
+							end
+						end
+						create l_now.make_now
+					end
+					if l_stream.is_open then
+						l_stream.close
+					end
+				end
+			end
+		rescue
+			if not l_failed then
+				l_failed := True
+				if l_ticket > 0 then
+					api_unsubscribe (shared_api, l_ticket)
+					l_ticket := 0
+				end
+				if attached l_stream as s and then s.is_open then
+					s.close
+				end
+				retry
+			end
+		end
+
+	stream_page (a_stream: SSE_STREAM; a_reply: CHAT_REPLY)
+			-- Decode a page reply and hand it to the stream: events and statuses
+			-- deliver; a quiet page becomes a heartbeat (the connection is seen
+			-- alive); anything that is not a well-formed 200 page ends the stream.
+		require
+			open: a_stream.is_open
+		local
+			l_page: detachable CHAT_PAGE
+		do
+			if a_reply.status = 200 then
+				l_page := codec.page_from_bytes (a_reply.body)
+			end
+			if l_page = Void then
+				a_stream.close
+			elseif l_page.is_empty then
+				a_stream.heartbeat
+			elseif l_page.events.is_empty or else l_page.events.first.id > a_stream.last_delivered_id then
+				a_stream.deliver (l_page)
+			else
+					-- A page that does not follow the cursor: end rather than repeat.
+				a_stream.close
+			end
+		ensure
+			cursor_never_backs: a_stream.last_delivered_id >= old a_stream.last_delivered_id
 		end
 
 	handle_members (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
@@ -432,6 +589,12 @@ feature {NONE} -- The API's processor (each routine holds the API only for its c
 	api_health (a_api: separate CHAT_API): CHAT_REPLY
 		do
 			create Result.make_from_separate (a_api.health)
+		end
+
+	api_is_public (a_api: separate CHAT_API): BOOLEAN
+			-- Is the service configured public (the Caddy door path, DR-010)?
+		do
+			Result := a_api.config.is_public
 		end
 
 	api_login (a_api: separate CHAT_API; a_username, a_password: STRING_32; a_client_ip: STRING_8): CHAT_REPLY

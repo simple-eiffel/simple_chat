@@ -75,7 +75,7 @@ feature -- Basic operations
 			is_opened := True
 			sink.write (Preamble)
 		ensure then
-			preamble_written: sink.bytes_written = old sink.bytes_written + Preamble.count
+			preamble_written: sink.is_open implies sink.bytes_written = old sink.bytes_written + Preamble.count
 		end
 
 	close
@@ -89,16 +89,25 @@ feature -- Basic operations
 		end
 
 	deliver (a_page: CHAT_PAGE)
+			-- The cursor advances over the whole page even if the sink closes
+			-- mid-page (a dead client): the stream is ending anyway, and a
+			-- reconnecting client replays from its own `since' (M-A).
 		do
 			across a_page.events as e loop
-				sink.write (format_event (e))
+				if sink.is_open then
+					sink.write (format_event (e))
+				end
 				delivered.extend (e.id)
 				last_delivered_id := e.id
 			end
 			across a_page.statuses as s loop
-				sink.write (format_status (s))
+				if sink.is_open then
+					sink.write (format_status (s))
+				end
 			end
-			sink.flush
+			if sink.is_open then
+				sink.flush
+			end
 		end
 
 	heartbeat
@@ -107,9 +116,11 @@ feature -- Basic operations
 			open: is_open
 		do
 			sink.write (Heartbeat_line)
-			sink.flush
+			if sink.is_open then
+				sink.flush
+			end
 		ensure
-			written: sink.bytes_written = old sink.bytes_written + Heartbeat_line.count
+			written: sink.is_open implies sink.bytes_written = old sink.bytes_written + Heartbeat_line.count
 			nothing_delivered: delivered_model |=| old delivered_model
 		end
 
