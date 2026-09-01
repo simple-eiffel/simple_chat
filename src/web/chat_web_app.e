@@ -44,8 +44,11 @@ feature -- Status report
 feature -- Basic operations
 
 	start
-			-- Create the server on `port'; the pool is sized for the connections
+			-- Assemble the server on `port'; the pool is sized for the connections
 			-- that stay open (long-polls, streams), not for the request rate.
+			-- `is_running' means ASSEMBLED AND READY here: the socket itself binds
+			-- inside `run' (EWF's launch), so a port conflict surfaces there, not
+			-- here - the re-review's pre-bind note, kept honest by saying so.
 		require
 			not_running: not is_running
 		local
