@@ -35,3 +35,5 @@ Thumbs.db
 
 *.epr
 *.log
+testing/config_scratch/
+testing/equivalence_scratch/

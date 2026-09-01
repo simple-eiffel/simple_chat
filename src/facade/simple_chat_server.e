@@ -86,6 +86,7 @@ feature -- Core Operations
 		require
 			configured: is_configured
 			not_running: not is_running
+			door_matches_config: is_door_matching_config
 		local
 			l_web: CHAT_WEB_APP
 			l_host: DISPATCHER_HOST
@@ -156,6 +157,15 @@ feature -- Status
 	is_configured: BOOLEAN
 		do
 			Result := attached config as c and then c.is_valid
+		end
+
+	is_door_matching_config: BOOLEAN
+			-- Does the door's public stance agree with the configuration's
+			-- (M-G)? A public configuration needs a door, and that door's
+			-- `is_public' must equal the configuration's.
+		do
+			Result := attached config as c implies
+				((c.is_public = (attached front_door as d and then d.is_public)) and (c.is_public implies front_door /= Void))
 		end
 
 	is_running: BOOLEAN

@@ -43,23 +43,58 @@ feature {NONE} -- Initialization
 
 	make_from_shared
 			-- Build the service and everything under it on this processor,
-			-- from the shared settings. Phase 4 reads `Config_path_key' and
-			-- opens the SQLite store; until then defaults and a memory store.
+			-- from the shared settings: the configuration is loaded from the
+			-- path under `Config_path_key' (defaults when the key is absent
+			-- or the file is refused - D6, logged, never raised), and the
+			-- store is the SQLite file at `database_path' when that
+			-- configuration came from a file, with the memory store as the
+			-- fallback that keeps this API constructible when the file
+			-- store cannot open (the error is logged).
 		local
-			l_config: SERVER_CONFIG
-			l_store: MEMORY_CHAT_STORE
+			l_config: detachable SERVER_CONFIG
+			l_file_config: SERVER_CONFIG
+			l_store: detachable CHAT_STORE
+			l_memory: MEMORY_CHAT_STORE
+			l_sqlite: SQLITE_CHAT_STORE
 			l_bus: EVENT_BUS
 			l_limits: RATE_LIMITER
 			l_log: CHAT_LOG
 			l_logger: SIMPLE_LOGGER
+			l_directory: DIRECTORY
 		do
-			create l_config.make_defaults
-			create l_store.make
-			l_store.open
-			create l_bus.make
-			create l_limits.make (3600)
 			create l_logger
 			create l_log.make (l_logger)
+			if attached shared_item ({CHAT_SHARED}.Config_path_key) as l_path and then not l_path.is_empty then
+				create l_file_config.make_from_file (l_path)
+				if l_file_config.is_valid then
+					l_config := l_file_config
+				else
+					l_log.error ("the configuration at " + l_path + " is refused; the API runs on defaults with a memory store")
+				end
+			end
+			if l_config = Void then
+				create l_config.make_defaults
+			end
+			if l_config.is_loaded and then not l_config.data_dir.is_empty then
+				create l_directory.make (l_config.data_dir)
+				if not l_directory.exists then
+					l_directory.recursive_create_dir
+				end
+				create l_sqlite.make (l_config.database_path)
+				l_sqlite.open
+				if l_sqlite.is_open then
+					l_store := l_sqlite
+				else
+					l_log.error ("the SQLite store under " + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (l_config.data_dir) + " cannot open; falling back to a memory store")
+				end
+			end
+			if l_store = Void then
+				create l_memory.make
+				l_memory.open
+				l_store := l_memory
+			end
+			create l_bus.make
+			create l_limits.make (3600)
 			create service.make (l_store, l_bus, l_limits, l_config, l_log)
 			config := l_config
 			create codec.make
