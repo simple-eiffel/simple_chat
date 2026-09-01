@@ -1,11 +1,16 @@
 # Implementation Tasks: simple_chat (Phase 4)
 
+**Status 2026-09-01:** Tasks 1–7 DONE (server live; `@claude` answers in the room —
+smoke-proven over HTTP; three SCOOP concurrency defects and the re-entrant-wake
+phantom raise found live and fixed). Task 8 in flight. Tasks 9–10 gated on
+simple_winhttp / SHELL_TRAY / DPAPI / simple_shaping.
+
 Ordered by dependency (approach.md section 4; stub inventory of 2026-08-31: 80 `Phase 4` markers).
 Standing rules for every task: the contracts are the specification — bodies satisfy them; a
 contract change is reported, never slipped in. Clean compile (`rm -rf EIFGENs`), zero warnings,
 whole assault green, tests added per task, CRLF preserved, README/docs updated when behavior lands.
 
-## Task 1: CHAT_SERVICE bodies over the memory store  ← NEXT (approved)
+## Task 1: CHAT_SERVICE bodies over the memory store  ✔ DONE
 **Files:** src/service/chat_service.e (15 stubs)
 **Features:** authenticate, session_for_token, revoke, revoke_bot_token, post_message, post_image,
 post_system, publish_status, store_upload, events_since, events_before, create_user,
