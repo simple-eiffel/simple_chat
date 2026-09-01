@@ -673,7 +673,12 @@ feature -- Dispatcher
 			l_dir: DIRECTORY
 		do
 			shared_put ({CHAT_SHARED}.Config_path_key, population_config_path)
-			create l_config.make_defaults
+				-- The API's own configuration is the SAME file the dispatcher
+				-- loads (as in production, where make_from_shared reads the
+				-- shared path): dispatcher_bot_id_of resolves entries by index
+				-- against the API's copy, so a defaults-built API would answer
+				-- 0 for every entry and nothing would register.
+			create l_config.make_from_file (population_config_path)
 			create l_store.make
 			l_store.open
 			create l_bus.make
