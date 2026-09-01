@@ -145,6 +145,17 @@ feature {NONE} -- Initialization
 			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_refuses_ahead_schema, "sqlite_refuses_ahead_schema")
 			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_backs_up_a_behind_file, "sqlite_backs_up_a_behind_file")
 
+			print ("=== CONFIG LOADING (Phase 4) ===%N")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_missing_file_is_one_named_error, "config_missing_file_is_one_named_error")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_junk_file_is_one_named_error, "config_junk_file_is_one_named_error")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_minimal_file_loads, "config_minimal_file_loads")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_full_file_loads_two_participants, "config_full_file_loads_two_participants")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_hostile_numbers_keep_defaults, "config_hostile_numbers_keep_defaults")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_hostile_door_and_ddns, "config_hostile_door_and_ddns")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_hostile_participants, "config_hostile_participants")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_bind_address_refused, "config_bind_address_refused")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_gates_and_door_match, "server_app_gates_and_door_match")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 
