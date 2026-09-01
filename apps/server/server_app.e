@@ -139,6 +139,11 @@ feature -- Commands
 						print ("--create-admin: refused - ")
 						print_line_32 (l_error.message)
 					end
+					if l_service.store.is_open then
+							-- Close before teardown: an open SQLite handle disposed during
+							-- run-time shutdown segfaulted after every successful run.
+						l_service.store.close
+					end
 				else
 						-- No memory fallback here: an admin created in a memory
 						-- store would vanish with this process (unlike the serving
