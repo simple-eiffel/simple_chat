@@ -240,16 +240,100 @@ feature -- Element change
 feature -- Basic operations
 
 	answer (a_request: PARTICIPANT_REQUEST): PARTICIPANT_ANSWER
+			-- <Precursor>: one `claude -p' call in the sandbox - the client
+			-- is already pinned (working directory, --tools "",
+			-- --setting-sources "", --strict-mcp-config, this timeout) and
+			-- clears ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN in the child,
+			-- so the call draws on the login, never on API credit. The
+			-- persona is `persona_of' (--append-system-prompt-file), the
+			-- prompt `prompt_of'; the room's conversation continues through
+			-- --resume with `session_of (a_request.room_id)' and a
+			-- successful reply's session id is remembered per room. The
+			-- installed CLI does offer --json-schema for structured output;
+			-- v1 deliberately sends no schema and takes the whole result
+			-- text as the answer - `image_path' stays Void, so nothing is
+			-- invented around a structure that is not needed yet. The bound
+			-- is advisory (the client cannot kill the CLI - Issue 26): an
+			-- overrun is recorded and reported as a timeout error, and a
+			-- raising engine is an error result, never an exception.
+		local
+			l_started, l_now: SIMPLE_DATE_TIME
+			l_response: detachable AI_RESPONSE
+			l_failed: BOOLEAN
 		do
-			calls := calls + 1
-			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Not implemented (Phase 1 skeleton)", 501))
-			-- Implementation in Phase 4: persona system prompt; the client already runs in the
-			-- sandbox with --tools "" --setting-sources "" --strict-mcp-config and this timeout;
-			-- --resume session_of (a_request.room_id); --json-schema {text, image_path}; record_run
+			create l_started.make_now
+			if not l_failed then
+				calls := calls + 1
+				if attached session_of (a_request.room_id) as l_session and then client.is_valid_session_id (l_session) then
+					client.set_resume_session (l_session)
+				else
+					client.clear_resume_session
+				end
+				l_response := client.ask_with_system (persona_of (a_request), prompt_of (a_request))
+			end
+			create l_now.make_now
+			record_run ((l_now.to_timestamp - l_started.to_timestamp).to_integer_32.max (0))
+			if attached l_response as l_ok and then l_ok.is_success and then
+				attached client.last_session_id as l_id and then client.is_valid_session_id (l_id)
+			then
+				remember_session (a_request.room_id, l_id)
+			end
+			if l_failed or l_response = Void then
+				create Result.make_error (unavailable_error ("the engine raised instead of answering"))
+			elseif last_timed_out then
+				create Result.make_error (unavailable_error ("no answer within " + timeout_seconds.out + " seconds"))
+			elseif attached l_response as l_r and then l_r.is_success and then not l_r.text.is_empty then
+				create Result.make_success (l_r.text.head (a_request.max_characters), Void)
+			elseif attached l_response as l_e and then attached l_e.error_message as l_message and then not l_message.is_empty then
+				create Result.make_error (unavailable_error ({STRING_32} "Claude could not answer: " + l_message.head (200)))
+			else
+				create Result.make_error (unavailable_error ("Claude answered nothing"))
+			end
 		ensure then
 			bounded_runtime: not last_timed_out implies elapsed_seconds <= timeout_seconds
 			timeout_is_error: last_timed_out implies not Result.is_success
 			image_safe: (Result.is_success and then attached Result.image_path as p) implies Result.is_safe_image_path (p)
+		rescue
+				-- One retry only: the retried body skips the engine and
+				-- answers an error; a second exception propagates instead
+				-- of looping the rescue forever.
+			if not l_failed then
+				l_failed := True
+				retry
+			end
+		end
+
+feature -- Conversion (contract support)
+
+	persona_of (a_request: PARTICIPANT_REQUEST): STRING_32
+			-- The system prompt: who this participant is, where it speaks,
+			-- and the register it must keep - chat length, plain text, no
+			-- fabricated specifics about people (intent-v2 Q7).
+		do
+			create Result.make (256)
+			Result.append ({STRING_32} "You are ")
+			Result.append (handle)
+			Result.append ({STRING_32} ", a participant in the chat room %"")
+			Result.append (a_request.room_name)
+			Result.append ({STRING_32} "%". Answer the member who addressed you, in plain text for a chat: brief and direct, at most ")
+			Result.append_string_general (a_request.max_characters.out)
+			Result.append ({STRING_32} " characters. Never invent facts about the people in the room.")
+		ensure
+			named: Result.has_substring (handle)
+			room_named: Result.has_substring (a_request.room_name)
+			register_kept: Result.has_substring ({STRING_32} "Never invent facts")
+		end
+
+	prompt_of (a_request: PARTICIPANT_REQUEST): STRING_32
+			-- The user prompt: the asker by display name, then the request.
+		do
+			create Result.make (a_request.text.count + a_request.asker_display_name.count + 8)
+			Result.append (a_request.asker_display_name)
+			Result.append ({STRING_32} " asks: ")
+			Result.append (a_request.text)
+		ensure
+			asker_named: Result.starts_with (a_request.asker_display_name)
+			carries_request: Result.ends_with (a_request.text)
 		end
 
 feature {NONE} -- Implementation
@@ -257,6 +341,13 @@ feature {NONE} -- Implementation
 	client: CLAUDE_CODE_CLIENT
 
 	sessions: HASH_TABLE [STRING_32, INTEGER_64]
+
+	unavailable_error (a_message: READABLE_STRING_GENERAL): CHAT_ERROR
+		require
+			explained: not a_message.is_empty
+		do
+			create Result.make ({CHAT_ERROR}.Code_unavailable, a_message, 503)
+		end
 
 	canonical_of (a_path: READABLE_STRING_GENERAL): STRING_32
 			-- `a_path' resolved to its canonical form when absolute (no "."

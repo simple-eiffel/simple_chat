@@ -182,12 +182,13 @@ feature -- Status report
 feature {NONE} -- Implementation
 
 	run_arguments (a_arguments: ARRAYED_LIST [STRING_32]): STRING_32
+			-- <Precursor>: bible.exe as a child process. The one command
+			-- string is `command_line_of (a_arguments)' - never any other
+			-- joining - and `run_child_process' owns the bound (wait in
+			-- slices, kill past `timeout_seconds', confirm dead) and the
+			-- timing record.
 		do
-			create Result.make_empty
-			record_run (0)
-			-- Implementation in Phase 4: SIMPLE_ASYNC_PROCESS started with
-			-- `command_line_of (a_arguments)' - never any other joining -
-			-- bounded by `timeout_seconds' via wait_seconds, then kill.
+			Result := run_child_process (a_arguments)
 		end
 
 	is_letter_or_digit (a_code: NATURAL_32): BOOLEAN

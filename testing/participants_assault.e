@@ -4,9 +4,15 @@ note
 		alias rules, the parser's boundary and `via' laws, the tool
 		template's two gates and its disclosure law, the sandbox rules,
 		the engines' timing contracts, the configuration's completeness,
-		and the dispatcher's idempotence, cursors and restart - all on one
-		processor, against a CHAT_API over the memory store whose Phase 4
-		bodies are stubs: what is asserted is what the code does today.
+		and the dispatcher's idempotence, cursors, restart and population -
+		all on one processor, against a CHAT_API over the memory store.
+		The Phase 4 engines run for real against stand-ins: ping.exe as
+		the child (needs no shell and no stdin, and "127.0.0.1" passes
+		bible's own reference gate), a scratch shape database bearing the
+		real schema, and an Ollama client pointed at an unroutable
+		loopback port - the suite never touches a live AI engine or the
+		network, and the Claude engines are exercised up to (never
+		through) the CLI call.
 	]"
 	author: "Larry Rix"
 
@@ -15,6 +21,11 @@ class
 
 inherit
 	TEST_SET_BASE
+
+	CHAT_SHARED
+		undefine
+			default_create
+		end
 
 feature -- Rules and parsing
 
@@ -208,7 +219,11 @@ feature -- Tools
 			s: SHAPE_TOOL_PARTICIPANT
 			a: PARTICIPANT_ANSWER
 		do
-			create b.make ({STRING_32} "@tools-larry", bot ("tools", {STRING_32} "Tools"), {STRING_32} "bible.exe", 1200, 30)
+				-- A name certainly absent: a bare "bible.exe" is found through
+				-- the PATH search on a machine that has simple_scholar
+				-- installed, and then the child ANSWERS - this assault pins
+				-- the missing-engine path, so the name must miss everywhere.
+			create b.make ({STRING_32} "@tools-larry", bot ("tools", {STRING_32} "Tools"), {STRING_32} "no_such_bible_probe.exe", 1200, 30)
 			assert ("verse", b.accepts ({STRING_32} "Gen 1:1") and b.arguments_of ({STRING_32} "Gen 1:1").count = 2)
 			assert ("range with a book number", b.accepts ({STRING_32} "1 John 3:16-18"))
 			assert ("version prefix", b.accepts ({STRING_32} "kjv Ps 23"))
@@ -223,12 +238,14 @@ feature -- Tools
 			assert ("empty refused", not b.accepts ({STRING_32} ""))
 			assert ("two words after a command refused", not b.accepts ({STRING_32} "/define a b"))
 			assert ("no digit is no reference", not b.accepts ({STRING_32} "Genesis"))
-			assert ("command line shape", b.command_line_of (b.arguments_of ({STRING_32} "Gen 1:1")).same_string ("bible.exe Gen 1:1"))
+			assert ("command line shape", b.command_line_of (b.arguments_of ({STRING_32} "Gen 1:1")).same_string ("no_such_bible_probe.exe Gen 1:1"))
 			a := b.answer (request ({STRING_32} "Gen 1:1", Void))
-			assert ("stub engine says nothing, honestly", not a.is_success and b.runs = 1 and b.executed_query.same_string ({STRING_32} "Gen 1:1"))
+			assert ("missing engine says nothing, honestly", not a.is_success and b.runs = 1 and b.executed_query.same_string ({STRING_32} "Gen 1:1"))
 			create s.make ({STRING_32} "@shape-larry", bot ("shape", {STRING_32} "Shape"), {STRING_32} "shape.db", 1200, 30)
 			assert ("slug", s.accepts ({STRING_32} "beachhead_that_moves") and s.is_slug ({STRING_32} "a1"))
 			assert ("not a slug", not s.accepts ({STRING_32} "Beachhead") and not s.accepts ({STRING_32} "a b") and not s.accepts ({STRING_32} ""))
+			a := s.answer (request ({STRING_32} "beachhead_that_moves", Void))
+			assert ("missing database is an error", not a.is_success and s.runs = 1)
 		end
 
 	test_metacharacter_law
@@ -393,6 +410,13 @@ feature -- Sandboxes
 feature -- Engines
 
 	test_engine_timing_contracts
+			-- Phase 4 engines fail honestly against a dead endpoint: the
+			-- Ollama client points at an unroutable loopback port (the
+			-- ops-assault pattern - the refusal is immediate, no live
+			-- engine, no network), and no exception escapes. The Claude
+			-- shaper is construction-only here: its `shape' would invoke
+			-- the installed CLI and spend the subscription, so the suite
+			-- pins its wiring and tier instead.
 		local
 			oc: OLLAMA_CLIENT
 			cc: CLAUDE_CODE_CLIENT
@@ -403,20 +427,83 @@ feature -- Engines
 			st: SHAPED_TEXT
 			brief: SHAPING_BRIEF
 		do
-			create oc.make
+			create oc.make_with_base_url ({STRING_32} "http://127.0.0.1:9")
 			create op.make ({STRING_32} "@qwen", bot ("qwen", {STRING_32} "Qwen"), oc, {STRING_32} "qwen2.5", 1200, 30)
 			a := op.answer (request ({STRING_32} "hello", Void))
-			assert ("stub engine fails honestly", not a.is_success and op.calls = 1 and op.elapsed_seconds = 0 and not op.last_timed_out and op.timeout_seconds = 30)
+			assert ("dead ollama is an error, not an exception", not a.is_success and op.calls = 1 and not op.last_timed_out and op.timeout_seconds = 30)
+			assert ("timing recorded within the bound", op.elapsed_seconds >= 0 and op.elapsed_seconds <= 30)
 			create os.make ({STRING_32} "@qwen", oc, {STRING_32} "qwen2.5", 30)
 			create brief.make ({SHAPING_BRIEF}.Purpose_response, {STRING_32} "test", 100)
 			st := os.shape ({STRING_32} "hello", brief)
-			assert ("stub shaper fails honestly", not st.is_success and os.elapsed_seconds = 0 and os.cost_tier = {SHAPER}.Tier_local)
+			assert ("dead ollama shaper fails honestly", not st.is_success and not os.last_timed_out and os.cost_tier = {SHAPER}.Tier_local)
 			create cc.make
 			create cs.make ({STRING_32} "@claude", cc, 60)
-			st := cs.shape ({STRING_32} "hello", brief)
-			assert ("claude shaper stub", not st.is_success and cs.cost_tier = {SHAPER}.Tier_subscription and cs.timeout_seconds = 60)
+			assert ("claude shaper wired", cs.cost_tier = {SHAPER}.Tier_subscription and cs.timeout_seconds = 60 and cs.name.same_string ({STRING_32} "@claude"))
 			brief.add_example ({STRING_32} "Gen 1:1")
 			assert ("brief keeps its description", brief.example_count = 1 and brief.example (1).same_string ({STRING_32} "Gen 1:1") and brief.description.same_string ({STRING_32} "test"))
+		end
+
+feature -- Tool engines (Task 7)
+
+	test_bible_tool_runs_a_real_child
+			-- The child engine end to end on a stand-in: ping.exe answers
+			-- four echoes to 127.0.0.1 in about three seconds, well inside
+			-- a ten-second bound, and its output reaches the reply through
+			-- the same gates as any tool run. The stand-in needs no shell
+			-- and no stdin, and "127.0.0.1" passes bible's own reference
+			-- gate (digits and dots), so no test-only hook is needed.
+		local
+			b: BIBLE_TOOL_PARTICIPANT
+			a: PARTICIPANT_ANSWER
+		do
+			create b.make ({STRING_32} "@tools-larry", bot ("tools", {STRING_32} "Tools"), {STRING_32} "C:\Windows\System32\ping.exe", 4000, 10)
+			a := b.answer (request_wide ({STRING_32} "127.0.0.1", 4000))
+			assert ("child ran and answered", a.is_success and b.runs = 1)
+			assert ("within the bound", not b.last_timed_out and b.elapsed_seconds <= 10)
+			assert ("echoes what ran", a.text.has_substring ({STRING_32} "> 127.0.0.1"))
+			assert ("carries the child's output", a.text.count > 40)
+			assert ("undisclosed: no shaper ran", not b.last_response_shaped)
+		end
+
+	test_tool_child_killed_at_timeout
+			-- Task 7 acceptance: a child alive past the bound is killed,
+			-- confirmed dead and reported as one timeout failure. Ping's
+			-- four echoes need about three seconds and the bound is one,
+			-- so the answer coming back in about a second IS the kill
+			-- working - the child alone would hold the call for three.
+		local
+			b: BIBLE_TOOL_PARTICIPANT
+			a: PARTICIPANT_ANSWER
+			l_before, l_after: SIMPLE_DATE_TIME
+		do
+			create b.make ({STRING_32} "@tools-larry", bot ("tools", {STRING_32} "Tools"), {STRING_32} "C:\Windows\System32\ping.exe", 4000, 1)
+			create l_before.make_now
+			a := b.answer (request_wide ({STRING_32} "127.0.0.1", 4000))
+			create l_after.make_now
+			assert ("timed out and failed", not a.is_success and b.last_timed_out and b.runs = 1)
+			assert ("overrun never clamped", b.elapsed_seconds > b.timeout_seconds)
+			assert ("counted once", b.calls = 1)
+			assert ("killed, not waited out", (l_after.to_timestamp - l_before.to_timestamp) <= 2)
+			assert ("timeout is the error", attached a.error as e and then e.code.same_string ({CHAT_ERROR}.Code_unavailable))
+		end
+
+	test_shape_tool_answers_from_a_scratch_database
+			-- The query engine against a scratch shape.db bearing the real
+			-- schema (shape + shape_instance): the census always names all
+			-- four verdicts together - the store's own rule - and the
+			-- instances follow; an unknown slug is an honest error.
+		local
+			s: SHAPE_TOOL_PARTICIPANT
+			a: PARTICIPANT_ANSWER
+		do
+			create s.make ({STRING_32} "@shape-larry", bot ("shape", {STRING_32} "Shape"), scratch_shape_database, 4000, 10)
+			a := s.answer (request_wide ({STRING_32} "beachhead_that_moves", 4000))
+			assert ("answered from the database", a.is_success and s.runs = 1)
+			assert ("all four verdicts together", a.text.has_substring ({STRING_32} "FITS 2") and a.text.has_substring ({STRING_32} "PARTIAL 0")
+				and a.text.has_substring ({STRING_32} "FAILS 1") and a.text.has_substring ({STRING_32} "NO_DATA 0"))
+			assert ("an instance is named", a.text.has_substring ({STRING_32} "JHN 5:19!17"))
+			a := s.answer (request_wide ({STRING_32} "no_such_slug", 4000))
+			assert ("unknown slug is an error", not a.is_success and s.runs = 2)
 		end
 
 feature -- Dispatcher
@@ -561,6 +648,61 @@ feature -- Dispatcher
 			assert ("replayed page not retaken", d.requests_seen = 1)
 			d.handle_event (message (4, 1, 7, {STRING_32} "@mock old", False))
 			assert ("ancient id skipped", d.requests_seen = 1 and not d.has_answered (4))
+		end
+
+	test_dispatcher_population_from_configuration
+			-- Task 7 item 5: with a configuration path in the per-process
+			-- shared settings (the same key the facade fills), `make'
+			-- brings every buildable [[participants]] entry to life - bot
+			-- users created on first sight through the API (the
+			-- configuration drives the store), aliases and via choices
+			-- wired, the claude sandbox directory created - and an entry
+			-- whose engine is missing is skipped while the rest come up
+			-- (D6). The key is blanked again at the end, so later
+			-- fixtures populate nothing.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_config: SERVER_CONFIG
+			l_store: MEMORY_CHAT_STORE
+			l_bus: EVENT_BUS
+			l_limits: RATE_LIMITER
+			l_log: CHAT_LOG
+			l_logger: SIMPLE_LOGGER
+			l_service: CHAT_SERVICE
+			l_api: CHAT_API
+			l_dir: DIRECTORY
+		do
+			shared_put ({CHAT_SHARED}.Config_path_key, population_config_path)
+			create l_config.make_defaults
+			create l_store.make
+			l_store.open
+			create l_bus.make
+			create l_limits.make (3600)
+			create l_logger
+			create l_log.make (l_logger)
+			create l_service.make (l_store, l_bus, l_limits, l_config, l_log)
+			create l_api.make (l_service, l_config)
+			create d.make (l_api, 0)
+			assert ("four registered, one skipped", d.participants_registered = 4 and d.participants_skipped = 1 and d.registry.count = 4)
+			assert ("every kind found", d.registry.has ({STRING_32} "@pop-null") and d.registry.has ({STRING_32} "@pop-bible")
+				and d.registry.has ({STRING_32} "@pop-qwen") and d.registry.has ({STRING_32} "@pop-claude"))
+			assert ("missing engine skipped", not d.registry.has ({STRING_32} "@pop-miss"))
+			assert ("bots created on first sight", l_store.has_username ("pop_bible_bot") and l_store.has_username ("pop_qwen_bot")
+				and l_store.has_username ("pop_claude_bot") and l_store.has_username ("pop_null_bot") and not l_store.has_username ("pop_miss_bot"))
+			assert ("a stored active bot", attached l_store.user_by_username ("pop_bible_bot") as u and then (u.is_bot and u.is_active and u.is_stored))
+			assert ("alias wired", d.registry.has_alias ({STRING_32} "Pop:") and d.registry.handle_of_alias ({STRING_32} "Pop:").same_string ({STRING_32} "@pop-bible"))
+			assert ("via choice wired to the ollama entry", attached d.registry.find ({STRING_32} "@pop-bible") as t
+				and then (t.permits_via ({STRING_32} "@pop-qwen") and t.permits_via ({STRING_32} "plain")))
+			assert ("resolved bot user carried", attached d.registry.find ({STRING_32} "@pop-bible") as t2 and then t2.bot_user.is_stored)
+			create l_dir.make ({STRING_32} "C:\Users\Public\sc_chat_pop\data\participants\pop-claude")
+			assert ("claude sandbox directory created", l_dir.exists)
+			shared_put ({CHAT_SHARED}.Config_path_key, "")
+			create d.make (l_api, 0)
+			assert ("a blank key populates nothing", d.participants_registered = 0 and d.registry.count = 0)
+			create l_dir.make ({STRING_32} "C:\Users\Public\sc_chat_pop")
+			if l_dir.exists then
+				l_dir.recursive_delete
+			end
 		end
 
 feature {NONE} -- Fixtures
@@ -710,5 +852,103 @@ feature {NONE} -- Fixtures
 			create Result.make (0, a_username, {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " " + a_display, "", False, True, l_now)
 			Result.set_id (99)
 		end
+
+	request_wide (a_text: STRING_32; a_max: INTEGER): PARTICIPANT_REQUEST
+			-- Member 7 asking `a_text' in room 1 with a chosen reply limit.
+		require
+			max_positive: a_max > 0
+		do
+			create Result.make_addressed (7, {STRING_32} "Nick", a_text, 1, {STRING_32} "main", a_max, Void)
+		end
+
+	scratch_shape_database: STRING_32
+			-- testing/participants_scratch/shape_probe.db bearing the real
+			-- shape.db shape (shape + shape_instance, joined on shape_id),
+			-- rebuilt each run: two FITS and one FAILS instance of one shape.
+		local
+			l_dir: DIRECTORY
+			l_file: RAW_FILE
+			l_db: SIMPLE_SQL_DATABASE
+		do
+			create l_dir.make (Scratch_directory)
+			if not l_dir.exists then
+				l_dir.recursive_create_dir
+			end
+			Result := Scratch_directory + {STRING_32} "/shape_probe.db"
+			create l_file.make_with_name (Result)
+			if l_file.exists then
+				l_file.delete
+			end
+			create l_db.make (Result)
+			l_db.perform ("CREATE TABLE shape (shape_id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL)")
+			l_db.perform ("CREATE TABLE shape_instance (instance_id INTEGER PRIMARY KEY, shape_id INTEGER NOT NULL, ref TEXT NOT NULL, verdict TEXT NOT NULL, tier TEXT, grounds TEXT)")
+			l_db.perform ("INSERT INTO shape VALUES (1, 'beachhead_that_moves', 'A beachhead that moves')")
+			l_db.perform ("INSERT INTO shape_instance VALUES (1, 1, 'JHN 5:19!17', 'FITS', 'T1', 'probe')")
+			l_db.perform ("INSERT INTO shape_instance VALUES (2, 1, 'MRK 1:1!1', 'FITS', 'T1', 'probe')")
+			l_db.perform ("INSERT INTO shape_instance VALUES (3, 1, 'ACT 16:19!4', 'FAILS', 'T1', 'probe')")
+			l_db.close
+		end
+
+	population_config_path: STRING_8
+			-- A [[participants]] configuration written into the scratch
+			-- directory: four buildable entries (one per kind, none
+			-- included) and one whose executable does not exist. STRING_8,
+			-- because it goes into the shared settings as the config path.
+		local
+			l_dir: DIRECTORY
+			l_file: PLAIN_TEXT_FILE
+		do
+			create l_dir.make (Scratch_directory)
+			if not l_dir.exists then
+				l_dir.recursive_create_dir
+			end
+			Result := Scratch_directory.to_string_8 + "/population.toml"
+			create l_file.make_with_name (Result)
+			l_file.create_read_write
+			l_file.put_string ("[
+data_dir = "C:/Users/Public/sc_chat_pop/data"
+
+[[participants]]
+handle = "@pop-null"
+kind = "none"
+bot_username = "pop_null_bot"
+display_name = "Pop Null"
+
+[[participants]]
+handle = "@pop-bible"
+kind = "bible_tool"
+engine = "C:/Windows/System32/ping.exe"
+bot_username = "pop_bible_bot"
+display_name = "Pop Bible"
+aliases = ["Pop:"]
+allow_via = ["plain", "@pop-qwen"]
+
+[[participants]]
+handle = "@pop-miss"
+kind = "bible_tool"
+engine = "C:/Windows/System32/no_such_probe_tool.exe"
+bot_username = "pop_miss_bot"
+display_name = "Pop Miss"
+
+[[participants]]
+handle = "@pop-qwen"
+kind = "ollama"
+engine = "qwen2.5"
+bot_username = "pop_qwen_bot"
+display_name = "Pop Qwen"
+
+[[participants]]
+handle = "@pop-claude"
+kind = "claude_code"
+engine = "C:/Users/Public/sc_chat_pop/data/participants/pop-claude"
+bot_username = "pop_claude_bot"
+display_name = "Pop Claude"
+]")
+			l_file.close
+		end
+
+	Scratch_directory: STRING_32 = "testing/participants_scratch"
+			-- Where this class writes its scratch files (the
+			-- config-assault pattern; rebuilt by each test that uses it).
 
 end
