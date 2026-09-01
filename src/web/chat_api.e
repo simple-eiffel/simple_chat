@@ -277,12 +277,31 @@ feature -- Answers: reading
 
 	attachment (a_token: separate READABLE_STRING_8; a_attachment_id: INTEGER_64): CHAT_REPLY
 			-- The file's bytes with its validated type; nosniff is the handler's job.
+		local
+			l_body: STRING_8
+			i: INTEGER
 		do
 			if attached user_for (local_8 (a_token)) then
 				if a_attachment_id > 0 and then service.store.has_attachment (a_attachment_id) then
-						-- Task 1 stores upload metadata only; the bytes reach data/uploads/<sha>.<ext>
-						-- in the SQLite/deploy task (tasks.md Task 4), so serving them is honestly 501 until then.
-					Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Attachment bytes are not stored yet.", 501)))
+					if attached service.store.attachment (a_attachment_id) as l_attachment and then
+						attached service.store.attachment_bytes (a_attachment_id) as l_bytes
+					then
+						create l_body.make (l_bytes.count)
+						from
+							i := 0
+						until
+							i >= l_bytes.count
+						loop
+							l_body.append_code (l_bytes [i])
+							i := i + 1
+						variant
+							l_bytes.count - i
+						end
+						Result := answered (create {CHAT_REPLY}.make (200, l_attachment.mime, l_body))
+					else
+							-- A row stored before Phase 4 Task 4 kept no bytes; still honest.
+						Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Attachment bytes are not stored yet.", 501)))
+					end
 				else
 					Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such attachment.", 404)))
 				end

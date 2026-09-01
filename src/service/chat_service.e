@@ -341,10 +341,10 @@ feature -- Reading
 feature -- Uploads
 
 	store_upload (a_uploader: CHAT_USER; a_original_name: READABLE_STRING_GENERAL; a_bytes: SPECIAL [NATURAL_8]): CHAT_RESULT [CHAT_ATTACHMENT]
-			-- Keep `a_bytes' as uploads/<sha256>.<ext> if they are a PNG or
-			-- JPEG by signature and within the size limit (intent-v2 Q5).
-			-- Task 1 stores the metadata row only; writing the bytes to disk
-			-- belongs to the SQLite/deploy task.
+			-- Keep `a_bytes' if they are a PNG or JPEG by signature and
+			-- within the size limit (intent-v2 Q5): the metadata row and,
+			-- since Phase 4 Task 4, the bytes themselves through the
+			-- store's `put_attachment_bytes'.
 		require
 			active: a_uploader.is_active and a_uploader.is_stored
 			has_bytes: a_bytes.count > 0
@@ -366,6 +366,7 @@ feature -- Uploads
 				end
 				create l_attachment.make (0, a_uploader.id, a_original_name, l_mime, a_bytes.count, sha256_hex_of (a_bytes), now)
 				store.add_attachment (l_attachment)
+				store.put_attachment_bytes (l_attachment.id, a_bytes)
 				log.info ("upload attachment=" + l_attachment.id.out + " uploader=" + a_uploader.id.out + " bytes=" + a_bytes.count.out)
 				create Result.make_success (l_attachment)
 			end
@@ -378,6 +379,7 @@ feature -- Uploads
 			typed_mime: (Result.is_success and then attached Result.value as a3) implies (a3.mime.same_string ({CHAT_ATTACHMENT}.Mime_png) = is_png_signature (a_bytes))
 			hashed: (Result.is_success and then attached Result.value as a4) implies a4.sha256.same_string (sha256_hex_of (a_bytes))
 			named: (Result.is_success and then attached Result.value as a5) implies a5.original_name.same_string_general (a_original_name)
+			bytes_kept: (Result.is_success and then attached Result.value as a6) implies store.has_attachment_bytes (a6.id)
 			nothing_on_failure: not Result.is_success implies store.attachment_count = old store.attachment_count
 		end
 

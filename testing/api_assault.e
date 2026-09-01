@@ -5,7 +5,7 @@ note
 		travels and the bot-creation reply the only place a bot's does -
 		other bodies are swept for a 64-hex token shape; the guards
 		(401/403), the service's refusals mapped onto statuses (400,
-		409, 415, 429, and the honest 404/501 attachment and backup
+		409, 415, 429, and the attachment bytes (200 since Task 4), the honest 404, and backup
 		answers), paging with merged statuses, and the admin surface.
 	]"
 	author: "Larry Rix"
@@ -212,7 +212,9 @@ feature -- Posting through the API
 			if attached l_codec.event_from_bytes (l_reply.body) as e2 and then attached e2.attachment as a2 then
 				l_attachment_id := a2.id
 			end
-			assert ("stored metadata, bytes honestly 501", l_api.attachment (l_token, l_attachment_id).status = 501)
+			l_reply := l_api.attachment (l_token, l_attachment_id)
+			assert ("stored bytes served as png", l_reply.status = 200 and then l_reply.content_type.same_string ({CHAT_ATTACHMENT}.Mime_png))
+			assert ("served bytes are the upload", l_reply.body.same_string (png_string (16)))
 			assert ("unknown attachment 404", l_api.attachment (l_token, 9999).status = 404)
 			assert ("attachment needs a session", l_api.attachment (Sixty_four_hex, l_attachment_id).status = 401)
 			l_reply := l_api.post_image (l_token, l_room, "GIF89a not an image", {STRING_32} "pic.gif", {STRING_32} "")
