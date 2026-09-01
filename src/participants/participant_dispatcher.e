@@ -78,7 +78,6 @@ feature {NONE} -- Initialization
 			create codec.make
 			create last_ask_key.make_empty
 			create last_via_key.make_empty
-			populate_from_shared_configuration (a_api)
 		ensure
 			starts_where_told: start_after = a_start_after
 			floor_at_start: pruned_floor = a_start_after
@@ -87,6 +86,23 @@ feature {NONE} -- Initialization
 			nothing_pending: pending_rooms_model.is_empty
 			no_cursors: cursors_model.is_empty
 			nothing_answered: answered_model.is_empty
+		end
+
+feature -- Population
+
+	populate
+			-- Register the configured participants. DISPATCHER_HOST commands
+			-- this as the dispatcher's first OWN turn, never during creation:
+			-- a creation-time call rides the creator's passed locks, and under
+			-- ISE SCOOP such a call can execute on the CREATOR's thread
+			-- (impersonation) - which the thread-affine SQLite connection
+			-- refuses (SQLITE_DATABASE.is_accessible: owner thread only).
+			-- On this dispatcher's own turn the API is reserved fresh, so the
+			-- store's queries run on the store's own thread.
+		do
+			populate_from_shared_configuration (api)
+		ensure
+			accounted: registry.count = participants_registered
 		end
 
 feature -- Model Queries (for MML postconditions)
@@ -437,7 +453,8 @@ feature -- Basic operations
 				end
 				answer_failures := answer_failures + 1
 				last_answer_raised := True
-				log.error ({STRING_32} "dispatcher: participant raised answering event " + a_event.id.out)
+				log.error ({STRING_32} "dispatcher: participant raised answering event " + a_event.id.out
+					+ (if attached last_raise_reason as r then {STRING_32} " - " + r else {STRING_32} "" end))
 			elseif a_event.id > pruned_floor and then not answered.has (a_event.id) and then attached target_of (a_event) as l_target then
 				answered.put (a_event.id, a_event.id)
 				requests_seen := requests_seen + 1
@@ -512,6 +529,7 @@ feature -- Basic operations
 		rescue
 			if l_taken and not l_failed then
 				l_failed := True
+				last_raise_reason := current_raise_reason
 				retry
 			end
 		end
@@ -520,6 +538,25 @@ feature {NONE} -- The API, only as a separate argument
 
 	api: separate CHAT_API
 			-- The service's processor; held, never called directly.
+
+	last_raise_reason: detachable STRING_32
+			-- What the last caught raise reported (diagnostic for the log).
+
+	current_raise_reason: detachable STRING_32
+			-- The pending exception's type and description, or Void.
+		local
+			l_r: STRING_32
+		do
+			if attached (create {EXCEPTION_MANAGER}).last_exception as l_x then
+				create l_r.make_empty
+				l_r.append (l_x.generating_type.name_32)
+				if attached l_x.description as l_d then
+					l_r.append ({STRING_32} ": ")
+					l_r.append (l_d.to_string_32)
+				end
+				Result := l_r
+			end
+		end
 
 	pull_page (a_api: separate CHAT_API; a_room_id, a_since_id: INTEGER_64; a_limit: INTEGER): STRING_8
 			-- The page of `a_room_id' after `a_since_id', copied here as bytes.
@@ -693,13 +730,15 @@ feature {NONE} -- Population (Task 7 item 5)
 		local
 			l_config: SERVER_CONFIG
 			l_data_dir: STRING_32
+			l_entries: ARRAYED_LIST [PARTICIPANT_CONFIG]
 		do
 			if attached shared_item ({CHAT_SHARED}.Config_path_key) as l_path and then not l_path.is_empty then
 				create l_config.make_from_file (l_path)
 				if l_config.is_valid and l_config.is_loaded then
 					l_data_dir := absolute_directory (l_config.data_dir)
-					across l_config.participants as ic loop
-						build_participant (a_api, ic, l_config, l_data_dir)
+					l_entries := l_config.participants
+					across 1 |..| l_entries.count as i loop
+						build_participant (a_api, l_entries [i], i, l_config, l_data_dir)
 					end
 				else
 					log.warn ("dispatcher: the configuration at " + l_path + " is refused; no participant is registered")
@@ -709,7 +748,7 @@ feature {NONE} -- Population (Task 7 item 5)
 			counted: registry.count = participants_registered
 		end
 
-	build_participant (a_api: separate CHAT_API; a_config: PARTICIPANT_CONFIG; a_whole: SERVER_CONFIG; a_data_dir: STRING_32)
+	build_participant (a_api: separate CHAT_API; a_config: PARTICIPANT_CONFIG; a_index: INTEGER; a_whole: SERVER_CONFIG; a_data_dir: STRING_32)
 			-- Register `a_config''s participant with its aliases and
 			-- shapers, or skip the entry with one log line - a raising
 			-- construction (a violated sandbox precondition, a broken
@@ -719,14 +758,17 @@ feature {NONE} -- Population (Task 7 item 5)
 			l_participant: detachable PARTICIPANT
 			l_bot: detachable CHAT_USER
 			l_failed: BOOLEAN
+			l_reason: detachable STRING_32
 		do
 			if not l_failed then
 				if engine_present (a_config) then
 						-- The bot is resolved (and so possibly created) only
 						-- for an entry whose engine is there: a skipped entry
 						-- must not drive a user into the store.
-					l_bot := bot_user_of (a_api, a_config)
+					log.info ({STRING_32} "dispatcher: resolving bot user for " + a_config.handle)
+					l_bot := bot_user_at (a_api, a_index, a_config)
 					if attached l_bot as b and then not registry.has (a_config.handle) and then not registry.has_alias (a_config.handle) then
+						log.info ({STRING_32} "dispatcher: building " + a_config.handle + {STRING_32} " (bot id " + b.id.out + {STRING_32} ")")
 						l_participant := new_participant (a_config, a_whole, a_data_dir, b)
 					end
 				else
@@ -740,7 +782,8 @@ feature {NONE} -- Population (Task 7 item 5)
 			else
 				participants_skipped := participants_skipped + 1
 				if l_failed then
-					log.error ({STRING_32} "dispatcher: participant " + a_config.handle + {STRING_32} " raised during construction; entry skipped")
+					log.error ({STRING_32} "dispatcher: participant " + a_config.handle + {STRING_32} " raised during construction; entry skipped"
+						+ (if attached l_reason as r then {STRING_32} " - " + r else {STRING_32} "" end))
 				elseif l_bot /= Void then
 					log.warn ({STRING_32} "dispatcher: participant " + a_config.handle + {STRING_32} " cannot be built (missing engine or bad sandbox); entry skipped")
 				end
@@ -751,10 +794,22 @@ feature {NONE} -- Population (Task 7 item 5)
 		rescue
 				-- One retry only: the retried body skips construction and
 				-- accounts the skip; a second exception propagates instead
-				-- of looping the rescue.
+				-- of looping the rescue. The cause is kept for the log line.
 			if not l_failed then
 				l_failed := True
 				l_participant := Void
+				if attached (create {EXCEPTION_MANAGER}).last_exception as l_x then
+					create l_reason.make_empty
+					l_reason.append (l_x.generating_type.name_32)
+					if attached l_x.description as l_d then
+						l_reason.append ({STRING_32} ": ")
+						l_reason.append (l_d.to_string_32)
+					end
+					if attached l_x.trace as l_t then
+						l_reason.append ({STRING_32} " | ")
+						l_reason.append (l_t.substring (1, l_t.count.min (600)).to_string_32)
+					end
+				end
 				retry
 			end
 		end
@@ -778,16 +833,24 @@ feature {NONE} -- Population (Task 7 item 5)
 			end
 		end
 
-	bot_user_of (a_api: separate CHAT_API; a_config: PARTICIPANT_CONFIG): detachable CHAT_USER
-			-- The stored, active bot `a_config' posts as - resolved by
-			-- username through the API, created on first sight; Void, with
-			-- one log line, when the username belongs to a person or
-			-- cannot be created.
+	bot_user_at (a_api: separate CHAT_API; a_index: INTEGER; a_config: PARTICIPANT_CONFIG): detachable CHAT_USER
+			-- The stored, active bot that entry `a_index' posts as - resolved
+			-- and created on first sight WHOLLY on the API's side, from the
+			-- API's own copy of the same configuration file
+			-- (`dispatcher_bot_id_of'). Only the expanded index crosses this
+			-- synchronous query: shipping our strings made the API reach back
+			-- to this processor while it was blocked on the very same query -
+			-- a SCOOP deadlock that froze the whole server. Void, with one
+			-- log line, when the username belongs to a person or cannot be
+			-- created; `a_config' (our copy of the same file) supplies the
+			-- username and display for the local mirror.
 		local
 			l_id: INTEGER_64
 			l_now: SIMPLE_DATE_TIME
 		do
-			l_id := a_api.dispatcher_bot_id (a_config.bot_username, a_config.marked_display_name)
+			io.error.put_string ("bot_user_at: reserving the API for entry " + a_index.out + "%N")
+			l_id := a_api.dispatcher_bot_id_of (a_index)
+			io.error.put_string ("bot_user_at: the API answered id " + l_id.out + "%N")
 			if l_id > 0 then
 				create l_now.make_now
 				create Result.make (l_id, a_config.bot_username, a_config.marked_display_name, "", False, True, l_now)
@@ -832,7 +895,9 @@ feature {NONE} -- Population (Task 7 item 5)
 				create {OLLAMA_PARTICIPANT} Result.make (a_config.handle, a_bot, l_ollama_client, a_config.model, a_config.max_characters, a_config.timeout_seconds)
 			elseif a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_claude_code) then
 				l_sandbox := sandbox_directory_of (a_data_dir, a_config.handle)
+				log.info ({STRING_32} "dispatcher: claude sandbox = " + l_sandbox)
 				ensure_directory (l_sandbox)
+				log.info ({STRING_32} "dispatcher: sandbox ensured; creating the client")
 				create l_claude_client.make
 				create {CLAUDE_CODE_PARTICIPANT} Result.make (a_config.handle, a_bot, l_claude_client, a_data_dir, l_sandbox, a_config.max_characters, a_config.timeout_seconds)
 			end

@@ -596,14 +596,54 @@ feature {NONE} -- SQL plumbing
 			-- The last session id handed out; seeded from the table at `open'.
 
 	active_db: SIMPLE_SQL_DATABASE
-			-- The open connection.
+			-- The open connection, usable on the CURRENT thread. The wrapped
+			-- SQLITE_DATABASE is thread-affine (is_accessible: owner thread
+			-- only), and under SCOOP impersonation a store call can execute
+			-- on another processor's thread: a connection the probe finds
+			-- unusable there is abandoned - never closed, closing from a
+			-- foreign thread is refused too - and a fresh one is opened for
+			-- this thread. WAL journaling makes the second connection lawful,
+			-- and the SCOOP lock on the owning processor still serializes use.
 		require
 			open: is_open
+		local
+			l_fresh: SIMPLE_SQL_DATABASE
 		do
 			check open_means_attached: attached db as l_db then
-				Result := l_db
+				if connection_usable (l_db) then
+					Result := l_db
+				else
+					create l_fresh.make (path)
+					db := l_fresh
+					abandoned_connections := abandoned_connections + 1
+					Result := l_fresh
+				end
+			end
+		ensure
+			usable: connection_usable (Result)
+		end
+
+	connection_usable (a_db: SIMPLE_SQL_DATABASE): BOOLEAN
+			-- Does `a_db' answer a trivial query on this thread? False when
+			-- the wrapper's thread-affinity precondition refuses it.
+		local
+			l_failed: BOOLEAN
+			l_rows: SIMPLE_SQL_RESULT
+		do
+			if not l_failed then
+				l_rows := a_db.run_query ("SELECT 1 AS n")
+				Result := not l_rows.is_empty
+			end
+		rescue
+			if not l_failed then
+				l_failed := True
+				retry
 			end
 		end
+
+	abandoned_connections: INTEGER
+			-- Connections left behind after a thread change (diagnostic; each
+			-- is reclaimed by the collector, never touched again by us).
 
 	scalar_64 (a_sql: STRING_8): INTEGER_64
 			-- The single INTEGER_64 the aliased column `n' of `a_sql' holds.

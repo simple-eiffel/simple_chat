@@ -683,6 +683,7 @@ feature -- Dispatcher
 			create l_service.make (l_store, l_bus, l_limits, l_config, l_log)
 			create l_api.make (l_service, l_config)
 			create d.make (l_api, 0)
+			d.populate
 			assert ("four registered, one skipped", d.participants_registered = 4 and d.participants_skipped = 1 and d.registry.count = 4)
 			assert ("every kind found", d.registry.has ({STRING_32} "@pop-null") and d.registry.has ({STRING_32} "@pop-bible")
 				and d.registry.has ({STRING_32} "@pop-qwen") and d.registry.has ({STRING_32} "@pop-claude"))
@@ -698,6 +699,7 @@ feature -- Dispatcher
 			assert ("claude sandbox directory created", l_dir.exists)
 			shared_put ({CHAT_SHARED}.Config_path_key, "")
 			create d.make (l_api, 0)
+			d.populate
 			assert ("a blank key populates nothing", d.participants_registered = 0 and d.registry.count = 0)
 			create l_dir.make ({STRING_32} "C:\Users\Public\sc_chat_pop")
 			if l_dir.exists then

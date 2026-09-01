@@ -55,12 +55,35 @@ feature -- Basic operations
 			not_yet: not is_launched
 		local
 			l_dispatcher: separate PARTICIPANT_DISPATCHER
+			l_settled: INTEGER_64
 		do
 			create l_dispatcher.make (a_api, a_api.dispatcher_start_after)
 			a_api.dispatcher_subscribe (l_dispatcher)
+				-- `dispatcher_subscribe' is an asynchronous command; the API
+				-- executes it later and its bus must reach back into the
+				-- subscriber. That reach-back is lawful ONLY while this
+				-- routine still holds the dispatcher (passed locks). The
+				-- synchronous query below makes the API drain the subscribe
+				-- BEFORE we queue `populate' - otherwise the API's reach-back
+				-- meets a dispatcher already blocked reserving the API for
+				-- population: a mutual deadlock that froze the whole server.
+			l_settled := a_api.dispatcher_start_after
+			populate_later (l_dispatcher)
 			dispatcher := l_dispatcher
 		ensure
 			launched: is_launched
+		end
+
+feature {NONE} -- Implementation
+
+	populate_later (a_dispatcher: separate PARTICIPANT_DISPATCHER)
+			-- Queue `populate' as the dispatcher's first own turn (an
+			-- asynchronous command): population must not run during the
+			-- creation, whose passed locks let ISE SCOOP execute calls on
+			-- the creator's thread - the thread-affine SQLite store refuses
+			-- any thread but its own.
+		do
+			a_dispatcher.populate
 		end
 
 end
