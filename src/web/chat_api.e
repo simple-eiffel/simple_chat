@@ -674,7 +674,6 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 			l_entry: PARTICIPANT_CONFIG
 			l_rules: CHAT_USER_RULES
 		do
-			io.error.put_string ("dispatcher_bot_id_of: executing on the API side%N")
 			l_list := config.participants
 			if a_index >= 1 and a_index <= l_list.count then
 				l_entry := l_list [a_index]
@@ -694,6 +693,23 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 			counted: request_count = old request_count + 1
 			resolved_or_zero: Result >= 0
 			a_bot_when_positive: Result > 0 implies (attached service.store.user (Result) as u and then (u.is_bot and u.is_active))
+		end
+
+	dispatcher_last_event_sender (a_room_id: INTEGER_64): INTEGER_64
+			-- The sender of the store's newest event when it belongs to
+			-- `a_room_id'; 0 otherwise. The dispatcher's recovery probe: when
+			-- a post's RETURN is eaten by a transient runtime failure (the
+			-- EVE/Qs dirty-processor mark is consumed by the failing call),
+			-- this tells whether the answer actually landed, so the books
+			-- stay exact instead of over-counting failures.
+		do
+			if attached service.store.event (service.store.last_event_id) as e and then e.room_id = a_room_id then
+				Result := e.sender_id
+			end
+			request_count := request_count + 1
+		ensure
+			counted: request_count = old request_count + 1
+			non_negative: Result >= 0
 		end
 
 	dispatcher_start_after: INTEGER_64
@@ -783,8 +799,10 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 				and then attached service.store.room (a_room_id) as r and then r.is_stored and then service.store.is_member (u.id, r.id)
 			then
 				if l_text.is_empty or l_text.count > config.message_characters then
+					check text_refused: True end
 					Result := 400
 				else
+					check text_lawful: not l_text.is_empty and l_text.count <= config.message_characters end
 					l_result := service.post_message (u, r, l_text)
 					if l_result.is_success then
 						Result := 201
@@ -804,8 +822,11 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 			appended_on_success: Result = 201 implies service.store.last_event_id = old service.store.last_event_id + 1
 			nothing_on_failure: Result /= 201 implies service.store.last_event_id = old service.store.last_event_id
 			only_member_rooms: not dispatcher_can_post (a_bot_user_id, a_room_id) implies Result = 403
-			text_required: local_32 (a_text).is_empty implies Result /= 201
-			within_limit: local_32 (a_text).count > config.message_characters implies Result /= 201
+				-- The text rules (empty and over-long refused with 400) are `check' clauses in the
+				-- body over the local copy: a postcondition must not re-read the SEPARATE `a_text' -
+				-- ISE SCOOP evaluates a lock-passed call's postcondition after the caller's locks are
+				-- returned, and that late reach into the caller's string surfaced as a phantom raise
+				-- at the caller's next synchronization point (the answer posted, then "raised").
 		end
 
 	dispatcher_display_name (a_user_id: INTEGER_64): STRING_32

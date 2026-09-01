@@ -341,13 +341,23 @@ feature -- Basic operations
 			if not pending_rooms.has (a_room_id) then
 				pending_rooms.extend (a_room_id)
 			end
-			dispatch_pending
+			if not is_dispatching then
+				dispatch_pending
+			end
+				-- A wake arriving MID-DISPATCH only queues: during this
+				-- dispatcher's own synchronous post, its passed locks let the
+				-- bus's ring re-enter here (SCOOP impersonation), and a nested
+				-- dispatch_pending pruned `answered' under the outer frame's
+				-- feet - the outer handle_event's `seen_once' then read a world
+				-- that had moved (the phantom raise after every answer). The
+				-- outer drain loop picks the queued room up before it returns.
 		ensure then
-			drained: pending_rooms_model.is_empty
+			drained: not old is_dispatching implies pending_rooms_model.is_empty
 			monotone: across cursors as ic all
 				((old cursors_model).domain.has (@ic.key) implies ic >= (old cursors_model) [@ic.key])
 				and (not (old cursors_model).domain.has (@ic.key) implies ic >= start_after) end
-			floor_current: pruned_floor = minimum_cursor
+			floor_current: not old is_dispatching implies pruned_floor = minimum_cursor
+			queued_when_reentrant: old is_dispatching implies pending_rooms_model.has (a_room_id)
 		end
 
 	receive_status (a_status: separate CHAT_STATUS)
@@ -367,6 +377,7 @@ feature -- Basic operations
 			l_room, l_before: INTEGER_64
 			l_more: BOOLEAN
 		do
+			is_dispatching := True
 			from
 			until
 				pending_rooms.is_empty
@@ -385,8 +396,10 @@ feature -- Basic operations
 				end
 			end
 			prune_answered
+			is_dispatching := False
 		ensure
 			drained: pending_rooms_model.is_empty
+			not_dispatching: not is_dispatching
 			monotone: across cursors as ic all
 				((old cursors_model).domain.has (@ic.key) implies ic >= (old cursors_model) [@ic.key])
 				and (not (old cursors_model).domain.has (@ic.key) implies ic >= start_after) end
@@ -525,7 +538,11 @@ feature -- Basic operations
 			refused_when_full: (old target_queue_depth (a_event)) >= Max_queue_depth implies target_calls (a_event) = old target_calls (a_event)
 			queue_settled: target_queue_depth (a_event) = old target_queue_depth (a_event)
 			cursors_unchanged: cursors_model |=| old cursors_model
-			nothing_queued: pending_rooms_model |=| old pending_rooms_model
+			queue_kept_or_grown: (old pending_rooms_model) <= pending_rooms_model
+				-- handle_event itself queues nothing, but during its synchronous post the bus
+				-- lawfully rings back through our passed locks and the re-entrant wake QUEUES
+				-- (never nests a drain): the pending list may grow under this frame - the
+				-- enclosing dispatch_pending loop drains whatever arrived before returning.
 		rescue
 			if l_taken and not l_failed then
 				l_failed := True
@@ -542,17 +559,33 @@ feature {NONE} -- The API, only as a separate argument
 	last_raise_reason: detachable STRING_32
 			-- What the last caught raise reported (diagnostic for the log).
 
+	is_dispatching: BOOLEAN
+			-- Is `dispatch_pending' on this processor's stack right now? A
+			-- re-entrant wake (the bus ringing back through our passed locks
+			-- during a synchronous post) must only queue, never nest a drain.
+
 	current_raise_reason: detachable STRING_32
-			-- The pending exception's type and description, or Void.
+			-- The pending exception's type and description - unwrapped to its
+			-- `original' (a ROUTINE_FAILURE wraps the assertion that fired),
+			-- with the head of the original's trace; or Void.
 		local
 			l_r: STRING_32
+			l_o: EXCEPTION
 		do
 			if attached (create {EXCEPTION_MANAGER}).last_exception as l_x then
+				l_o := l_x
+				if attached l_x.original as l_orig then
+					l_o := l_orig
+				end
 				create l_r.make_empty
-				l_r.append (l_x.generating_type.name_32)
-				if attached l_x.description as l_d then
+				l_r.append (l_o.generating_type.name_32)
+				if attached l_o.description as l_d then
 					l_r.append ({STRING_32} ": ")
 					l_r.append (l_d.to_string_32)
+				end
+				if attached l_o.trace as l_t then
+					l_r.append ({STRING_32} " | ")
+					l_r.append (l_t.substring (1, l_t.count.min (700)).to_string_32)
 				end
 				Result := l_r
 			end
@@ -632,8 +665,25 @@ feature {NONE} -- Implementation
 			-- Post `a_text' as `a_participant' and account for the outcome.
 		require
 			text_given: not a_text.is_empty
+		local
+			l_failed: BOOLEAN
 		do
-			last_post_status := post_reply (api, a_participant.bot_user.id, a_room_id, a_text)
+			if l_failed then
+					-- The post's RETURN was eaten by a transient runtime failure
+					-- (EVE/Qs marks a processor dirty when an exception crossed
+					-- its context; the mark is consumed by the one call it
+					-- fails) - but the post itself commonly LANDED. Ask what
+					-- the room's newest event says and account the truth, so a
+					-- delivered answer is never booked as a failure.
+				if verified_posted (api, a_participant.bot_user.id, a_room_id) then
+					last_post_status := 201
+					log.info ({STRING_32} "dispatcher: post verified delivered after a transient runtime failure")
+				else
+					last_post_status := 599
+				end
+			else
+				last_post_status := post_reply (api, a_participant.bot_user.id, a_room_id, a_text)
+			end
 			if last_post_status = 201 then
 				answers_posted := answers_posted + 1
 			else
@@ -642,6 +692,19 @@ feature {NONE} -- Implementation
 		ensure
 			accounted: answers_posted + answer_failures = old answers_posted + old answer_failures + 1
 			posted_when_created: (answers_posted = old answers_posted + 1) = (last_post_status = 201)
+		rescue
+			if not l_failed then
+				l_failed := True
+				last_raise_reason := current_raise_reason
+				retry
+			end
+		end
+
+	verified_posted (a_api: separate CHAT_API; a_bot_user_id, a_room_id: INTEGER_64): BOOLEAN
+			-- Is the newest event of `a_room_id' this bot's - i.e., did the
+			-- post whose return was lost actually land?
+		do
+			Result := a_api.dispatcher_last_event_sender (a_room_id) = a_bot_user_id
 		end
 
 	request_of (a_event: CHAT_EVENT; a_target: PARTICIPANT): PARTICIPANT_REQUEST
@@ -848,9 +911,7 @@ feature {NONE} -- Population (Task 7 item 5)
 			l_id: INTEGER_64
 			l_now: SIMPLE_DATE_TIME
 		do
-			io.error.put_string ("bot_user_at: reserving the API for entry " + a_index.out + "%N")
 			l_id := a_api.dispatcher_bot_id_of (a_index)
-			io.error.put_string ("bot_user_at: the API answered id " + l_id.out + "%N")
 			if l_id > 0 then
 				create l_now.make_now
 				create Result.make (l_id, a_config.bot_username, a_config.marked_display_name, "", False, True, l_now)

@@ -61,8 +61,14 @@ feature -- Access
 feature -- Status report
 
 	is_open: BOOLEAN
+			-- Our own lifecycle state, NEVER the wrapper's: `open' attaches
+			-- `db' only on success, `close' and a failed open detach it. The
+			-- wrapper's `is_open' walks into SQLITE_DATABASE.is_closed, whose
+			-- precondition `is_accessible' admits the OWNER THREAD ONLY - on
+			-- any other SCOOP-impersonated thread that read raises before
+			-- `active_db''s per-thread reconnect can even run.
 		do
-			Result := attached db as l_db and then l_db.is_open
+			Result := db /= Void
 		end
 
 	last_open_error: detachable CHAT_ERROR
@@ -106,6 +112,7 @@ feature -- Lifecycle
 					l_pragma := l_db.run_query ("PRAGMA journal_mode=WAL")
 					schema.migrate (l_db)
 					db := l_db
+					owner_thread := get_current_thread_id
 					next_session_id := scalar_64 ("SELECT COALESCE(MAX(id), 0) AS n FROM session")
 				end
 			end
@@ -615,6 +622,7 @@ feature {NONE} -- SQL plumbing
 				else
 					create l_fresh.make (path)
 					db := l_fresh
+					owner_thread := get_current_thread_id
 					abandoned_connections := abandoned_connections + 1
 					Result := l_fresh
 				end
@@ -624,26 +632,33 @@ feature {NONE} -- SQL plumbing
 		end
 
 	connection_usable (a_db: SIMPLE_SQL_DATABASE): BOOLEAN
-			-- Does `a_db' answer a trivial query on this thread? False when
-			-- the wrapper's thread-affinity precondition refuses it.
-		local
-			l_failed: BOOLEAN
-			l_rows: SIMPLE_SQL_RESULT
+			-- Is the current thread the one `a_db' was opened on? The same
+			-- test the wrapper's `is_accessible' makes, asked WITHOUT
+			-- provoking its precondition: a probe that raises - even caught -
+			-- leaves the impersonated SCOOP processor DIRTY under EVE/Qs, and
+			-- the next synchronous client then fails although the work
+			-- succeeded (the phantom "raised answering" after every answer).
 		do
-			if not l_failed then
-				l_rows := a_db.run_query ("SELECT 1 AS n")
-				Result := not l_rows.is_empty
-			end
-		rescue
-			if not l_failed then
-				l_failed := True
-				retry
-			end
+			Result := not {PLATFORM}.is_thread_capable or else owner_thread = get_current_thread_id
 		end
 
 	abandoned_connections: INTEGER
 			-- Connections left behind after a thread change (diagnostic; each
 			-- is reclaimed by the collector, never touched again by us).
+
+	owner_thread: POINTER
+			-- The thread the current `db' connection was opened on.
+
+	get_current_thread_id: POINTER
+			-- The current thread's id (the same external the SQLite wrapper
+			-- compares in `is_accessible').
+		require
+			is_thread_capable: {PLATFORM}.is_thread_capable
+		external
+			"C use %"eif_threads.h%""
+		alias
+			"eif_thr_thread_id"
+		end
 
 	scalar_64 (a_sql: STRING_8): INTEGER_64
 			-- The single INTEGER_64 the aliased column `n' of `a_sql' holds.
