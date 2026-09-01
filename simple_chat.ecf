@@ -40,6 +40,7 @@
 		<library name="simple_process" location="$SIMPLE_EIFFEL/simple_process/simple_process.ecf"/>
 		<library name="simple_base64" location="$SIMPLE_EIFFEL/simple_base64/simple_base64.ecf"/>
 		<library name="simple_encoding" location="$SIMPLE_EIFFEL/simple_encoding/simple_encoding.ecf"/>
+		<library name="simple_http" location="$SIMPLE_EIFFEL/simple_http/simple_http.ecf"/>
 		<library name="simple_web" location="$SIMPLE_EIFFEL/simple_web/simple_web.ecf"/>
 		<library name="simple_ai_client" location="$SIMPLE_EIFFEL/simple_ai_client/simple_ai_client.ecf"/>
 		<cluster name="src" location=".\src\" recursive="true"/>

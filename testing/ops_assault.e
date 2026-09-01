@@ -1,10 +1,16 @@
 note
 	description: "[
-		The doors, DNS and configuration under assault (Phase 1b): the
-		Caddyfile is one loopback site with the admin API off; a stopped
-		door stays stopped; hostnames and DDNS domains are validated where
-		they enter; the token never appears in the update URL; the
-		configuration's lists are copies.
+		The doors, DNS and configuration under assault (Phase 1b + Phase 4
+		Task 6): the Caddyfile is one loopback site with the admin API off;
+		the caddy door supervises a real child - start proves it alive,
+		stop proves it dead (Issue 27), check_health reports a child killed
+		behind the door's back; a stopped door stays stopped; hostnames and
+		DDNS domains are validated where they enter; the DuckDNS update
+		fails closed against an unroutable address and the token never
+		appears in the update URL or any result; the configuration's lists
+		are copies. Supervision runs against ping.exe as a stand-in child:
+		caddy.exe is not required on a development machine, and the suite
+		never touches the real network.
 	]"
 	author: "Larry Rix"
 
@@ -13,6 +19,13 @@ class
 
 inherit
 	TEST_SET_BASE
+
+	CHAT_TEST_BRIDGE
+			-- Grants access to the ops test hooks: `set_arguments_text',
+			-- `child_process_id', `set_service_base'.
+		undefine
+			default_create
+		end
 
 feature -- Tests
 
@@ -74,8 +87,109 @@ feature -- Tests
 			create c.make_defaults
 			assert ("config refuses a smuggled parameter", not sets_ddns (c, "rixchat&clear=true"))
 			assert ("config refuses a short interval", not sets_ddns_interval (c, 5))
+			u.set_service_base (Unroutable_base)
+				-- The suite never touches the real service (Task 6).
 			u.update
 			assert ("update reports", u.update_count = 1 and not u.last_result.same_string ({DYNAMIC_DNS}.Result_never))
+		end
+
+	test_caddy_door_supervises_a_stand_in_child
+			-- Task 6: start launches a real hidden child, and serving means
+			-- alive; stop kills it and proves it is gone (Issue 27). The
+			-- stand-in is ping -n 60 (alive for about a minute, so a failed
+			-- test cannot strand it forever); caddy.exe is not on this machine.
+		local
+			c: SERVER_CONFIG
+			d: CADDY_FRONT_DOOR
+		do
+			create c.make_defaults
+			c.set_front_door ({SERVER_CONFIG}.Door_caddy, "rixchat.duckdns.org")
+			create d.make (c)
+			d.set_executable ("C:\Windows\System32\ping.exe")
+			d.set_arguments_text ("-n 60 127.0.0.1")
+			d.start
+			assert ("serving after start", d.is_serving and d.last_error = Void)
+			assert ("child alive", d.has_child_process and d.child_process_id > 0)
+			assert ("caddyfile written", d.caddyfile_exists)
+			d.check_health
+			assert ("health keeps a live child", d.is_serving and d.has_child_process)
+			d.stop
+			assert ("no orphan: the child is really gone", not d.has_child_process)
+			assert ("stopped", not d.is_serving)
+			d.stop
+			assert ("stop is idempotent", not d.has_child_process and not d.is_serving)
+		end
+
+	test_caddy_door_refuses_a_missing_executable
+			-- A missing caddy.exe is an error result, never an exception.
+		local
+			c: SERVER_CONFIG
+			d: CADDY_FRONT_DOOR
+		do
+			create c.make_defaults
+			c.set_front_door ({SERVER_CONFIG}.Door_caddy, "rixchat.duckdns.org")
+			create d.make (c)
+			d.set_executable ("C:\Windows\System32\no_such_caddy_here.exe")
+			d.start
+			assert ("an error, not an exception", not d.is_serving and d.last_error /= Void)
+			assert ("no child", not d.has_child_process)
+			d.check_health
+			assert ("still stopped and still explained", not d.is_serving and d.last_error /= Void)
+		end
+
+	test_caddy_door_reports_a_child_killed_behind_its_back
+			-- taskkill the child from outside; check_health must report the
+			-- exit code and drop `is_serving' honestly - and never restart
+			-- a door that then stays stopped.
+		local
+			c: SERVER_CONFIG
+			d: CADDY_FRONT_DOOR
+			l_killer: SIMPLE_ASYNC_PROCESS
+			l_pid: NATURAL_32
+		do
+			create c.make_defaults
+			c.set_front_door ({SERVER_CONFIG}.Door_caddy, "rixchat.duckdns.org")
+			create d.make (c)
+			d.set_executable ("C:\Windows\System32\ping.exe")
+			d.set_arguments_text ("-n 60 127.0.0.1")
+			d.start
+			assert ("serving", d.is_serving)
+			l_pid := d.child_process_id
+			assert ("pid known", l_pid > 0)
+			create l_killer.make
+			l_killer.set_show_window (False)
+			l_killer.start ("C:\Windows\System32\taskkill.exe /PID " + l_pid.out + " /F")
+			assert ("killer started", l_killer.was_started_successfully)
+			assert ("killer finished", l_killer.wait (5000) = 1)
+			l_killer.close
+			assert ("the child is gone behind the door's back", child_leaves (d))
+			assert ("the door has not noticed yet", d.is_serving)
+			d.check_health
+			assert ("health reports the death with its exit code", not d.is_serving and attached d.last_error as l_error and then l_error.message.has_substring ("exit code"))
+			assert ("no child after health", not d.has_child_process)
+			d.check_health
+			assert ("a dead door stays dead", not d.is_serving and d.last_error /= Void)
+			d.stop
+			assert ("stop after the death is harmless", not d.has_child_process)
+		end
+
+	test_duckdns_update_fails_closed_and_never_leaks_the_token
+			-- Against an unroutable address the update is a failed result,
+			-- not an exception, and nothing reachable carries the token.
+			-- The real service is never touched by tests.
+		local
+			u: DUCKDNS_UPDATER
+		do
+			create u.make ("rixchat", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 300)
+			u.set_service_base (Unroutable_base)
+			u.update
+			assert ("one attempt", u.update_count = 1)
+			assert ("timed", u.last_update_at /= Void)
+			assert ("unreachable, not raised", u.last_result.same_string ({DYNAMIC_DNS}.Result_unreachable))
+			assert ("the result carries no token", not u.last_result.has_substring ("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+			assert ("the inspectable url is still the masked one", u.update_url.same_string ("https://www.duckdns.org/update?domains=rixchat&token=****"))
+			u.update
+			assert ("attempts accumulate", u.update_count = 2 and u.last_update_at /= Void)
 		end
 
 	test_config_lists_are_copies
@@ -130,5 +244,27 @@ feature {NONE} -- Fixtures
 			l_failed := True
 			retry
 		end
+
+	child_leaves (a_door: CADDY_FRONT_DOOR): BOOLEAN
+			-- Does `a_door''s child disappear within a bounded wait?
+		local
+			l_env: EXECUTION_ENVIRONMENT
+			l_tries: INTEGER
+		do
+			create l_env
+			from
+				l_tries := 0
+			until
+				not a_door.has_child_process or l_tries >= 20
+			loop
+				l_env.sleep (100_000_000)
+				l_tries := l_tries + 1
+			end
+			Result := not a_door.has_child_process
+		end
+
+	Unroutable_base: STRING_8 = "http://127.0.0.1:9/update?domains="
+			-- Loopback discard port: nothing listens, the connection is
+			-- refused at once, and no packet leaves this machine.
 
 end

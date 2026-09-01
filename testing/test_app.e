@@ -101,6 +101,10 @@ feature {NONE} -- Initialization
 			run_test (agent (create {OPS_ASSAULT}).test_null_door_stays_stopped, "null_door_stays_stopped")
 			run_test (agent (create {OPS_ASSAULT}).test_duckdns_url_masks_the_token, "duckdns_url_masks_the_token")
 			run_test (agent (create {OPS_ASSAULT}).test_config_lists_are_copies, "config_lists_are_copies")
+			run_test (agent (create {OPS_ASSAULT}).test_caddy_door_supervises_a_stand_in_child, "caddy_door_supervises_a_stand_in_child")
+			run_test (agent (create {OPS_ASSAULT}).test_caddy_door_refuses_a_missing_executable, "caddy_door_refuses_a_missing_executable")
+			run_test (agent (create {OPS_ASSAULT}).test_caddy_door_reports_a_child_killed_behind_its_back, "caddy_door_reports_a_child_killed_behind_its_back")
+			run_test (agent (create {OPS_ASSAULT}).test_duckdns_update_fails_closed_and_never_leaks_the_token, "duckdns_update_fails_closed_and_never_leaks_the_token")
 
 			print ("=== SERVICE (Phase 1c) ===%N")
 			run_test (agent (create {CHAT_ASSAULT}).test_log_never_contains_secrets, "log_never_contains_secrets")
