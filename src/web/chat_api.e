@@ -556,6 +556,52 @@ feature -- Answers: account and administration
 			counted: request_count = old request_count + 1
 		end
 
+feature -- Answers: first-run bootstrap
+
+	bootstrap_first_admin (a_username: separate READABLE_STRING_8; a_display_name, a_password: separate READABLE_STRING_32): CHAT_REPLY
+			-- 201 with the first admin as a member, bringing the default room
+			-- "main" to exist when no room does yet - the same assembly
+			-- `--create-admin' performs on this processor (the service's
+			-- creation order: room first, then `create_first_admin', so the
+			-- admin joins the default room); 409 once any admin exists.
+			-- ADDED for the doorbell assault (Phase 4 Task 3): the one
+			-- cross-processor way to reach `service.create_first_admin',
+			-- whose formals are not separate.
+		local
+			l_username: STRING_8
+			l_display, l_password: STRING_32
+			l_rules: CHAT_USER_RULES
+			l_now: SIMPLE_DATE_TIME
+			l_result: CHAT_RESULT [CHAT_USER]
+		do
+			l_username := local_8 (a_username)
+			l_display := local_32 (a_display_name)
+			l_password := local_32 (a_password)
+			create l_rules
+			if not l_rules.is_valid_username (l_username) then
+				Result := answered (bad_request ("a username is 1..32 characters of [a-z0-9_]"))
+			elseif not l_rules.is_valid_human_display_name (l_display) then
+				Result := answered (bad_request ("a display name is 1..40 visible characters without the bot marker"))
+			elseif l_password.count < config.password_minimum then
+				Result := answered (bad_request ("the password is too short"))
+			else
+				if service.store.default_room = Void then
+					create l_now.make_now
+					service.store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", l_now))
+				end
+				l_result := service.create_first_admin (l_username, l_display, l_password)
+				if l_result.is_success and then attached l_result.value as l_admin then
+					Result := answered (create {CHAT_REPLY}.make_json (201, codec.member_to_json (codec.member_of (l_admin)), 0))
+				else
+					Result := answered (error_reply (l_result.error))
+				end
+			end
+		ensure
+			counted: request_count = old request_count + 1
+			admin_on_success: Result.status = 201 implies service.store.has_admin
+			room_on_success: Result.status = 201 implies service.store.default_room_id > 0
+		end
+
 feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 
 	dispatcher_start_after: INTEGER_64
