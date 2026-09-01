@@ -422,6 +422,12 @@ feature -- Administration
 			if store.has_admin then
 				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_exists, "An administrator already exists.", 409))
 			else
+				if store.default_room = Void then
+						-- The first admin brings the room to exist: a fresh database has none,
+						-- and an administrator with nowhere to post is no chat (found by the
+						-- first live smoke test - rooms answered [] and every post not_member).
+					store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", now))
+				end
 				Result := create_user (a_username, a_display_name, a_password, True)
 			end
 		ensure
@@ -429,6 +435,8 @@ feature -- Administration
 			refused_when_admin_exists: old store.has_admin implies not Result.is_success
 			duplicate_refused: old store.has_username (a_username) implies not Result.is_success
 			admin_on_success: (Result.is_success and then attached Result.value as u) implies (u.is_admin and store.has_admin)
+			room_on_success: Result.is_success implies store.default_room_id > 0
+			admin_is_member: (Result.is_success and then attached Result.value as u2) implies store.is_member (u2.id, store.default_room_id)
 		end
 
 	create_bot (a_username: READABLE_STRING_8; a_display_name: READABLE_STRING_GENERAL): CHAT_RESULT [TUPLE [bot: CHAT_USER; token: STRING_8]]
