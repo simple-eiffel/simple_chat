@@ -163,6 +163,15 @@ feature {NONE} -- Initialization
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_bind_address_refused, "config_bind_address_refused")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_gates_and_door_match, "server_app_gates_and_door_match")
 
+			print ("=== CLIENT WIRING (Phase 4) ===%N")
+			run_test (agent (create {WIRING_ASSAULT}).test_winhttp_transport_refuses_what_cannot_go_on_the_wire, "winhttp_transport_refuses_what_cannot_go_on_the_wire")
+			run_test (agent (create {WIRING_ASSAULT}).test_winhttp_transport_reports_a_dead_port_as_unexchanged, "winhttp_transport_reports_a_dead_port_as_unexchanged")
+			run_test (agent (create {WIRING_ASSAULT}).test_client_config_round_trip, "client_config_round_trip")
+			run_test (agent (create {WIRING_ASSAULT}).test_client_config_hostile_file_yields_defaults, "client_config_hostile_file_yields_defaults")
+			run_test (agent (create {WIRING_ASSAULT}).test_client_config_session_sealed_never_in_clear, "client_config_session_sealed_never_in_clear")
+			run_test (agent (create {WIRING_ASSAULT}).test_tray_notifier_counts_with_or_without_a_shell, "tray_notifier_counts_with_or_without_a_shell")
+			run_test (agent (create {WIRING_ASSAULT}).test_live_client_stack_round_trip, "live_client_stack_round_trip")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 

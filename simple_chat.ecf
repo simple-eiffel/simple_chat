@@ -42,6 +42,7 @@
 		<library name="simple_encoding" location="$SIMPLE_EIFFEL/simple_encoding/simple_encoding.ecf"/>
 		<library name="simple_http" location="$SIMPLE_EIFFEL/simple_http/simple_http.ecf"/>
 		<library name="simple_web" location="$SIMPLE_EIFFEL/simple_web/simple_web.ecf"/>
+		<library name="simple_winhttp" location="$SIMPLE_EIFFEL/simple_winhttp/simple_winhttp.ecf"/>
 		<library name="simple_ai_client" location="$SIMPLE_EIFFEL/simple_ai_client/simple_ai_client.ecf"/>
 		<cluster name="src" location=".\src\" recursive="true"/>
 	</target>
@@ -52,8 +53,8 @@
 	</target>
 	<!-- The thick client (intent-v3, D-015): simple_widgets, no browser. The UI-free client stack
 	     (CHAT_CLIENT, EVENT_POLLER, CHAT_PRESENTER, ...) lives in the library's src\client\ cluster and is
-	     assaulted by the tests target; this target adds the window, the tray and WinHTTP. It compiles once
-	     SHELL_TRAY (simple_shell) and simple_winhttp land - dependency tasks. -->
+	     assaulted by the tests target; this target adds the window, the tray and WinHTTP. SHELL_TRAY
+	     (simple_shell) and simple_winhttp have landed (Phase 4 Task 9); SW_CHAT_VIEW waits on simple_shaping. -->
 	<target name="simple_chat_client" extends="simple_chat">
 		<root class="CLIENT_APP" feature="make"/>
 		<setting name="console_application" value="false"/>
@@ -66,7 +67,11 @@
 		<setting name="console_application" value="true"/>
 		<library name="simple_testing" location="$SIMPLE_EIFFEL/simple_testing/simple_testing.ecf"/>
 		<library name="testing" location="$ISE_LIBRARY\library\testing\testing.ecf"/>
+		<!-- Phase 4 Task 9: the wiring assault drives WINHTTP_TRANSPORT, TRAY_NOTIFIER and the
+		     client apps cluster headlessly; simple_shell carries SHELL_TRAY for the tray tests. -->
+		<library name="simple_shell" location="$SIMPLE_EIFFEL/simple_shell/simple_shell.ecf"/>
 		<cluster name="server" location=".\apps\server\" recursive="true"/>
+		<cluster name="client" location=".\apps\client\" recursive="true"/>
 		<cluster name="tests" location=".\testing\" recursive="true">
 			<file_rule>
 				<exclude>/doorbell$</exclude>

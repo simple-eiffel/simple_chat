@@ -1,11 +1,10 @@
 note
 	description: "[
 		The member's executable - the thick client (D-015). Loads the
-		config, locates the server (local service first, D-016), logs in,
-		opens the room, and runs the simple_widgets window whose timer
-		pumps the presenter. Single-instance: a second launch focuses the
-		first. Everything below the window is UI-free and lives in the
-		library's `client' cluster; this class only assembles it.
+		config, locates the server (local service first, D-016), and
+		assembles the whole UI-free stack: the GUI's own CHAT_CLIENT over
+		WINHTTP_TRANSPORT, the presenter over a view and TRAY_NOTIFIER.
+		Single-instance focus and the window itself are a later UI pass.
 
 		Three processors (approach section 8): the root runs the window,
 		the presenter and the GUI's own CHAT_CLIENT for posting; a
@@ -17,6 +16,11 @@ note
 		`start_polling' hands the inbox over in one short call and then
 		launches the loop asynchronously with no separate argument at all,
 		so the launch does not wait for the loop to end.
+
+		The visible pane is deliberately absent: SW_CHAT_VIEW (the
+		simple_widgets room pane) waits for simple_shaping, without which
+		Hebrew cannot be rendered; until it lands, MEMORY_CHAT_VIEW
+		stands in so the full stack assembles and this target compiles.
 	]"
 	author: "Larry Rix"
 
@@ -29,31 +33,59 @@ create
 feature {NONE} -- Initialization
 
 	make
+			-- Assemble everything that needs no pane: config, transport, locator,
+			-- endpoint, client, view, tray, notifier, presenter.
 		local
-			l_config: CLIENT_CONFIG
-			l_transport: WINHTTP_TRANSPORT
 			l_locator: SERVICE_LOCATOR
 			l_endpoint: CHAT_ENDPOINT
+			l_tray: SHELL_TRAY
 		do
-			create l_config.make_defaults
-			l_config.load
-			create l_transport.make
-			create l_locator.make (l_transport)
-			l_endpoint := l_locator.locate (l_config)
-			create client.make (l_transport, l_endpoint)
-			-- Implementation in Phase 4: login dialog (SW_DIALOG) -> client.login; presenter over
-			-- SW_CHAT_VIEW + TRAY_NOTIFIER; start_polling (presenter, room, since); the window timer
-			-- calls presenter.pump every tick and, when presenter.session_lost is set afterwards (the
-			-- server answered 401: the room is closed and the client logged out with no exchange),
-			-- shows the login dialog again and start_polling from presenter.last_seen_id; on close:
-			-- presenter.log_out while still logged in (the inbox is stopped and the host's loop ends
-			-- on its next poll), then l_config.save.
+			create config.make_defaults
+			config.load
+			create transport.make
+			create l_locator.make (transport)
+			l_endpoint := l_locator.locate (config)
+			create client.make (transport, l_endpoint)
+			create view.make
+			create l_tray.make ({TRAY_NOTIFIER}.Tooltip_base)
+			create notifier.make (l_tray)
+			create presenter.make (client, view, notifier)
+				-- The interactive part is UI-gated and stays honestly unbuilt here:
+				-- the login dialog and the room pane are SW_* panes (simple_widgets)
+				-- whose text path waits for simple_shaping (SW_CHAT_VIEW renders
+				-- Hebrew, or it does not ship). Once the pane lands, the flow is:
+				-- login dialog -> client.login (or a remembered session:
+				-- config.load_session handed back through the dialog);
+				-- start_polling (presenter, room, since); the window timer calls
+				-- presenter.pump every tick and, when presenter.session_lost is set
+				-- afterwards (the server answered 401: the room is closed and the
+				-- client logged out with no exchange), shows the login dialog again
+				-- and start_polling from presenter.last_seen_id; on close:
+				-- presenter.log_out while still logged in (the inbox is stopped and
+				-- the host's loop ends on its next poll), then config.save.
 		end
 
 feature -- Access
 
 	client: CHAT_CLIENT
 			-- The GUI's own client: login and posting on the root processor.
+
+	config: CLIENT_CONFIG
+			-- What the member's machine remembers; saved again on close.
+
+	transport: WINHTTP_TRANSPORT
+			-- The root processor's transport: the locator's probes, the login,
+			-- every post. The poller's lives in POLLER_HOST, on its processor.
+
+	view: MEMORY_CHAT_VIEW
+			-- Stand-in for SW_CHAT_VIEW until simple_shaping lands; the presenter
+			-- talks only to CHAT_VIEW, so the swap will not touch it.
+
+	notifier: TRAY_NOTIFIER
+			-- Balloons and the unread badge on the notification area.
+
+	presenter: CHAT_PRESENTER
+			-- The logic between the client, the inbox, the view and the notifier.
 
 feature -- Basic operations
 
