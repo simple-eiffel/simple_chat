@@ -42,6 +42,8 @@ class
 inherit
 	EVENT_SUBSCRIBER
 
+	CHAT_SHARED
+
 create
 	make
 
@@ -76,10 +78,11 @@ feature {NONE} -- Initialization
 			create codec.make
 			create last_ask_key.make_empty
 			create last_via_key.make_empty
+			populate_from_shared_configuration (a_api)
 		ensure
 			starts_where_told: start_after = a_start_after
 			floor_at_start: pruned_floor = a_start_after
-			own_registry: registry.count = 0
+			own_registry: registry.count = participants_registered
 			fresh: wake_count = 0 and requests_seen = 0 and answers_posted = 0 and answer_failures = 0 and asks = 0
 			nothing_pending: pending_rooms_model.is_empty
 			no_cursors: cursors_model.is_empty
@@ -147,6 +150,12 @@ feature -- Access
 
 	asks: INTEGER
 			-- Engine calls made: one per request the room could take and the limiter allowed.
+
+	participants_registered: INTEGER
+			-- Participants the shared configuration brought to life at creation (Task 7 item 5).
+
+	participants_skipped: INTEGER
+			-- Configuration entries refused at creation, one log line each (D6).
 
 	last_ask_granted: BOOLEAN
 			-- Did the limiter allow the latest request that reached it? False when the latest request never reached it.
@@ -388,7 +397,7 @@ feature -- Basic operations
 				last_page_count := p.events.count
 			else
 				last_page_count := 0
-				-- Phase 4: log.warn ("dispatcher: undecodable page for room " + a_room_id.out)
+				log.warn ("dispatcher: undecodable page for room " + a_room_id.out)
 			end
 		ensure
 			cursor_never_backwards: cursor_of (a_room_id) >= old cursor_of (a_room_id)
@@ -665,6 +674,313 @@ feature {NONE} -- Implementation
 			given: not Result.is_empty
 		end
 
+feature {NONE} -- Population (Task 7 item 5)
+
+	populate_from_shared_configuration (a_api: separate CHAT_API)
+			-- Bring the [[participants]] of the shared configuration to
+			-- life: when the per-process settings name a configuration path
+			-- under `Config_path_key' (the same key the facade fills and
+			-- CHAT_API.make_from_shared reads) and that file is valid, each
+			-- entry becomes a registered participant with a stored bot user
+			-- - resolved through `a_api', created on first sight: the
+			-- [[participants]] table drives the store the way
+			-- --create-admin drives the first admin - plus its aliases and
+			-- `via' choices. An entry that cannot be built (a username a
+			-- person holds, a missing engine, a bad sandbox) is skipped
+			-- with one log line and the dispatcher comes up with the rest
+			-- (D6). With no path shared, or a refused file, nothing is
+			-- registered.
+		local
+			l_config: SERVER_CONFIG
+			l_data_dir: STRING_32
+		do
+			if attached shared_item ({CHAT_SHARED}.Config_path_key) as l_path and then not l_path.is_empty then
+				create l_config.make_from_file (l_path)
+				if l_config.is_valid and l_config.is_loaded then
+					l_data_dir := absolute_directory (l_config.data_dir)
+					across l_config.participants as ic loop
+						build_participant (a_api, ic, l_config, l_data_dir)
+					end
+				else
+					log.warn ("dispatcher: the configuration at " + l_path + " is refused; no participant is registered")
+				end
+			end
+		ensure
+			counted: registry.count = participants_registered
+		end
+
+	build_participant (a_api: separate CHAT_API; a_config: PARTICIPANT_CONFIG; a_whole: SERVER_CONFIG; a_data_dir: STRING_32)
+			-- Register `a_config''s participant with its aliases and
+			-- shapers, or skip the entry with one log line - a raising
+			-- construction (a violated sandbox precondition, a broken
+			-- engine) is caught here, so one bad entry never takes the
+			-- dispatcher down (D6).
+		local
+			l_participant: detachable PARTICIPANT
+			l_bot: detachable CHAT_USER
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				if engine_present (a_config) then
+						-- The bot is resolved (and so possibly created) only
+						-- for an entry whose engine is there: a skipped entry
+						-- must not drive a user into the store.
+					l_bot := bot_user_of (a_api, a_config)
+					if attached l_bot as b and then not registry.has (a_config.handle) and then not registry.has_alias (a_config.handle) then
+						l_participant := new_participant (a_config, a_whole, a_data_dir, b)
+					end
+				else
+					log.warn ({STRING_32} "dispatcher: participant " + a_config.handle + {STRING_32} " names a missing engine; entry skipped")
+				end
+			end
+			if attached l_participant as p then
+				registry.register (p)
+				participants_registered := participants_registered + 1
+				register_aliases (a_config)
+			else
+				participants_skipped := participants_skipped + 1
+				if l_failed then
+					log.error ({STRING_32} "dispatcher: participant " + a_config.handle + {STRING_32} " raised during construction; entry skipped")
+				elseif l_bot /= Void then
+					log.warn ({STRING_32} "dispatcher: participant " + a_config.handle + {STRING_32} " cannot be built (missing engine or bad sandbox); entry skipped")
+				end
+			end
+		ensure
+			one_way: (registry.count = old registry.count + 1 and participants_registered = old participants_registered + 1)
+				xor (participants_skipped = old participants_skipped + 1)
+		rescue
+				-- One retry only: the retried body skips construction and
+				-- accounts the skip; a second exception propagates instead
+				-- of looping the rescue.
+			if not l_failed then
+				l_failed := True
+				l_participant := Void
+				retry
+			end
+		end
+
+	engine_present (a_config: PARTICIPANT_CONFIG): BOOLEAN
+			-- Is the one engine file `a_config''s kind needs actually there?
+			-- The tool kinds name a file to check; the AI kinds and "none"
+			-- carry nothing checkable here (a dead engine answers errors
+			-- at ask time), so they pass.
+		local
+			l_file: RAW_FILE
+		do
+			if a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_bible_tool) then
+				create l_file.make_with_name (a_config.executable)
+				Result := l_file.exists
+			elseif a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_shape_tool) then
+				create l_file.make_with_name (a_config.database)
+				Result := l_file.exists
+			else
+				Result := True
+			end
+		end
+
+	bot_user_of (a_api: separate CHAT_API; a_config: PARTICIPANT_CONFIG): detachable CHAT_USER
+			-- The stored, active bot `a_config' posts as - resolved by
+			-- username through the API, created on first sight; Void, with
+			-- one log line, when the username belongs to a person or
+			-- cannot be created.
+		local
+			l_id: INTEGER_64
+			l_now: SIMPLE_DATE_TIME
+		do
+			l_id := a_api.dispatcher_bot_id (a_config.bot_username, a_config.marked_display_name)
+			if l_id > 0 then
+				create l_now.make_now
+				create Result.make (l_id, a_config.bot_username, a_config.marked_display_name, "", False, True, l_now)
+			else
+				log.warn ({STRING_32} "dispatcher: no bot user for " + a_config.handle + {STRING_32} " (the username is a person's, or creation failed); entry skipped")
+			end
+		ensure
+			stored_bot: attached Result as b implies (b.is_stored and b.is_bot and b.is_active)
+		end
+
+	new_participant (a_config: PARTICIPANT_CONFIG; a_whole: SERVER_CONFIG; a_data_dir: STRING_32; a_bot: CHAT_USER): detachable PARTICIPANT
+			-- `a_config''s participant by kind, or Void for one whose
+			-- engine is missing. The claude sandbox directory
+			-- (<data_dir>\participants\<name>) is derived from the
+			-- configuration's data directory - the entry's own `engine'
+			-- value documents it but the derivation is the law - and is
+			-- created when absent (the sandbox predicate demands a real,
+			-- cleanly-ancestored directory).
+		require
+			bot: a_bot.is_bot and a_bot.is_stored and a_bot.is_active
+		local
+			l_file: RAW_FILE
+			l_sandbox: STRING_32
+			l_claude_client: CLAUDE_CODE_CLIENT
+			l_ollama_client: OLLAMA_CLIENT
+			l_tool: detachable TOOL_PARTICIPANT
+		do
+			if a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_none) then
+				create {NULL_PARTICIPANT} Result.make (a_config.handle, a_bot)
+			elseif a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_bible_tool) then
+				create l_file.make_with_name (a_config.executable)
+				if l_file.exists then
+					create {BIBLE_TOOL_PARTICIPANT} l_tool.make (a_config.handle, a_bot, a_config.executable, a_config.max_characters, a_config.timeout_seconds)
+				end
+			elseif a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_shape_tool) then
+				create l_file.make_with_name (a_config.database)
+				if l_file.exists then
+					create {SHAPE_TOOL_PARTICIPANT} l_tool.make (a_config.handle, a_bot, a_config.database, a_config.max_characters, a_config.timeout_seconds)
+				end
+			elseif a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_ollama) then
+				create l_ollama_client.make
+				create {OLLAMA_PARTICIPANT} Result.make (a_config.handle, a_bot, l_ollama_client, a_config.model, a_config.max_characters, a_config.timeout_seconds)
+			elseif a_config.kind.same_string ({PARTICIPANT_CONFIG}.Kind_claude_code) then
+				l_sandbox := sandbox_directory_of (a_data_dir, a_config.handle)
+				ensure_directory (l_sandbox)
+				create l_claude_client.make
+				create {CLAUDE_CODE_PARTICIPANT} Result.make (a_config.handle, a_bot, l_claude_client, a_data_dir, l_sandbox, a_config.max_characters, a_config.timeout_seconds)
+			end
+			if attached l_tool as t then
+				wire_shapers (t, a_config, a_whole, a_data_dir)
+				Result := t
+			end
+		end
+
+	wire_shapers (a_tool: TOOL_PARTICIPANT; a_config: PARTICIPANT_CONFIG; a_whole: SERVER_CONFIG; a_data_dir: STRING_32)
+			-- The tool's `via' choices and configured default shapers, each
+			-- resolved against the same configuration's AI entries ("plain"
+			-- is built in; "none" keeps the mechanical default; a name no
+			-- entry carries is skipped with one log line).
+		local
+			l_choice: STRING_32
+		do
+			across a_config.allow_via_list as ic loop
+				add_choice (a_tool, ic, a_whole, a_data_dir)
+			end
+			l_choice := a_config.query_shaper
+			if not l_choice.is_empty and then l_choice.code (1) = 64 then
+				add_choice (a_tool, l_choice, a_whole, a_data_dir)
+				if a_tool.allows_via (l_choice) then
+					a_tool.set_query_shaper (a_tool.shaper_for (l_choice))
+				end
+			end
+			l_choice := a_config.response_shaper
+			if not l_choice.is_empty and then l_choice.code (1) = 64 then
+				add_choice (a_tool, l_choice, a_whole, a_data_dir)
+				if a_tool.allows_via (l_choice) then
+					a_tool.set_response_shaper (a_tool.shaper_for (l_choice))
+				end
+			end
+		end
+
+	add_choice (a_tool: TOOL_PARTICIPANT; a_name: STRING_32; a_whole: SERVER_CONFIG; a_data_dir: STRING_32)
+			-- Make `a_name' selectable on `a_tool' when an AI entry backs it.
+		do
+			if not a_tool.allows_via (a_name) then
+				if attached shaper_named (a_name, a_whole, a_data_dir) as l_shaper then
+					a_tool.add_shaper (l_shaper)
+				else
+					log.warn ({STRING_32} "dispatcher: via choice " + a_name + {STRING_32} " of " + a_tool.handle + {STRING_32} " names no AI entry; choice skipped")
+				end
+			end
+		end
+
+	shaper_named (a_name: READABLE_STRING_32; a_whole: SERVER_CONFIG; a_data_dir: STRING_32): detachable SHAPER
+			-- A shaper for the via choice `a_name': the configured AI entry
+			-- of that handle - an Ollama entry gives an OLLAMA_SHAPER on
+			-- its model, a Claude entry a CLAUDE_SHAPER whose client is
+			-- pinned exactly as the participant's own (sandbox directory,
+			-- tools off, no settings sources, strict MCP, its timeout).
+			-- Void for a name no entry carries ("plain" is already
+			-- everywhere).
+		local
+			l_claude_client: CLAUDE_CODE_CLIENT
+			l_ollama_client: OLLAMA_CLIENT
+			l_sandbox: STRING_32
+		do
+			across a_whole.participants as ic loop
+				if Result = Void and then ic.handle.same_string (a_name) then
+					if ic.kind.same_string ({PARTICIPANT_CONFIG}.Kind_ollama) then
+						create l_ollama_client.make
+						create {OLLAMA_SHAPER} Result.make (ic.handle, l_ollama_client, ic.model, ic.timeout_seconds)
+					elseif ic.kind.same_string ({PARTICIPANT_CONFIG}.Kind_claude_code) then
+						l_sandbox := sandbox_directory_of (a_data_dir, ic.handle)
+						ensure_directory (l_sandbox)
+						create l_claude_client.make
+						l_claude_client.set_working_directory (l_sandbox)
+						l_claude_client.set_tools_disabled
+						l_claude_client.set_setting_sources ("")
+						l_claude_client.set_strict_mcp_config
+						l_claude_client.set_timeout_seconds (ic.timeout_seconds)
+						create {CLAUDE_SHAPER} Result.make (ic.handle, l_claude_client, ic.timeout_seconds)
+					end
+				end
+			end
+		end
+
+	register_aliases (a_config: PARTICIPANT_CONFIG)
+			-- `a_config''s aliases into the registry (its handle is registered).
+		require
+			registered: registry.has (a_config.handle)
+		do
+			across a_config.alias_list as ic loop
+				if not registry.has_alias (ic) and then not registry.has (ic.as_lower) then
+					registry.register_alias (ic, a_config.handle)
+				end
+			end
+		end
+
+	sandbox_directory_of (a_data_dir, a_handle: READABLE_STRING_32): STRING_32
+			-- <a_data_dir>\participants\<a_handle without its "@">.
+		require
+			data_given: not a_data_dir.is_empty
+			handle_shaped: a_handle.count >= 2
+		do
+			create Result.make_from_string_general (a_data_dir)
+			Result.append ({STRING_32} "\participants\")
+			Result.append_string_general (a_handle.substring (2, a_handle.count))
+		ensure
+			anchored: Result.starts_with_general (a_data_dir)
+		end
+
+	absolute_directory (a_path: READABLE_STRING_32): STRING_32
+			-- `a_path' as an absolute canonical directory: itself when
+			-- absolute, else anchored at the server's current working
+			-- directory (the sandbox predicate compares absolute paths).
+		require
+			given: not a_path.is_empty
+		local
+			l_p: PATH
+			l_env: EXECUTION_ENVIRONMENT
+		do
+			create l_p.make_from_string (a_path)
+			if not l_p.is_absolute then
+				create l_env
+				l_p := l_env.current_working_path.extended_path (l_p)
+			end
+			create Result.make_from_string (l_p.canonical_path.name)
+		ensure
+			absolute: (create {PATH}.make_from_string (Result)).is_absolute
+		end
+
+	ensure_directory (a_path: READABLE_STRING_32)
+			-- Bring the directory at `a_path' to exist; a failure is left
+			-- for the sandbox predicate to refuse.
+		require
+			given: not a_path.is_empty
+		local
+			l_dir: DIRECTORY
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				create l_dir.make (a_path)
+				if not l_dir.exists then
+					l_dir.recursive_create_dir
+				end
+			end
+		rescue
+			if not l_failed then
+				l_failed := True
+				retry
+			end
+		end
+
 feature -- Constants
 
 	Max_queue_depth: INTEGER = 8
@@ -685,6 +1001,7 @@ invariant
 	named: not subscriber_name.is_empty
 	start_non_negative: start_after >= 0
 	counts_non_negative: wake_count >= 0 and requests_seen >= 0 and answers_posted >= 0 and answer_failures >= 0 and asks >= 0
+	population_non_negative: participants_registered >= 0 and participants_skipped >= 0
 	answers_cover_requests: answers_posted + answer_failures <= requests_seen
 	asks_within_requests: asks <= requests_seen
 	requests_cover_answered_ids: requests_seen >= answered.count

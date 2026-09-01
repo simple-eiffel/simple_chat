@@ -128,6 +128,34 @@ feature -- Access
 			Result := allow_via.count
 		end
 
+	alias_list: ARRAYED_LIST [STRING_32]
+			-- A copy of the aliases, lowercase, in the order added (Task 7:
+			-- the dispatcher wires them into the registry; the model
+			-- queries alone cannot be iterated).
+		do
+			create Result.make (aliases.count)
+			across aliases as ic loop
+				Result.extend (ic.twin)
+			end
+		ensure
+			a_copy: Result /= aliases
+			same_count: Result.count = alias_count
+			all_known: across Result as a all has_alias (a) end
+		end
+
+	allow_via_list: ARRAYED_LIST [STRING_32]
+			-- A copy of the `via' choices, lowercase, in the order added.
+		do
+			create Result.make (allow_via.count)
+			across allow_via as ic loop
+				Result.extend (ic.twin)
+			end
+		ensure
+			a_copy: Result /= allow_via
+			same_count: Result.count = allow_via_count
+			all_allowed: across Result as c all allows_via (c) end
+		end
+
 feature -- Status report
 
 	allows_via (a_choice: READABLE_STRING_GENERAL): BOOLEAN

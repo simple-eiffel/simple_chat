@@ -798,6 +798,41 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 			from_store: attached service.store.room (a_room_id) as r implies Result.same_string (r.name)
 		end
 
+	dispatcher_bot_id (a_username: separate READABLE_STRING_8; a_display_name: separate READABLE_STRING_32): INTEGER_64
+			-- The stored, active bot user for a [[participants]] entry:
+			-- resolved by username, or created on first sight through
+			-- `service.create_bot' - the configuration drives the store
+			-- the way --create-admin drives the first admin; the one-time
+			-- bot token is dropped here, because a participant posts
+			-- through this process, never through the HTTP door. 0 - never
+			-- an exception - when the username belongs to a person, the
+			-- identity is invalid, the bot exists but is switched off, or
+			-- creation failed.
+		local
+			l_username: STRING_8
+			l_display: STRING_32
+			l_rules: CHAT_USER_RULES
+		do
+			l_username := local_8 (a_username)
+			l_display := local_32 (a_display_name)
+			create l_rules
+			if l_rules.is_valid_username (l_username) and then l_rules.is_marked_display_name (l_display) then
+				if attached service.store.user_by_username (l_username) as l_user then
+					if l_user.is_bot and l_user.is_active then
+						Result := l_user.id
+					end
+				elseif attached service.create_bot (l_username, l_display) as l_created and then l_created.is_success and then attached l_created.value as l_pair then
+					Result := l_pair.bot.id
+				end
+			end
+			request_count := request_count + 1
+		ensure
+			counted: request_count = old request_count + 1
+			resolved_or_zero: Result >= 0
+			a_bot_when_positive: Result > 0 implies (attached service.store.user (Result) as u and then (u.is_bot and u.is_active))
+			never_a_person: (attached service.store.user_by_username (local_8 (a_username)) as u2 and then not u2.is_bot) implies Result = 0
+		end
+
 feature -- Sessions (contract support)
 
 	session_for (a_token: READABLE_STRING_8): detachable CHAT_SESSION

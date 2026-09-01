@@ -44,12 +44,41 @@ feature -- Access
 feature -- Basic operations
 
 	shape (a_text: READABLE_STRING_GENERAL; a_brief: SHAPING_BRIEF): SHAPED_TEXT
+			-- <Precursor>: one CLI call - the brief becomes the system
+			-- prompt (`instruction_of'), the text the user prompt. The
+			-- bound is advisory (the client cannot kill the CLI): an
+			-- overrun, a failure or a raising engine is an error result,
+			-- never an exception.
+		local
+			l_started, l_now: SIMPLE_DATE_TIME
+			l_response: detachable AI_RESPONSE
+			l_failed: BOOLEAN
 		do
-			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Not implemented (Phase 1 skeleton)", 501))
-			-- Implementation in Phase 4: record_run around the call
+			create l_started.make_now
+			if not l_failed then
+				l_response := client.ask_with_system (instruction_of (a_brief), a_text.to_string_32)
+			end
+			create l_now.make_now
+			record_run ((l_now.to_timestamp - l_started.to_timestamp).to_integer_32.max (0))
+			if l_failed or l_response = Void then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "the shaper raised instead of answering", 503))
+			elseif last_timed_out then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "no shaping within " + timeout_seconds.out + " seconds", 503))
+			elseif attached l_response as l_r and then l_r.is_success and then not l_r.text.is_empty then
+				create Result.make_success (l_r.text.head (a_brief.max_characters))
+			else
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "Claude could not shape the text", 503))
+			end
 		ensure then
 			bounded_runtime: not last_timed_out implies elapsed_seconds <= timeout_seconds
 			timeout_is_error: last_timed_out implies not Result.is_success
+		rescue
+				-- One retry only; a second exception propagates instead of
+				-- looping the rescue forever.
+			if not l_failed then
+				l_failed := True
+				retry
+			end
 		end
 
 feature {NONE} -- Implementation

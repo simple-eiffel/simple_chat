@@ -55,13 +55,59 @@ feature -- Access
 feature -- Basic operations
 
 	answer (a_request: PARTICIPANT_REQUEST): PARTICIPANT_ANSWER
+			-- <Precursor>: one chat completion on the local model, with a
+			-- persona that keeps the chat register. A dead or absent
+			-- Ollama is an error result (the client answers an error; a
+			-- raising engine is caught), never an exception. The bound is
+			-- advisory (OLLAMA_CLIENT has no timeout API): an overrun is
+			-- recorded and reported as a timeout error.
+		local
+			l_started, l_now: SIMPLE_DATE_TIME
+			l_system, l_prompt: STRING_32
+			l_response: detachable AI_RESPONSE
+			l_failed: BOOLEAN
 		do
-			calls := calls + 1
-			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Not implemented (Phase 1 skeleton)", 501))
-			-- Implementation in Phase 4: client.set_model (model); ask with the persona; record_run; cut to max_characters
+			create l_started.make_now
+			if not l_failed then
+				calls := calls + 1
+				client.set_model (model)
+				create l_system.make (160)
+				l_system.append ({STRING_32} "You are ")
+				l_system.append (handle)
+				l_system.append ({STRING_32} " in the chat room %"")
+				l_system.append (a_request.room_name)
+				l_system.append ({STRING_32} "%". Reply in plain text for a chat: brief and direct, at most ")
+				l_system.append_string_general (a_request.max_characters.out)
+				l_system.append ({STRING_32} " characters. Never invent facts about the people in the room.")
+				create l_prompt.make (a_request.text.count + a_request.asker_display_name.count + 8)
+				l_prompt.append (a_request.asker_display_name)
+				l_prompt.append ({STRING_32} " asks: ")
+				l_prompt.append (a_request.text)
+				l_response := client.ask_with_system (l_system, l_prompt)
+			end
+			create l_now.make_now
+			record_run ((l_now.to_timestamp - l_started.to_timestamp).to_integer_32.max (0))
+			if l_failed or l_response = Void then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "the engine raised instead of answering", 503))
+			elseif last_timed_out then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "no answer within " + timeout_seconds.out + " seconds", 503))
+			elseif attached l_response as l_r and then l_r.is_success and then not l_r.text.is_empty then
+				create Result.make_success (l_r.text.head (a_request.max_characters), Void)
+			else
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, {STRING_32} "the local model " + model + {STRING_32} " could not answer", 503))
+			end
 		ensure then
 			bounded_runtime: not last_timed_out implies elapsed_seconds <= timeout_seconds
 			timeout_is_error: last_timed_out implies not Result.is_success
+		rescue
+				-- One retry only: the retried body skips the engine and
+				-- answers an error; a second exception (it would have to
+				-- come from the recovery path itself) propagates instead of
+				-- looping the rescue forever.
+			if not l_failed then
+				l_failed := True
+				retry
+			end
 		end
 
 feature {NONE} -- Implementation

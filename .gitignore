@@ -37,3 +37,4 @@ Thumbs.db
 *.log
 testing/config_scratch/
 testing/equivalence_scratch/
+testing/participants_scratch/

@@ -588,6 +588,113 @@ feature {NONE} -- Implementation
 			timed: elapsed_seconds >= 0
 		end
 
+	run_child_process (a_arguments: ARRAYED_LIST [STRING_32]): STRING_32
+			-- The one child-process engine (NEW-2, Issue 26): start
+			-- `command_line_of (a_arguments)' - never any other joining -
+			-- through SIMPLE_ASYNC_PROCESS in `child_working_directory',
+			-- pumping output every `Wait_slice_ms' so a chatty child never
+			-- blocks on a full pipe, bounded by `timeout_seconds'. A child
+			-- alive past the bound is killed and confirmed dead (polled up
+			-- to `Kill_confirm_ms'); the run is then recorded as timed out:
+			-- whole-second timestamps round a real overrun down, so the
+			-- recorded time is raised to at least `timeout_seconds' + 1 -
+			-- the overrun is a fact observed, never clamped into the bound,
+			-- and the output is dropped. A child that cannot start, and an
+			-- engine that raises, is an empty output with the elapsed time
+			-- recorded: `answer' turns both into an honest error.
+		require
+			some_arguments: not a_arguments.is_empty
+			all_safe: across a_arguments as a all is_safe_argument (a) end
+		local
+			l_process: detachable SIMPLE_ASYNC_PROCESS
+			l_started, l_now: SIMPLE_DATE_TIME
+			l_elapsed, l_waited_ms, l_confirm_ms: INTEGER
+			l_ran, l_finished, l_failed: BOOLEAN
+		do
+			create l_started.make_now
+			create Result.make_empty
+			if not l_failed then
+				create l_process.make
+				l_process.start_in_directory (command_line_of (a_arguments), child_working_directory)
+				if l_process.is_started then
+					l_ran := l_process.was_started_successfully
+					if l_ran then
+						from
+						until
+							l_finished or l_waited_ms >= timeout_seconds * 1000
+						loop
+							l_finished := l_process.wait (Wait_slice_ms) = 1
+							if attached l_process.read_available_output then
+								-- Pumped into `accumulated_output'.
+							end
+							if not l_finished then
+								l_waited_ms := l_waited_ms + Wait_slice_ms
+							end
+						end
+						if not l_finished then
+								-- One last poll: a child that finished exactly at
+								-- the boundary is finished, not killed.
+							l_finished := l_process.wait (0) = 1
+						end
+						if not l_finished and then l_process.is_running then
+							if l_process.kill then
+								-- Kill requested; confirmation follows.
+							end
+							from
+							until
+								not l_process.is_running or l_confirm_ms >= Kill_confirm_ms
+							loop
+								if l_process.wait (Wait_slice_ms) = 1 then
+									-- Dead.
+								end
+								l_confirm_ms := l_confirm_ms + Wait_slice_ms
+							end
+							check child_confirmed_dead: not l_process.is_running end
+						end
+					end
+					l_process.close
+					Result := l_process.accumulated_output.twin
+				end
+			end
+			create l_now.make_now
+			l_elapsed := (l_now.to_timestamp - l_started.to_timestamp).to_integer_32.max (0)
+			if l_ran and not l_finished then
+				l_elapsed := l_elapsed.max (timeout_seconds + 1)
+				create Result.make_empty
+			end
+			record_run (l_elapsed)
+		ensure
+			timed: elapsed_seconds >= 0
+		rescue
+				-- One retry only: the retried body skips the child and
+				-- answers an empty output with the time recorded; a second
+				-- exception propagates instead of looping the rescue.
+			if not l_failed then
+				l_failed := True
+				retry
+			end
+		end
+
+	child_working_directory: detachable STRING_32
+			-- Where the child runs: the directory of `program_path' when it
+			-- names one (bible.exe reads its databases beside itself), Void
+			-- otherwise - the server's own working directory. Never taken
+			-- from the member's text, never a vault.
+		local
+			l_path: PATH
+			l_parent: PATH
+		do
+			if program_path.has ('\') or program_path.has ('/') then
+				create l_path.make_from_string (program_path)
+				l_parent := l_path.parent
+				if not l_parent.name.is_empty then
+					create Result.make_from_string (l_parent.name)
+				end
+			end
+		ensure
+			within_program: attached Result as r implies program_path.as_lower.starts_with (r.as_lower)
+		end
+
 	query_brief: SHAPING_BRIEF
 			-- How a query shaper is briefed: the tool, its forms, `Argument_maximum'.
 		do
@@ -660,6 +767,14 @@ feature -- Constants
 
 	Output_maximum: INTEGER = 65536
 			-- Raw tool output is cut here.
+
+	Wait_slice_ms: INTEGER = 200
+			-- The child engine waits and pumps output in slices of this many
+			-- milliseconds, so a full pipe never deadlocks the child.
+
+	Kill_confirm_ms: INTEGER = 5000
+			-- How long a kill is polled before the engine gives up
+			-- confirming (the check then reports the zombie honestly).
 
 	Minimum_reply_characters: INTEGER = 200
 			-- Below this a tool cannot echo, answer and disclose: it refuses.

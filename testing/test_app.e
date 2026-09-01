@@ -187,6 +187,10 @@ feature {NONE} -- Initialization
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_grants_and_charges_via, "dispatcher_grants_and_charges_via")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_survives_raising_engine, "dispatcher_survives_raising_engine")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_prunes_answered, "dispatcher_prunes_answered")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_bible_tool_runs_a_real_child, "bible_tool_runs_a_real_child")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_tool_child_killed_at_timeout, "tool_child_killed_at_timeout")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_shape_tool_answers_from_a_scratch_database, "shape_tool_answers_from_a_scratch_database")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_dispatcher_population_from_configuration, "dispatcher_population_from_configuration")
 
 			print ("=== TODO: PHASE 5 (skeletal) ===%N")
 			run_test (agent t.test_post_message_appends_and_rings, "post_message_appends_and_rings (skeletal)")
@@ -216,6 +220,7 @@ feature {NONE} -- Harness
 			if not l_retried then
 				a_test.call (Void)
 				print ("  PASS: " + a_name + "%N")
+				io.output.flush
 				passed := passed + 1
 			end
 		rescue
