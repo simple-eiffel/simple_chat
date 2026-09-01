@@ -62,6 +62,21 @@
 		<library name="simple_testing" location="$SIMPLE_EIFFEL/simple_testing/simple_testing.ecf"/>
 		<library name="testing" location="$ISE_LIBRARY\library\testing\testing.ecf"/>
 		<cluster name="server" location=".\apps\server\" recursive="true"/>
-		<cluster name="tests" location=".\testing\" recursive="true"/>
+		<cluster name="tests" location=".\testing\" recursive="true">
+			<file_rule>
+				<exclude>/doorbell$</exclude>
+			</file_rule>
+		</cluster>
+	</target>
+	<!-- The cross-processor doorbell proof (Phase 4 Task 3): one separate CHAT_API owns the
+	     service, store and bus; the root plays the request handler - waiters, alarms, a delayed
+	     poster and the dispatcher, each on its own SCOOP processor. -->
+	<target name="simple_chat_doorbell_tests" extends="simple_chat">
+		<root class="DOORBELL_ASSAULT" feature="make"/>
+		<setting name="console_application" value="true"/>
+		<capability>
+			<concurrency use="scoop"/>
+		</capability>
+		<cluster name="doorbell" location=".\testing\doorbell\" recursive="true"/>
 	</target>
 </system>
