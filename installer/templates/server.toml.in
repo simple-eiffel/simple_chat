@@ -1,0 +1,92 @@
+# =============================================================================
+# simple_chat server configuration
+# =============================================================================
+#
+# This file lives at  C:\ProgramData\SimpleChat\server.toml
+# and the server is always started from  C:\ProgramData\SimpleChat  as its
+# working folder (the Start Menu shortcuts and the scheduled task both do that).
+#
+# THAT MATTERS: data_dir below is RELATIVE to the working folder, on purpose.
+# The Caddy front door builds its Caddyfile path as
+#     <working folder>\<data_dir>\Caddyfile
+# and it will not accept a data_dir that starts with a drive letter. Leave
+# data_dir as "data" unless you know exactly what you are changing.
+#
+# Everything the room owns therefore lives under C:\ProgramData\SimpleChat:
+#     data\simple_chat.db     the room: accounts, rooms, messages, history
+#     data\Caddyfile          written by the server when front_door = "caddy"
+#     server.log              what the server printed
+#     caddy.exe               the front door program
+#
+# Uninstalling SimpleChat does NOT delete this file or the data folder.
+# =============================================================================
+
+# The door the server listens on, on this PC only (it always binds 127.0.0.1).
+# If you host, this is the port you forward on your router.
+port = 8080
+
+# Relative to the working folder. See the note above before changing it.
+data_dir = "data"
+
+# -----------------------------------------------------------------------------
+# HOSTING: turning this PC into the room everyone else connects to.
+# -----------------------------------------------------------------------------
+# Out of the box the server is private to this PC: no front door, no public
+# name, nothing reachable from the internet. That is the right setting for
+# trying it out, and for a standby host that is not in use yet.
+#
+# To go live you change TWO lines below (and forward the port on your router -
+# the Hosting Guide in the Start Menu walks through it):
+#
+#   1. front_door = "caddy"
+#   2. public_name = "yourname.duckdns.org"
+#
+# Caddy then gets a real HTTPS certificate for that name by itself, and
+# forwards to this server on 127.0.0.1. Certificates are entirely Caddy's
+# business; there is nothing for you to buy, copy or renew.
+
+front_door = "none"
+# front_door = "caddy"
+# public_name = "yourname.duckdns.org"
+
+# -----------------------------------------------------------------------------
+# Keeping your DuckDNS name pointed at this house
+# -----------------------------------------------------------------------------
+# Most home internet connections change their address every so often. This
+# block tells the server to keep your DuckDNS name pointed at the current one.
+# Uncomment all five lines, put your own name and token in, and restart.
+#
+# [ddns]
+# enabled = true
+# provider = "duckdns"
+# domains = "yourname"          # just the label, NOT yourname.duckdns.org
+# token = "paste-your-duckdns-token-here"
+# interval_seconds = 300
+
+# -----------------------------------------------------------------------------
+# Limits (safe defaults; every one is optional)
+# -----------------------------------------------------------------------------
+# message_characters = 4000
+# upload_bytes = 8388608
+# ai_requests_per_hour = 5
+# posts_per_minute = 30
+# login_failures_per_10_minutes = 10
+# session_days = 90
+# password_minimum = 8
+
+# -----------------------------------------------------------------------------
+# Participants: the AI and tool members of the room
+# -----------------------------------------------------------------------------
+# An addressable participant is an ordinary member with a robot marker, its own
+# rate limit and its own engine. @claude runs on THIS PC's own Claude Code
+# subscription, sandboxed to the folder named in `engine'.
+#
+# [[participants]]
+# handle = "@claude"
+# kind = "claude_code"
+# engine = "D:/sandbox"
+# bot_username = "claude_bot"
+# display_name = "Claude"
+# requests_per_hour = 5
+# max_characters = 1200
+# timeout_seconds = 120

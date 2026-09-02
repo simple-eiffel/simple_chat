@@ -124,6 +124,7 @@ feature {NONE} -- Initialization
 
 			print ("=== SERVICE BEHAVIOR (Phase 4) ===%N")
 			run_test (agent (create {SERVICE_ASSAULT}).test_first_admin_created_once, "first_admin_created_once")
+			run_test (agent (create {SERVICE_ASSAULT}).test_ordinary_member_created_by_the_host, "ordinary_member_created_by_the_host")
 			run_test (agent (create {SERVICE_ASSAULT}).test_login_lockout_and_recovery, "login_lockout_and_recovery")
 			run_test (agent (create {SERVICE_ASSAULT}).test_unknown_names_never_fill_the_user_limiter, "unknown_names_never_fill_the_user_limiter")
 			run_test (agent (create {SERVICE_ASSAULT}).test_session_round_trip, "session_round_trip")
@@ -170,6 +171,8 @@ feature {NONE} -- Initialization
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_hostile_participants, "config_hostile_participants")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_bind_address_refused, "config_bind_address_refused")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_gates_and_door_match, "server_app_gates_and_door_match")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_display_name_gate, "server_app_display_name_gate")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_decodes_utf8_console_bytes, "server_app_decodes_utf8_console_bytes")
 
 			print ("=== CLIENT WIRING (Phase 4) ===%N")
 			run_test (agent (create {WIRING_ASSAULT}).test_winhttp_transport_refuses_what_cannot_go_on_the_wire, "winhttp_transport_refuses_what_cannot_go_on_the_wire")

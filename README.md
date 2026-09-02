@@ -53,6 +53,44 @@ bar (simple_shell publishes no `SetWindowText`).
 
 Lock order, never inverted: store < limiter < bus, and no lock is held while calling out to a subscriber.
 
+## Install
+
+`installer/SimpleChat-Setup.exe` (~36 MB) installs both halves. One installer, two
+components:
+
+- **The chat window** — installed always. This is the same executable for the host and
+  for every friend; the only difference between them is which address it talks to.
+- **The server** — a single plain-language checkbox, **unticked by default**: *"This PC
+  will host the chat room (installs the server, Caddy and the hosting tools)."* Most
+  installs are a friend who only wants to use the chat. Re-running the installer later
+  with the box ticked adds the server to an existing install, which is how a friend is
+  promoted to a standby host.
+
+**Hosting requires an administrator install**, by design: the server writes to
+`{commonappdata}`, registers a machine-wide logon task, and places `caddy.exe` where an
+elevated install makes it unwritable by a standard user - which is what stops that user
+tampering with the executable the elevated task launches. In a per-user install the server
+component does not exist and `/COMPONENTS=client,server` yields the client alone. The
+client is per-user-installable precisely because it needs none of that.
+
+A host gets a `SimpleChat Server` Start Menu folder — start, stop, create the first
+admin, create a user, the log, the config, back up the room, restore a backup — and a
+**hosting guide** written for a non-programmer: the two lines in `server.toml` that turn
+hosting on, a free DuckDNS name, router port forwarding, how to tell whether your
+provider's CGNAT makes that impossible, backups, and the cold-standby procedure.
+
+Accounts are minted by the host (`--create-admin` once, then `--create-user` per person);
+there is no self-registration. Both prompt for a display name and read the console as
+UTF-8, so a Hebrew or Greek name survives.
+
+**Uninstalling never deletes the room.** The data folder, `server.toml`, the backups and
+each member's `client.toml` all survive, so reinstalling picks up where it left off.
+
+To rebuild the installer, see `installer/README.md`. Two rules that bite: drive Inno
+Setup from **PowerShell, never Git Bash** (MSYS silently rewrites `/VERYSILENT` into a
+path), and compile test installs with `ISCC /DVERIFY=1` so they share no AppId, install
+directory or scheduled-task name with the real product.
+
 ## Build and test
 
 ```bash

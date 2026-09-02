@@ -1,0 +1,53 @@
+# =============================================================================
+# simple_chat client configuration
+# =============================================================================
+#
+# The client reads  %APPDATA%\simple_chat\client.toml  (that is
+# C:\Users\<you>\AppData\Roaming\simple_chat\client.toml).
+#
+# The installer put this file there for you if you did not already have one.
+# It never overwrites an existing one, and uninstalling never deletes it.
+#
+# NOTHING SECRET LIVES HERE. There is no password field and there never will
+# be. If you tick "Remember me on this PC", the client stores the SESSION as a
+# DPAPI blob sealed to your Windows account - unreadable by another user, on
+# another PC, or by anything that does not know this application's entropy.
+# =============================================================================
+
+# The servers to try, IN ORDER: the primary first, then the standby host.
+#
+# The client fails over by itself. At startup it probes each address in turn
+# and the first one that answers as a real simple_chat server wins - so if the
+# primary is down and your friend has started the standby, the window finds the
+# standby with nothing for you to do. Put the standby second and leave it in
+# the list permanently; an address that is not answering costs one short,
+# bounded probe.
+#
+# https:// anywhere. Plain http:// is accepted only for this machine's own
+# loopback address, and is refused before a byte leaves the PC.
+#
+# >>> BOTH ADDRESSES BELOW ARE PLACEHOLDERS. REPLACE THEM. <<<
+#
+# They are examples of the SHAPE of an address, not real servers - nothing is
+# listening on either one. Put in the address your host actually gave you.
+# If there is no standby host, delete the second entry and leave a list of one:
+#
+#     server_urls = ["https://the-address-your-host-gave-you"]
+#
+# You can also just leave this line alone and type the address into the
+# "Server" box on the login window once; the client writes the file itself.
+
+server_urls = ["https://REPLACE-ME.duckdns.org", "https://REPLACE-ME-standby.duckdns.org"]
+
+# Look for a server running on THIS PC before going out to the network.
+# The host's own window wants this. A friend's window does no harm leaving it
+# on - the probe is one request with a two-second timeout.
+prefers_local = true
+local_port = 8080
+
+# Where the window comes up, and how big. The client rewrites these when it
+# closes, so it reopens where you left it.
+window_x = 100
+window_y = 100
+window_width = 900
+window_height = 700

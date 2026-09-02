@@ -39,3 +39,10 @@ testing/config_scratch/
 testing/equivalence_scratch/
 testing/participants_scratch/
 testing/window_scratch/
+
+# Installer payload and output (built by installer/stage_payload.sh + ISCC,
+# never committed: the staged tree is ~85 MB of binaries and artwork)
+installer/src/
+installer/verify/
+installer/*-Setup.exe
+installer/SimpleChat-Setup*.exe
