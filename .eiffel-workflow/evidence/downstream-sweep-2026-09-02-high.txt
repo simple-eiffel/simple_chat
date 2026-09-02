@@ -1,0 +1,323 @@
+================================================================================
+DOWNSTREAM COMPATIBILITY SWEEP - 2026-09-02 - HIGH-RISK EDGES (16 repos)
+================================================================================
+Run by: Claude Fable 5.1 (agent sweep), D:/prod, EiffelStudio 25.02, ec.sh F_code
+
+CHANGED LIBRARIES UNDER TEST (today, on their main branches):
+  simple_web        0.2.0/0.3.0  SCOOP mode (SIMPLE_WEB_HANDLER_SERVER [H]),
+                                 per-request handlers; thread-only classes
+                                 SIMPLE_WEB_SERVER / _EXECUTION / _ROUTER / QUICK
+                                 moved to src/server/thread/ behind an ECF
+                                 <condition><concurrency value="thread"/></condition>;
+                                 remote_address, streaming API
+  simple_regex      1.0.1        split / split_by_pattern convert subject to
+                                 STRING_32 and use unicode_split (pieces STRING_32)
+  simple_shell      1.8.0/1.9.0  additive SHELL_INPUT, SHELL_CLIPBOARD.set_image, SHELL_TRAY
+  simple_ai_client  0.2.0        additive Claude providers, CLAUDE_CODE_CLIENT sandbox flags
+  simple_toml       0.1.1        load_file decodes UTF-8
+  simple_encryption 2.0.0/2.1.0  PBKDF2/HMAC/CSPRNG corrected, CNG, DPAPI (hash OUTPUTS changed)
+  simple_json       0.2.0        SIMPLE_JSON_TEXT escaper: non-ASCII emitted as raw UTF-8
+  simple_datetime                SIMPLE_TIME.make_from_string: bare 12:MM:SS = noon
+
+METHOD: per repo - record branch; pick the test target from the ECF; rm -rf
+EIFGENs/<target>; /d/prod/ec.sh test (foreground, blocking); judge by the log
+("System Recompiled" + "C compilation completed" + a fresh exe timestamp), never
+by exit code alone; then run the test exe from the repo root. Where the *_tests
+target does not root the simple_web-dependent code, an extra melt-check
+(ec.sh check) was run on that repo's server/app target so the simple_web 0.3.0
+edge is actually proven rather than assumed.
+
+HEADLINE: NO CAUSED-BY-TODAY breakage found in these 16 repos.
+          3 build failures, all PRE-EXISTING; none of their errors names a class
+          or feature of any changed library.
+          No fix branch and no PR was needed or opened.
+
+================================================================================
+PER-REPO
+================================================================================
+
+--- simple_bnf ---------------------------------------------------------------
+branch: main
+depends on (changed libs): simple_regex
+target: simple_bnf_tests   (ec.sh test)
+build: PASS - System Recompiled + C compilation completed; fresh exe
+       EIFGENs/simple_bnf_tests/F_code/simple_bnf.exe
+tests: 17 passed, 0 failed - ALL TESTS PASSED
+       (includes test_curated_patterns_are_valid_regexes and
+        test_registry_patterns_match_real_eiffel_source - a real simple_regex
+        1.0.1 exercise, not a smoke test)
+classification: CLEAN
+fix: none
+
+--- simple_browser -----------------------------------------------------------
+branch: master
+depends on (changed libs): simple_json, simple_web
+ECF capability: concurrency support="scoop" (no use="thread"). No reference to
+       SIMPLE_WEB_SERVER / _EXECUTION / _ROUTER / QUICK anywhere in src or tests,
+       so the thread-only relocation cannot bite this repo.
+target: lib_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/lib_tests/F_code/simple_browser.exe
+tests: 1 passed, 0 failed - ALL TESTS PASSED (thin suite: test_creation only)
+classification: CLEAN (the compile is the real proof here; the suite is 1 test)
+fix: none
+
+--- simple_codec -------------------------------------------------------------
+branch: main
+depends on (changed libs): simple_datetime, simple_json, simple_toml
+target: simple_codec_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_codec_tests/F_code/simple_codec.exe
+tests: 13 tests, all PASSED, "All tests completed!"
+       (parse JSON/TOML/YAML, to JSON/TOML/YAML, JSON->TOML and TOML->JSON round
+        trips - exercises simple_json 0.2.0 emission and simple_toml 0.1.1 load)
+classification: CLEAN
+fix: none
+
+--- simple_eiffel_parser -----------------------------------------------------
+branch: main
+depends on (changed libs): simple_datetime, simple_regex
+target: simple_eiffel_parser_tests   (ec.sh test)
+build: PASS (slow, ~13 min: it ran past the 10-minute foreground window and
+       completed in background with exit 0) - System Recompiled + C compilation
+       completed; fresh exe
+       EIFGENs/simple_eiffel_parser_tests/F_code/simple_eiffel_parser.exe
+tests: Passed: 19  Failed: 0  Success Rate: 100%
+classification: CLEAN
+fix: none
+
+--- simple_gui_designer ------------------------------------------------------
+branch: main   (working tree clean; last commit 3322ce1, 2026-02-06)
+depends on (changed libs): simple_json, simple_web
+ECF capability: concurrency support="scoop" use="thread"  ->  the thread-only
+       simple_web classes ARE available to this target.
+target A: simple_gui_designer_tests   (ec.sh test)
+build A: PASS - fresh exe
+       EIFGENs/simple_gui_designer_tests/F_code/simple_gui_designer.exe
+tests A: 4 passed, 0 failed - ALL TESTS PASSED
+target B (extra, because the tests root does not pull in the web server):
+       simple_gui_designer_app   (ec.sh test)  root GUI_DESIGNER_APP
+build B: FAIL - no exe produced. Four errors, all inside ONE feature, none of
+       them in or about simple_web:
+       Error code: VWOE    Class: GUI_DESIGNER_SERVER
+         Feature: load_specs_from_directory   Operator: +
+         Formal type: READABLE_STRING_8   Actual type: PATH   Line: 82
+         ->  log_debug ("[INIT] Checking file: " + al_entry)
+       Error code: VEEN    Class: GUI_DESIGNER_SERVER
+         Identifier: ends_with   Target type: PATH   Line: 83
+       Error code: VWOE    same feature, Line: 84
+         ->  l_file_path := specs_directory + "/" + al_entry
+       Error code: VUAR(2) Class: GUI_DESIGNER_SERVER   Line: 96
+         Called feature: load_spec_from_json (a_json: SIMPLE_JSON_OBJECT;
+         a_filename: STRING_32)   Actual argument type: PATH
+       Cause: "across l_dir.entries as al_entry" yields ISE PATH, not a string.
+       git: that file was last touched by 0ad16d1 "fix: apply Eiffel naming
+       standards (l_*, al_*, ic_*)" dated 2026-02-06; tree is clean.
+classification B: PRE-EXISTING (ISE DIRECTORY.entries/PATH, seven months old).
+       Positive evidence worth keeping: Degree 3 type-checked the whole server
+       cluster in that same run - the GDS_*_HANDLERS classes were reached and
+       reported only "Obsolete Call" warnings (STRING_32.as_string_8) - and
+       produced ZERO simple_web and ZERO simple_json diagnostics. The
+       simple_web 0.3.0 edge is compatible here.
+fix: none (not caused by today)
+
+--- simple_kb ----------------------------------------------------------------
+branch: master
+depends on (changed libs): simple_ai_client, simple_json
+target: simple_kb_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_kb_tests/F_code/simple_kb.exe
+tests: Tests: 38 | Passed: 38 | Failed: 0 - All tests passed!
+classification: CLEAN (simple_ai_client 0.2.0 is additive as advertised)
+fix: none
+
+--- simple_lsp ---------------------------------------------------------------
+branch: wip/uncommitted-2026-09-02   (months-old WIP preserved this morning)
+depends on (changed libs): simple_datetime, simple_json, simple_toml
+target: simple_lsp_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_lsp_tests/F_code/simple_lsp.exe
+tests: 6 passed, 0 failed - ALL TESTS PASSED
+       (test_message_from_json and test_notification_message exercise simple_json)
+classification: CLEAN
+fix: none
+
+--- simple_oracle ------------------------------------------------------------
+branch: wip/uncommitted-2026-09-02
+depends on (changed libs): simple_datetime, simple_json, simple_toml
+target: simple_oracle_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_oracle_tests/F_code/simple_oracle.exe
+tests: Passed: 14  Failed: 0  ALL TESTS PASSED
+       THEN, after the summary printed and TEST_APP.make had run to completion:
+         simple_oracle: PANIC: Unexpected harmful signal (Segmentation violation)
+         Class / Object: TEST_APP   Routine: root's creation   Effect: Bye
+       exit code 127, core dumped.
+classification: PRE-EXISTING (probable, stated as such). Every assertion passed;
+       the crash is at process teardown after make returns; no changed-library
+       class appears in the trace; the repo is an unfinished WIP snapshot whose
+       suite opens and boots a SQLite database. Nothing in the failure names
+       simple_json, simple_toml or simple_datetime. Flagged for the owner and NOT
+       fixed here - a teardown fix would be rewriting WIP code, out of scope for
+       a compatibility sweep.
+fix: none
+
+--- simple_rosetta -----------------------------------------------------------
+branch: master
+depends on (changed libs): simple_datetime, simple_json, simple_regex
+target: simple_rosetta_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_rosetta_tests/F_code/simple_rosetta.exe
+tests: 11 passed, 0 failed - ALL TESTS PASSED
+classification: CLEAN
+fix: none
+
+--- simple_scholar -----------------------------------------------------------
+branch: wip/uncommitted-2026-09-02
+depends on (changed libs): simple_ai_client, simple_datetime, simple_json,
+                           simple_regex, simple_toml, simple_web
+target A: simple_scholar_tests   (ec.sh test)
+build A: FAIL at the LINK step only. The Eiffel compilation SUCCEEDED:
+       "System Recompiled." with ZERO "Error code" entries in the entire log.
+       Then:
+         LINK : fatal error LNK1181: cannot open input file
+                'D:/prod/simple_onnx/lib/onnxruntime/lib/onnxruntime.lib'
+         NMAKE : fatal error U1077: 'link @simple_scholar.lnk' : return code '0x49d'
+       Verified on disk: D:/prod/simple_onnx/lib/onnxruntime does not exist.
+classification A: PRE-EXISTING - a missing third-party ONNX Runtime binary, an
+       external asset. simple_onnx is not in today's changed set.
+target B (extra - this is the real simple_web edge): bible_htmx (ec.sh check, melt)
+       The htmx cluster uses SIMPLE_WEB_SERVER x3, SIMPLE_WEB_SERVER_REQUEST x24,
+       SIMPLE_WEB_SERVER_RESPONSE x22; the target declares <concurrency use="thread"/>.
+build B: PASS - "System Recompiled." / "Syntax and type check passed".
+       The thread-only simple_web classes resolved correctly under use="thread":
+       the new <condition><concurrency value="thread"/></condition> does the right
+       thing for this consumer.
+       Two diagnostics, neither caused by today:
+         (1) VD01 - capability "Concurrency" of supplier target "thread"
+             (ISE library/thread/thread.ecf) has value "None", insufficient for
+             client value "SCOOP" (bible_htmx inherits support="scoop" from its
+             parent target while also listing the ISE thread library itself).
+             This names simple_scholar's OWN ECF and the ISE thread library, not
+             simple_web; the compile completed regardless.
+         (2) Obsolete Call - BIBLE_HTMX_APP.App_directory uses
+             EXECUTION_ENVIRONMENT.command_line (obsolete 2017-05-31).
+fix: none
+NOTE: this repo cannot be fully proven (no runnable test binary) until
+      simple_onnx's onnxruntime.lib is restored. That is the only blocker.
+
+--- simple_showcase ----------------------------------------------------------
+branch: main
+depends on (changed libs): simple_datetime, simple_json, simple_web
+ECF capability: concurrency support="scoop" use="thread"
+target A: simple_showcase_tests   (ec.sh test)
+build A: PASS - fresh exe EIFGENs/simple_showcase_tests/F_code/simple_showcase.exe
+tests A: 38 passed, 0 failed - ALL TESTS PASSED
+target B (extra, roots the simple_web server): run_server   (ec.sh check, melt)
+       SSC_SERVER and SSC_ANALYTICS_MIDDLEWARE are the SIMPLE_WEB_* consumers.
+build B: PASS - "Syntax and type check passed". 18 diagnostics, and all 18 are
+       "Error code: Obsolete Call / Warning: call uses obsolete feature" - zero
+       real errors, zero simple_web diagnostics.
+classification: CLEAN - simple_web 0.3.0 compatible.
+fix: none
+
+--- simple_social ------------------------------------------------------------
+branch: master
+depends on (changed libs): simple_ai_client, simple_datetime, simple_json
+target: social_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/social_tests/F_code/simple_social.exe
+tests: 1 passed, 0 failed - ALL TESTS PASSED (thin suite: test_creation only)
+classification: CLEAN (the compile is the real proof; the suite is 1 test)
+fix: none
+
+--- simple_speech ------------------------------------------------------------
+branch: wip/uncommitted-2026-09-02
+depends on (changed libs): simple_ai_client, simple_json
+target: simple_speech_tests   (ec.sh test)
+build: FAIL - no exe produced. Exactly one error in the whole log:
+       Error code: VUAR(1)
+       Error: wrong number of actual arguments in feature call.
+       Class: TEST_ONNX_INTEGRATION   Feature: test_onnx_session_creation
+       Called feature: make (a_model: ONNX_MODEL; a_env: ONNX_ENVIRONMENT)
+                       from ONNX_SESSION
+       Number of formals: 2   Number of actuals: 1   Line: 170
+       ->  create l_session.make (l_model)
+classification: PRE-EXISTING - a WIP test is one argument behind simple_onnx's
+       ONNX_SESSION.make. simple_onnx is not in today's changed set, and no
+       simple_ai_client or simple_json class appears in the error.
+fix: none (out of scope - it would mean rewriting unrelated WIP test code)
+
+--- simple_tui ---------------------------------------------------------------
+branch: wip/uncommitted-2026-09-02
+depends on (changed libs): simple_ai_client
+target: simple_tui_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_tui_tests/F_code/simple_tui.exe
+tests: 96 passed, 0 failed - ALL TESTS PASSED (run with stdin from /dev/null)
+classification: CLEAN
+fix: none
+
+--- simple_ucf ---------------------------------------------------------------
+branch: wip/uncommitted-2026-09-02
+depends on (changed libs): simple_datetime, simple_toml
+target: simple_ucf_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_ucf_tests/F_code/simple_ucf.exe
+tests: 8 passed, 0 failed - ALL TESTS PASSED (test_load_string exercises TOML input)
+classification: CLEAN
+fix: none
+
+--- simple_yaml --------------------------------------------------------------
+branch: main
+depends on (changed libs): simple_datetime, simple_regex
+target: simple_yaml_tests   (ec.sh test)
+build: PASS - fresh exe EIFGENs/simple_yaml_tests/F_code/simple_yaml.exe
+tests: 10 passed, 0 failed - ALL TESTS PASSED
+classification: CLEAN
+fix: none
+
+================================================================================
+CROSS-CUTTING CHECKS
+================================================================================
+* simple_encryption 2.0.0/2.1.0 and simple_shell 1.8.0/1.9.0 are NOT referenced
+  by any of these 16 ECFs, so the changed hash OUTPUTS cannot reach this slice.
+  A source grep of all 16 repos (*.e, EIFGENs and .git excluded) for
+  PBKDF2 / pbkdf2 found nothing.
+* Grepped all 16 repos for assertions that would encode the OLD behavior -
+  literal backslash-u JSON escape expectations, hardcoded "12:00:00" midnight
+  expectations, split_by_pattern call sites: no hits. Nothing in this slice
+  asserts on pre-change semantics.
+* simple_regex 1.0.1 (unicode_split) is exercised live and green by simple_bnf
+  (17 tests, including regex-registry matching against real Eiffel source),
+  simple_eiffel_parser (19), simple_rosetta (11) and simple_yaml (10).
+* simple_web 0.3.0's thread-only relocation is proven compatible for all three
+  consumers that actually use the relocated classes: simple_gui_designer
+  (support="scoop" use="thread"), simple_showcase (same; run_server melt-checked
+  green) and simple_scholar/bible_htmx (use="thread"; melt-checked green).
+  simple_browser declares simple_web but uses none of those classes.
+
+================================================================================
+SUMMARY TABLE
+================================================================================
+repo                  | build              | tests                 | verdict
+----------------------+--------------------+-----------------------+----------------------------
+simple_bnf            | PASS               | 17/17 pass            | CLEAN
+simple_browser        | PASS               | 1/1 pass              | CLEAN
+simple_codec          | PASS               | 13/13 pass            | CLEAN
+simple_eiffel_parser  | PASS               | 19/19 pass            | CLEAN
+simple_gui_designer   | PASS (tests)       | 4/4 pass              | CLEAN
+                      | FAIL (app target)  | n/a                   | PRE-EXISTING (PATH/VWOE, Feb 2026)
+simple_kb             | PASS               | 38/38 pass            | CLEAN
+simple_lsp            | PASS               | 6/6 pass              | CLEAN
+simple_oracle         | PASS               | 14/14 pass, then      | PRE-EXISTING (teardown segv, WIP)
+                      |                    | segv at exit          |
+simple_rosetta        | PASS               | 11/11 pass            | CLEAN
+simple_scholar        | FAIL (link only;   | not runnable: no exe  | PRE-EXISTING (missing
+                      | Eiffel compile OK; | (onnxruntime.lib)     | simple_onnx onnxruntime.lib)
+                      | htmx melt PASS)    |                       |
+simple_showcase       | PASS (+server melt)| 38/38 pass            | CLEAN
+simple_social         | PASS               | 1/1 pass              | CLEAN
+simple_speech         | FAIL               | not runnable: no exe  | PRE-EXISTING (ONNX_SESSION.make
+                      |                    |                       | arity, WIP test)
+simple_tui            | PASS               | 96/96 pass            | CLEAN
+simple_ucf            | PASS               | 8/8 pass              | CLEAN
+simple_yaml           | PASS               | 10/10 pass            | CLEAN
+
+CAUSED-BY-TODAY: none.
+FIX BRANCHES OPENED: none.   PRs OPENED: none.
+STOPPED (library at fault): none.
+COULD NOT BUILD AT ALL: simple_scholar (missing external onnxruntime.lib) and
+  simple_speech (a WIP test calls ONNX_SESSION.make with 1 of 2 arguments) -
+  both blocked by simple_onnx, which is not in today's changed set.
