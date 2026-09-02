@@ -37,7 +37,21 @@
 # You can also just leave this line alone and type the address into the
 # "Server" box on the login window once; the client writes the file itself.
 
-server_urls = ["https://REPLACE-ME.duckdns.org", "https://REPLACE-ME-standby.duckdns.org"]
+# NOTHING IS LISTED BY DEFAULT, ON PURPOSE. With no server configured the
+# client looks at THIS PC and nowhere else - which is what a host wants on a
+# first run, and what stops a friend's first login being posted to an example
+# address that does not exist. A made-up name here does not fail politely: it
+# fails as "name not resolved (Win32 12007)" against a server nobody owns.
+#
+# A FRIEND: leave this commented out and type the address your host gave you
+# into the "Server" box on the login window once. The client saves it here
+# itself. Or uncomment and fill in the real address, primary first:
+#
+# server_urls = ["https://the-address-your-host-gave-you"]
+#
+# WITH A STANDBY HOST, list the standby second and leave it there for good:
+#
+# server_urls = ["https://primary.duckdns.org", "https://standby.duckdns.org"]
 
 # Look for a server running on THIS PC before going out to the network.
 # The host's own window wants this. A friend's window does no harm leaving it
