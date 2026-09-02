@@ -1,0 +1,268 @@
+================================================================================
+DOWNSTREAM COMPATIBILITY SWEEP - ROUND 3
+Upstream: simple_cairo 1.3.0 (master, commit f944184)
+          "Merge feature/glyph-api (PR #1): glyph-level API for shaped text (D-S07)"
+Date:     2026-09-02
+Agent:    Claude Fable 5.1 (sweep agent, list of 8)
+NOTE:     This evidence file is deliberately NOT committed.
+================================================================================
+
+UPSTREAM CHANGE UNDER TEST (additive only)
+  New classes ....... CAIRO_FONT_FACE, CAIRO_GLYPH_ARRAY
+  New CAIRO_CONTEXT . set_font_face, show_glyphs, show_glyph_array,
+                      glyph_extents, glyph_array_extents
+  New SIMPLE_CAIRO .. font_face_for_hfont, font_face_for_logfontw_hfont, glyph_array
+  New C shim symbols  sc_glyph_extents, sc_glyph_index_at, sc_glyph_offset_,
+                      sc_glyph_offset_index, sc_glyph_offset_x, sc_glyph_offset_y,
+                      sc_glyph_put, sc_glyph_sizeof, sc_glyph_x_at, sc_glyph_y_at,
+                      sc_glyph_zero, sc_show_glyphs
+  No existing feature changed.
+
+--------------------------------------------------------------------------------
+A. PRE-BUILD COLLISION SCAN (all 8 repos, source only, EIFGENs excluded)
+--------------------------------------------------------------------------------
+1. CLASS-NAME CLASH (VNCN) - a consumer defining CAIRO_FONT_FACE / CAIRO_GLYPH_ARRAY
+   grep -rIl --include='*.e' -E '^\s*(deferred|expanded|frozen)*\s*class\s+CAIRO_(FONT_FACE|GLYPH_ARRAY)\b'
+   RESULT: ZERO hits. No consumer declares either class name.
+   Also zero *mentions* of either class name anywhere in consumer sources.
+
+2. C SYMBOL COLLISION - a consumer defining its own sc_glyph_* symbol
+   grep -rIn --exclude-dir=EIFGENs --include='*.c' --include='*.h' --include='*.e' 'sc_glyph'
+   RESULT: ZERO hits in consumer-authored code.
+   (Hits exist only inside generated EIFGENs/*/F_code/C1/*.c - those are simple_cairo's
+    own externals emitted into the consumer's generated C, i.e. the expected/benign case.)
+
+3. VENDORED / DUPLICATED CAIRO HEADERS
+   find <repos> -iname 'cairo*.h' -not -path '*/EIFGENs/*'
+   RESULT: ZERO hits. The only cairo headers on disk are simple_cairo/Clib/*.h.
+   Every consumer resolves simple_cairo live via its ECF (no vendored copy):
+     chat_robot_spike    $SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf
+     simple_chart        D:\prod\simple_cairo\simple_cairo.ecf
+     simple_narrate      $SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf
+     simple_ocr_capture  $SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf
+     simple_pdf          $SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf
+     simple_speed_reader $SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf
+     simple_vision       $SIMPLE_EIFFEL\simple_cairo\simple_cairo.ecf
+     simple_widgets      $SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf
+
+   => All three predicted breakage classes are ruled out by direct source evidence,
+      independently of what each build's root-class reachability happened to compile.
+
+--------------------------------------------------------------------------------
+B. METHOD
+--------------------------------------------------------------------------------
+Per repo: rm -rf EIFGENs/<target>, then /d/prod/ec.sh <mode> -config <repo>.ecf
+-target <target>. Success judged from the LOG ("System Recompiled." +
+"C compilation completed" + a fresh exe timestamp), never from the exit code alone.
+Per-repo build logs: .eiffel-workflow/evidence/build_<repo>_<target>.log
+
+RUNTIME NOTE (applies to every cairo consumer): the finalized test exes link
+cairo.dll dynamically. Repos without cairo.dll beside the exe abort at startup with
+  "error while loading shared libraries: cairo.dll"  (exit 127)
+This is a PACKAGING condition that PRE-DATES today and is unrelated to 1.3.0.
+Where it occurred the suite was run with PATH="/d/prod/simple_cairo:$PATH" and is
+recorded as such.
+
+--------------------------------------------------------------------------------
+C. PER-REPO RESULTS
+--------------------------------------------------------------------------------
+
+[1] chat_robot_spike
+    Branch ......... (none - D:/prod/chat_robot_spike is NOT a git repository;
+                      no .git directory. No branch/PR is possible here.)
+    Targets ........ chat_robot_spike  (single target, no tests target)
+    Target used .... chat_robot_spike   mode=release   (compile proof = acceptance)
+    Build .......... PASS
+                     "System Recompiled." x2, "C compilation completed" x2
+                     EIFGENs/chat_robot_spike/F_code/chat_robot_spike_dbc.exe  2026-09-02T11:51:42
+                     EIFGENs/chat_robot_spike/F_code/chat_robot_spike_lean.exe 2026-09-02T11:51:43
+    Tests .......... n/a - no tests target (compile proof is the acceptance, per brief)
+    First error .... none
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+[2] simple_chart
+    Branch ......... master
+    Targets ........ simple_chart, simple_chart_tests
+    Target used .... simple_chart_tests   mode=test
+    Build .......... PASS
+                     "System Recompiled.", "C compilation completed"
+                     EIFGENs/simple_chart_tests/F_code/simple_chart.exe  2026-09-02T11:57:44
+    Tests .......... Results: 46 passed, 0 failed  -  ALL TESTS PASSED  (exit 0)
+                     includes "PNG Image Tests (Cairo)": png_bar_chart, png_line_chart,
+                     png_scatter_plot, png_histogram - all PASS
+                     (cairo.dll is present at the repo root, ran without PATH help)
+    First error .... none
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+[3] simple_narrate
+    Branch ......... main
+    Targets ........ simple_narrate (all_classes library), narrate (root NARRATE_GUI)
+    Target used .... narrate   mode=release   (main target; no tests target exists)
+    Build .......... PASS
+                     "System Recompiled." x2, "C compilation completed" x2
+                     EIFGENs/narrate/F_code/simple_narrate_dbc.exe   2026-09-02T12:04:29
+                     EIFGENs/narrate/F_code/simple_narrate_lean.exe  2026-09-02T12:04:31
+    Tests .......... n/a - no tests target (compile proof is the acceptance, per brief)
+    First error .... none
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+[4] simple_ocr_capture
+    Branch ......... main
+    Targets ........ simple_ocr_capture, simple_ocr_capture_tests, ocr_capture,
+                     ocr_cli, ocr_cairo_gui, hotkey_spike
+    Target used .... simple_ocr_capture_tests   mode=test
+    Build .......... PASS
+                     "System Recompiled.", "C compilation completed"
+                     EIFGENs/simple_ocr_capture_tests/F_code/simple_ocr_capture.exe 2026-09-02T12:10:15
+    Tests .......... Results: 75 passed, 0 failed  -  ALL TESTS PASSED  (exit 0)
+                     First run aborted with exit 127 "cairo.dll: cannot open shared
+                     object file" - no cairo.dll at this repo's root. Re-run with
+                     PATH="/d/prod/simple_cairo:$PATH" -> full green.
+                     PRE-EXISTING packaging gap, NOT caused by 1.3.0.
+    Notable ........ This is the ONE consumer whose generated F_code actually emits the
+                     new 1.3.0 externals - sc_glyph_x_at / sc_glyph_y_at (C1/ca14.c),
+                     sc_glyph_extents (C1/ca28.c). Hard proof the new C shim compiles
+                     and links inside a downstream consumer.
+    First error .... none (build)
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+[5] simple_pdf
+    Branch ......... main
+    Targets ........ simple_pdf, simple_pdf_tests
+    Target used .... simple_pdf_tests   mode=test
+    Build .......... PASS
+                     "System Recompiled.", "C compilation completed"
+                     EIFGENs/simple_pdf_tests/F_code/simple_pdf.exe  2026-09-02T12:18:06
+    Tests .......... Results: 10 passed, 0 failed  -  ALL TESTS PASSED  (exit 0)
+                     (wkhtmltopdf and Edge both AVAILABLE on this machine)
+    First error .... none
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+[6] simple_speed_reader
+    Branch ......... main
+    Targets ........ simple_speed_reader, simple_speed_reader_tests,
+                     speed_reader, speed_reader_worker
+    Target used .... simple_speed_reader_tests   mode=test
+    Build .......... PASS
+                     "System Recompiled.", "C compilation completed"
+                     EIFGENs/simple_speed_reader_tests/F_code/simple_speed_reader.exe 2026-09-02T12:25:45
+    Tests .......... Results: 51 passed, 0 failed  -  ALL TESTS PASSED  (exit 0)
+                     (run with PATH="/d/prod/simple_cairo:$PATH")
+    First error .... none
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+[7] simple_vision
+    Branch ......... wip/uncommitted-2026-09-02   <-- NOT main; months-old work
+                     preserved this morning. Built exactly what is on disk.
+    Targets ........ simple_vision, lib_tests, demo_cairo, demo_data, demo_form,
+                     demo_grid, demo_hello, demo_layout, demo_login, demo_masked,
+                     demo_state_machine, demo_theme
+    Target used .... lib_tests   mode=test
+    Build .......... PASS
+                     "System Recompiled." (log line 326), "C compilation completed" (418)
+                     EIFGENs/lib_tests/F_code/simple_vision.exe  2026-09-02T12:43:42 (28.2 MB)
+    Build note ..... The first attempt was cut off by the 10-minute per-build cap while
+                     still in Degree 2; the kill left the project "corrupted" and a clean
+                     EIFGENs wipe + full rebuild was required. This repo is the largest
+                     system in the list and does not fit a single 10-minute foreground
+                     window, so the successful build was launched detached and waited on
+                     to completion with nothing else running concurrently. Both attempts
+                     passed Degree 3 (Checking Types) with no type errors.
+    Warnings ....... 11 x "Error code: Obsolete Call" - ALL are ISE's
+                     STRING_32.as_string_8 deprecation [2019-11-30] in LIB_TESTS
+                     (e.g. test_demo_data_harness line 1494). Warnings, not errors;
+                     the system still reports "System Recompiled." PRE-EXISTING,
+                     nothing to do with cairo.
+    Tests .......... === Results: 37/37 passed ===   (exit 0)
+                     Outer TEST_APP banner prints "Results: 0 passed, 0 failed /
+                     ALL TESTS PASSED" because this repo's suite reports through its
+                     own SV harness rather than the shared counter - the 37/37 line is
+                     the authoritative total. Includes the cairo-backed demo tests.
+                     (run with PATH="/d/prod/simple_cairo:$PATH")
+    First error .... none
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+[8] simple_widgets            *** MOST IMPORTANT CONSUMER (simple_chat's GUI) ***
+    Branch ......... main
+    Targets ........ simple_widgets, simple_widgets_tests, sw_demo, sw_7guis
+    Target used .... simple_widgets_tests   mode=test   (FULL suite, as instructed)
+    Build .......... PASS
+                     "System Recompiled." (log line 151), "C compilation completed" (208)
+                     EIFGENs/simple_widgets_tests/F_code/simple_widgets.exe 2026-09-02T12:45:39
+    Warnings ....... 2 x "Error code: Obsolete Call" - both SW_MESH.draw line 306,
+                     ISE STRING_32.as_string_8 deprecation. Warnings only.
+                     PRE-EXISTING, unrelated to cairo.
+    Cairo surface .. simple_widgets references exactly two cairo classes across all its
+                     sources: CAIRO_SURFACE (30 uses) and CAIRO_CONTEXT (21 uses).
+                     Neither name collides with CAIRO_FONT_FACE / CAIRO_GLYPH_ARRAY, and
+                     no existing CAIRO_CONTEXT feature changed in 1.3.0, so its painter
+                     is untouched by the release.
+    Tests .......... Results: 198 passed, 0 failed  -  ALL TESTS PASSED  (exit 0)
+                     Text/glyph-adjacent tests all green, incl. every_glyph_draws_ink,
+                     screen_grab_marries_cairo, theme_text_scale, icon_button_faces,
+                     toolbar_icon_items_measure_squarely, empty_state_glyph_choice,
+                     map_draws_real_coastlines.
+                     (run with PATH="/d/prod/simple_cairo:$PATH")
+    First error .... none
+    Classification . NO BREAKAGE
+    Fix ............ none needed
+
+--------------------------------------------------------------------------------
+D. SUMMARY TABLE
+--------------------------------------------------------------------------------
+repo                 | build | tests               | verdict
+---------------------+-------+---------------------+------------------------------
+chat_robot_spike     | PASS  | n/a (no tests tgt)  | COMPATIBLE - compile proof
+simple_chart         | PASS  | 46 passed, 0 failed | COMPATIBLE
+simple_narrate       | PASS  | n/a (no tests tgt)  | COMPATIBLE - compile proof
+simple_ocr_capture   | PASS  | 75 passed, 0 failed | COMPATIBLE
+simple_pdf           | PASS  | 10 passed, 0 failed | COMPATIBLE
+simple_speed_reader  | PASS  | 51 passed, 0 failed | COMPATIBLE
+simple_vision        | PASS  | 37/37 passed        | COMPATIBLE (wip branch)
+simple_widgets       | PASS  | 198 passed, 0 failed| COMPATIBLE
+---------------------+-------+---------------------+------------------------------
+TOTALS: 8/8 built.  6/8 ran a suite: 417 tests, 0 failures.
+        2/8 have no tests target (compile proof accepted per brief).
+
+--------------------------------------------------------------------------------
+E. VERDICT
+--------------------------------------------------------------------------------
+ZERO CAUSED-BY-TODAY breakages in this agent's 8 repos.
+NO fix branches created. NO commits. NO pull requests. Nothing was pushed.
+simple_cairo was NOT modified, and there is no evidence it should be:
+its two new class names collide with nothing downstream.
+
+All three predicted breakage classes came back negative, by direct source
+evidence rather than by inference from a green build:
+  - class-name clash (VNCN) ....... none: no consumer declares or even mentions
+                                    CAIRO_FONT_FACE or CAIRO_GLYPH_ARRAY
+  - sc_glyph_* C symbol collision . none in consumer-authored code
+  - vendored/duplicated headers ... none; all 8 bind simple_cairo live via ECF
+
+Positive linkage proof: simple_ocr_capture's finalized F_code emits and links the
+new shim (sc_glyph_x_at, sc_glyph_y_at in C1/ca14.c; sc_glyph_extents in C1/ca28.c).
+The other consumers' finalized builds drop the unused new classes by Eiffel dead-code
+elimination, which is why their generated C shows no glyph symbols - expected, and
+not a sign they missed 1.3.0 (every one resolves simple_cairo.ecf from disk).
+
+PRE-EXISTING conditions observed (NOT caused by 1.3.0, no action taken):
+  P1. simple_ocr_capture ships no cairo.dll beside its test exe; the suite aborts
+      with exit 127 until cairo.dll is on PATH. Same latent gap in
+      simple_speed_reader / simple_pdf / simple_vision / simple_widgets (all were
+      run with PATH="/d/prod/simple_cairo:$PATH"). Only simple_chart keeps its own
+      copy at the repo root. Worth a packaging decision, separately from this sweep.
+  P2. 13 ISE STRING_32.as_string_8 obsolete-call warnings: 11 in simple_vision
+      (LIB_TESTS), 2 in simple_widgets (SW_MESH.draw:306). Warnings, not errors.
+  P3. D:/prod/chat_robot_spike is NOT a git repository (no .git). It could not be
+      branched and no PR could have been raised there had a fix been needed.
+  P4. simple_vision is on wip/uncommitted-2026-09-02, not main, and its lib_tests
+      does not fit a 10-minute build window; killing it mid-Degree-2 corrupts the
+      project and forces a full EIFGENs wipe. Budget ~15 min for that repo.
+================================================================================
