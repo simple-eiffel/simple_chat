@@ -134,6 +134,32 @@ feature -- Lifecycle
 			end
 		end
 
+	backup_to (a_path: READABLE_STRING_32): BOOLEAN
+			-- SQLite writes the copy itself: VACUUM INTO reads the database
+			-- through the very connection that holds it, so nothing has to
+			-- pry a locked file open (a plain copy on Windows cannot), and
+			-- what lands is one consistent, defragmented database - the WAL
+			-- folded in - not a file plus two companions. The connection is
+			-- left exactly as it was found.
+		local
+			l_db: SIMPLE_SQL_DATABASE
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				l_db := active_db
+				l_db.perform_with (Vacuum_into_sql, <<a_path>>)
+				Result := not l_db.error_occurred and then file_has_content (a_path)
+			end
+			if not Result then
+					-- A half-written copy is worse than none: it would open as a
+					-- database and answer with less than the original holds.
+				discard_file (a_path)
+			end
+		rescue
+			l_failed := True
+			retry
+		end
+
 	schema_version: INTEGER
 		do
 			Result := schema.version_of (active_db)
@@ -787,6 +813,24 @@ feature {NONE} -- SQL plumbing
 				l_file.delete
 			end
 		end
+
+	discard_file (a_path: READABLE_STRING_32)
+			-- `remove_file' that cannot raise: `backup_to' promises to leave
+			-- nothing behind when it fails, and a delete that itself fails
+			-- must not turn a False answer into an exception.
+		local
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				remove_file (a_path)
+			end
+		rescue
+			l_failed := True
+			retry
+		end
+
+	Vacuum_into_sql: STRING_8 = "VACUUM INTO ?"
+			-- The one statement that copies an open SQLite database safely.
 
 	Insert_event_sql: STRING_8 = "INSERT INTO event (id, room_id, kind, sender_id, created_at, body, attachment_id, payload_json, is_bot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 

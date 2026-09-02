@@ -207,7 +207,9 @@ feature -- The live round trip
 			-- The first full client stack over real HTTP: the finalized server exe,
 			-- booted on a scratch configuration, answered through WINHTTP_TRANSPORT
 			-- + SERVICE_LOCATOR + CHAT_CLIENT: health, login with a real minted
-			-- token, post, events. Skips, and passes, when the exe is not built.
+			-- token, post, an image whose Hebrew file name and emoji caption ride
+			-- percent-encoded header lines (Task 9b), events. Skips, and passes,
+			-- when the exe is not built - the SKIP line says so out loud.
 			-- Teardown runs before the verdict so a failure never strands a server.
 		local
 			l_exe: RAW_FILE
@@ -218,7 +220,9 @@ feature -- The live round trip
 			l_endpoint: CHAT_ENDPOINT
 			l_client: detachable CHAT_CLIENT
 			l_login: detachable CHAT_RESULT [CHAT_MEMBER]
-			l_posted: detachable CHAT_RESULT [CHAT_EVENT]
+			l_posted, l_image: detachable CHAT_RESULT [CHAT_EVENT]
+			l_name, l_caption: STRING_32
+			l_image_ok: BOOLEAN
 			l_page: detachable CHAT_RESULT [CHAT_PAGE]
 			l_transcript: STRING_8
 			l_environment: EXECUTION_ENVIRONMENT
@@ -229,7 +233,7 @@ feature -- The live round trip
 		do
 			create l_exe.make_with_name (Server_exe_path)
 			if not l_exe.exists then
-				print ("  (live round trip skipped: " + Server_exe_path + " is not built)%N")
+				print ("  SKIP: the live round trip needs " + Server_exe_path + ", which is not built%N")
 				assert ("skipped cleanly without a server exe", True)
 			else
 				create l_transcript.make (512)
@@ -280,6 +284,20 @@ feature -- The live round trip
 						if l_posted.is_success and then attached l_posted.value as l_echo then
 							l_transcript.append ("    POST /rooms/" + seeded_room_id.out + "/messages -> echo id " + l_echo.id.out + "%N")
 						end
+						l_name := hebrew_file_name
+						l_caption := hebrew_caption
+						l_image := l_client.post_image (seeded_room_id, live_png_bytes (64), l_name, l_caption)
+						if not l_image.is_success and then attached l_image.error as l_image_error then
+							l_transcript.append ("    POST /rooms/" + seeded_room_id.out + "/images   -> FAILED: " + error_line (l_image_error) + "%N")
+						end
+						if l_image.is_success and then attached l_image.value as l_shot then
+							l_image_ok := l_shot.is_image and then l_shot.body.same_string (l_caption)
+								and then (attached l_shot.attachment as l_att and then l_att.original_name.same_string (l_name))
+							l_transcript.append ("    POST /rooms/" + seeded_room_id.out + "/images   -> image event id " + l_shot.id.out
+								+ "; name and caption came back "
+								+ (if l_image_ok then "byte for byte" else "MANGLED" end)
+								+ " (" + utf8_head (l_shot.body, 40) + ")%N")
+						end
 						l_page := l_client.events_since (seeded_room_id, 0, 100)
 						if not l_page.is_success and then attached l_page.error as l_page_error then
 							l_transcript.append ("    GET  /rooms/" + seeded_room_id.out + "/events   -> FAILED: " + error_line (l_page_error) + "%N")
@@ -310,6 +328,7 @@ feature -- The live round trip
 				assert ("login succeeded against the live server with a real token", attached l_login as l_l and then l_l.is_success)
 				assert ("the post was echoed as a stored event", attached l_posted as l_p and then l_p.is_success)
 				assert ("the posted message came back through /events", l_found)
+				assert ("the image posted and its hebrew name and emoji caption survived the header line", l_image_ok)
 			end
 		end
 
@@ -333,6 +352,52 @@ feature {NONE} -- Transcript support
 			positive: a_maximum > 0
 		do
 			Result := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_text.substring (1, a_text.count.min (a_maximum)))
+		end
+
+feature {NONE} -- Non-ASCII fixtures (Phase 4 Task 9b)
+
+	hebrew_file_name: STRING_32
+			-- A file name in Hebrew letters, then ".png": nothing a header line
+			-- could carry raw, so the live post proves the encoding both ways.
+		do
+			create Result.make_empty
+			Result.append_code ({NATURAL_32} 0x05E9)
+			Result.append_code ({NATURAL_32} 0x05DC)
+			Result.append_code ({NATURAL_32} 0x05D5)
+			Result.append_code ({NATURAL_32} 0x05DD)
+			Result.append_string_general (".png")
+		end
+
+	hebrew_caption: STRING_32
+			-- Hebrew, then U+1F916 - an astral code point, four UTF-8 bytes, and
+			-- outside Latin-1 in both directions.
+		do
+			create Result.make_empty
+			Result.append_code ({NATURAL_32} 0x05E9)
+			Result.append_code ({NATURAL_32} 0x05DC)
+			Result.append_code ({NATURAL_32} 0x05D5)
+			Result.append_code ({NATURAL_32} 0x05DD)
+			Result.append_string_general (" ")
+			Result.append_code ({NATURAL_32} 0x1F916)
+		end
+
+	live_png_bytes (a_count: INTEGER): SPECIAL [NATURAL_8]
+			-- `a_count' bytes opening with the eight-byte PNG signature, so
+			-- CHAT_SERVICE.store_upload accepts them by signature.
+		require
+			room_for_signature: a_count >= 8
+		do
+			create Result.make_filled ({NATURAL_8} 0, a_count)
+			Result [0] := 0x89
+			Result [1] := 0x50
+			Result [2] := 0x4E
+			Result [3] := 0x47
+			Result [4] := 0x0D
+			Result [5] := 0x0A
+			Result [6] := 0x1A
+			Result [7] := 0x0A
+		ensure
+			sized: Result.count = a_count
 		end
 
 feature {NONE} -- Live-server fixtures

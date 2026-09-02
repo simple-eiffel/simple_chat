@@ -307,6 +307,106 @@ feature -- Uploads
 			assert ("only the two stored", l_service.store.attachment_count = 2)
 		end
 
+feature -- Backup (Phase 4 Task 9b)
+
+	test_backup_writes_a_copy_that_opens_as_a_database
+			-- Over a REAL SQLite store in a scratch data_dir: `backup' answers a path
+			-- under <data_dir>/backups/, the file is there, and re-opening it with a
+			-- second store reads back the event that was posted before the copy.
+		local
+			l_store, l_copy: SQLITE_CHAT_STORE
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_room: CHAT_ROOM
+			l_posted: CHAT_RESULT [CHAT_EVENT]
+			l_result: CHAT_RESULT [STRING_32]
+			l_path: STRING_32
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+		do
+			prepare_backup_scratch
+			create l_store.make (Backup_database_path)
+			l_store.open
+			assert ("the scratch store opened - " + store_error_text (l_store), l_store.is_open)
+			l_store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", time_now))
+			l_service := scratch_service (l_store)
+			l_admin := admin_of (l_service)
+			l_room := main_room (l_service)
+			l_posted := l_service.post_message (l_admin, l_room, {STRING_32} "before the backup")
+			assert ("something to find in the copy", l_posted.is_success)
+
+			l_result := l_service.backup
+			assert ("the backup succeeded - " + result_error_text (l_result), l_result.is_success)
+			check attached l_result.value as p then
+				l_path := p
+			end
+			assert ("a path came back", not l_path.is_empty)
+			assert ("the copy is under data/backups/", l_path.as_lower.has_substring ({STRING_32} "backups"))
+			assert ("the copy is there", file_is_at (l_path))
+			assert ("the original is untouched", file_is_at (Backup_database_path))
+
+			l_store.close
+			create l_copy.make (l_path)
+			l_copy.open
+			assert ("the copy opens as a database at the current schema - " + store_error_text (l_copy),
+				l_copy.is_open and l_copy.schema_version = {CHAT_SCHEMA}.Current_version)
+			l_events := l_copy.events_since (l_room.id, 0, 100)
+			assert ("the posted event is in the copy", across l_events as e some
+				e.body.same_string_general ({STRING_32} "before the backup") end)
+			assert ("the admin is in the copy", l_copy.user_count = 1 and l_copy.has_admin)
+			l_copy.close
+			wipe_backup_scratch
+		end
+
+	test_two_backups_in_the_same_second_are_two_files
+			-- The name is proved free before the store is asked to write, so a second
+			-- backup within the same second does not silently overwrite the first.
+		local
+			l_store: SQLITE_CHAT_STORE
+			l_service: CHAT_SERVICE
+			l_first, l_second: CHAT_RESULT [STRING_32]
+			l_a, l_b: STRING_32
+		do
+			prepare_backup_scratch
+			create l_store.make (Backup_database_path)
+			l_store.open
+			assert ("the scratch store opened - " + store_error_text (l_store), l_store.is_open)
+			l_store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", time_now))
+			l_service := scratch_service (l_store)
+			l_first := l_service.backup
+			l_second := l_service.backup
+			assert ("the first backup succeeded - " + result_error_text (l_first), l_first.is_success)
+			assert ("the second backup succeeded - " + result_error_text (l_second), l_second.is_success)
+			check attached l_first.value as a and attached l_second.value as b then
+				l_a := a
+				l_b := b
+			end
+			assert ("two distinct paths", not l_a.same_string (l_b))
+			assert ("two files on disk", file_is_at (l_a) and file_is_at (l_b))
+			l_store.close
+			wipe_backup_scratch
+		end
+
+	test_backup_over_the_memory_store_is_an_error_never_a_raise
+			-- The oracle has nothing on disk. `backup_to' answers False and writes
+			-- nothing; the service turns that into a 503 result and comes back.
+		local
+			l_store: MEMORY_CHAT_STORE
+			l_service: CHAT_SERVICE
+			l_result: CHAT_RESULT [STRING_32]
+		do
+			prepare_backup_scratch
+			create l_store.make
+			l_store.open
+			l_store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", time_now))
+			l_service := scratch_service (l_store)
+			l_result := l_service.backup
+			assert ("refused, not raised", not l_result.is_success)
+			assert ("as unavailable", attached l_result.error as e and then
+				(e.http_status = 503 and e.code.same_string ({CHAT_ERROR}.Code_unavailable)))
+			assert ("no backup file was left behind", backup_file_count = 0)
+			wipe_backup_scratch
+		end
+
 feature {NONE} -- Fixtures
 
 	service: CHAT_SERVICE
@@ -378,5 +478,134 @@ feature {NONE} -- Fixtures
 			Result [1] := {NATURAL_8} 0xD8
 			Result [2] := {NATURAL_8} 0xFF
 		end
+
+feature {NONE} -- Backup fixtures (Phase 4 Task 9b)
+
+	scratch_service (a_store: CHAT_STORE): CHAT_SERVICE
+			-- A service over `a_store' whose configuration's `data_dir' is the
+			-- scratch directory, so `backup' writes under it and nowhere near
+			-- the project's own data/.
+		require
+			open: a_store.is_open
+		local
+			l_config: SERVER_CONFIG
+			l_bus: EVENT_BUS
+			l_limits: RATE_LIMITER
+			l_log: CHAT_LOG
+			l_logger: SIMPLE_LOGGER
+		do
+			create l_config.make_from_file (write_backup_toml)
+			check config_valid: l_config.is_valid and l_config.data_dir.same_string (Backup_scratch_directory.to_string_32) end
+			create l_bus.make
+			create l_limits.make (3600)
+			create l_logger
+			create l_log.make (l_logger)
+			create Result.make (a_store, l_bus, l_limits, l_config, l_log)
+		ensure
+			over_the_store: Result.store = a_store
+		end
+
+	write_backup_toml: STRING_32
+			-- <scratch>/server.toml naming the scratch directory as `data_dir'
+			-- (forward slashes: a TOML basic string treats backslash as an escape).
+		local
+			l_file: PLAIN_TEXT_FILE
+		do
+			Result := Backup_scratch_directory.to_string_32 + {STRING_32} "/server.toml"
+			create l_file.make_create_read_write (Result)
+			l_file.put_string ("port = 8080%Ndata_dir = %"" + Backup_scratch_directory + "%"%N")
+			l_file.close
+		end
+
+	prepare_backup_scratch
+			-- A clean testing/backup_scratch, whatever a dead run left there.
+		local
+			l_directory: DIRECTORY
+		do
+			wipe_backup_scratch
+			create l_directory.make (Backup_scratch_directory)
+			if not l_directory.exists then
+				l_directory.recursive_create_dir
+			end
+		ensure
+			there: (create {DIRECTORY}.make (Backup_scratch_directory)).exists
+		end
+
+	wipe_backup_scratch
+			-- Remove the scratch directory and everything under it.
+		local
+			l_directory: DIRECTORY
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				create l_directory.make (Backup_scratch_directory)
+				if l_directory.exists then
+					l_directory.recursive_delete
+				end
+			end
+		rescue
+			l_failed := True
+			retry
+		end
+
+	backup_file_count: INTEGER
+			-- How many real entries the scratch backups directory holds (0 when it
+			-- is not even there): what `backup' left behind, "." and ".." aside.
+		local
+			l_directory: DIRECTORY
+		do
+			create l_directory.make (Backup_scratch_directory + "/backups")
+			if l_directory.exists then
+				across l_directory.entries as e loop
+					if not e.name.same_string ({STRING_32} ".") and not e.name.same_string ({STRING_32} "..") then
+						Result := Result + 1
+					end
+				end
+			end
+		ensure
+			non_negative: Result >= 0
+		end
+
+	file_is_at (a_path: READABLE_STRING_GENERAL): BOOLEAN
+			-- Is there a file at `a_path'?
+		local
+			l_file: RAW_FILE
+		do
+			create l_file.make_with_name (a_path)
+			Result := l_file.exists
+		end
+
+	store_error_text (a_store: SQLITE_CHAT_STORE): STRING_8
+			-- Why the store did not open, for a failing assertion's tag.
+		do
+			if attached a_store.last_open_error as l_error then
+				Result := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (l_error.message)
+			else
+				Result := "no error recorded"
+			end
+		end
+
+	result_error_text (a_result: CHAT_RESULT [STRING_32]): STRING_8
+			-- Why a backup result failed, for a failing assertion's tag.
+		do
+			if attached a_result.error as l_error then
+				Result := l_error.http_status.out + " " + l_error.code + ": "
+					+ {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (l_error.message)
+			else
+				Result := "no error recorded"
+			end
+		end
+
+	time_now: SIMPLE_DATE_TIME
+		do
+			create Result.make_now
+		end
+
+	Backup_scratch_directory: STRING_8 = "testing/backup_scratch"
+
+	Backup_database_path: STRING_32 = "testing/backup_scratch/simple_chat.db"
+			-- The store file inside the scratch data_dir. `backup' never reads it:
+			-- it asks the store to write the copy, so only the store and this test
+			-- need to know the name.
 
 end

@@ -57,6 +57,43 @@ feature -- Lifecycle
 			closed: not is_open
 		end
 
+	backup_to (a_path: READABLE_STRING_32): BOOLEAN
+			-- Write a consistent copy of the whole store to `a_path' and answer
+			-- whether the copy is there. Additive in Phase 4 Task 9b: the one
+			-- operation CHAT_SERVICE.backup needs, asked of the store because
+			-- only the store knows whether there is a database to copy and how
+			-- to copy it safely - the SQLite store has SQLite itself write the
+			-- copy (VACUUM INTO), a plain file copy of an open database tripping
+			-- over the connection's Windows file lock; the memory oracle has
+			-- nothing on disk and answers False.
+			--
+			-- Never raises: a store that cannot write the copy answers False and
+			-- leaves nothing behind, so the caller can turn it into a result and
+			-- a user can be told, rather than the server coming down.
+		require
+			open: is_open
+			path_given: not a_path.is_empty
+			fresh: not is_file_at (a_path)
+		deferred
+		ensure
+			written: Result implies is_file_at (a_path)
+			nothing_left_behind: not Result implies not is_file_at (a_path)
+			still_open: is_open
+			data_untouched: last_event_id = old last_event_id and event_count = old event_count
+				and user_count = old user_count and room_count = old room_count
+				and session_count = old session_count and attachment_count = old attachment_count
+		end
+
+	is_file_at (a_path: READABLE_STRING_32): BOOLEAN
+			-- Is there a file at `a_path'? What `backup_to' promises about, asked
+			-- the one way, so both stores answer it identically.
+		local
+			l_file: RAW_FILE
+		do
+			create l_file.make_with_name (a_path)
+			Result := l_file.exists
+		end
+
 	schema_version: INTEGER
 		require
 			open: is_open

@@ -345,7 +345,8 @@ feature -- Account and administration through the API
 			assert ("participants 200 with the list key", l_reply.status = 200 and l_reply.body.has_substring ("participants"))
 			assert_no_token_shape ("participants carry no token", l_reply)
 			l_reply := l_api.admin_backup (l_token)
-			assert ("backup is honestly 501 until SQLite", l_reply.status = 501)
+			assert ("backup over the memory oracle is honestly 503 - there is no database file to copy",
+				l_reply.status = 503)
 			assert_no_token_shape ("backup carries no token", l_reply)
 		end
 

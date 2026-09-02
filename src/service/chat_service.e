@@ -524,11 +524,28 @@ feature -- Administration
 
 	backup: CHAT_RESULT [STRING_32]
 			-- A consistent copy of the database under data/backups/; its path.
+			-- The store writes the copy (CHAT_STORE.backup_to, Task 9b): the
+			-- SQLite store through SQLite's own VACUUM INTO, the memory oracle
+			-- not at all - it has nothing on disk, and says so as a 503 result
+			-- rather than pretending. A failure is a result, never an exception:
+			-- an administrator asking for a backup must not bring the server down.
+		local
+			l_path: STRING_32
 		do
-			create Result.make_error (not_implemented_error)
-			-- Implementation in Phase 4
+			l_path := fresh_backup_path
+			if not l_path.is_empty and then store.backup_to (l_path) then
+				log.info ("backup written")
+				create Result.make_success (l_path)
+			else
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable,
+					"The database could not be copied; nothing was written.", 503))
+			end
 		ensure
 			never_void: Result /= Void
+			path_on_success: (Result.is_success and then attached Result.value as p) implies
+				(not p.is_empty and store.is_file_at (p))
+			store_untouched: store.last_event_id = old store.last_event_id
+				and store.event_count = old store.event_count
 		end
 
 feature -- Access (contract support)
@@ -645,6 +662,76 @@ feature {NONE} -- Implementation
 	issuer: SESSION_ISSUER
 	crypto: SIMPLE_ENCRYPTION
 
+	fresh_backup_path: STRING_32
+			-- <data_dir>/backups/simple_chat-YYYYMMDD-HHMMSS[-N].db, with the
+			-- directory made and the name proved free, so two backups taken in
+			-- the same second are two files; empty when the directory cannot be
+			-- made or every candidate name is taken. Never raises.
+		local
+			l_directory: DIRECTORY
+			l_folder: PATH
+			l_base, l_candidate: STRING_32
+			l_failed: BOOLEAN
+			i: INTEGER
+		do
+			if l_failed then
+				create Result.make_empty
+			else
+				create l_folder.make_from_string (config.data_dir)
+				l_folder := l_folder.extended (Backups_directory_name)
+				create l_directory.make_with_path (l_folder)
+				if not l_directory.exists then
+					l_directory.recursive_create_dir
+				end
+				l_base := {STRING_32} "simple_chat-" + compact_stamp (now)
+				l_candidate := l_folder.extended (l_base + Backup_extension).name
+				from
+					i := 1
+				until
+					not store.is_file_at (l_candidate) or i > Backup_name_attempts
+				loop
+					l_candidate := l_folder.extended (l_base + {STRING_32} "-" + i.out.to_string_32 + Backup_extension).name
+					i := i + 1
+				variant
+					Backup_name_attempts + 1 - i
+				end
+				if store.is_file_at (l_candidate) then
+					create Result.make_empty
+				else
+					Result := l_candidate
+				end
+			end
+		ensure
+			free_when_given: not Result.is_empty implies not store.is_file_at (Result)
+		rescue
+			l_failed := True
+			retry
+		end
+
+	compact_stamp (a_when: SIMPLE_DATE_TIME): STRING_32
+			-- `a_when' as YYYYMMDD-HHMMSS: ISO 8601's colons are not legal in a
+			-- Windows file name, so the punctuation goes and the date stays sortable.
+		local
+			l_iso: STRING_8
+		do
+			l_iso := a_when.to_iso8601
+			create Result.make (15)
+			Result.append_string_general (l_iso.substring (1, 4))
+			Result.append_string_general (l_iso.substring (6, 7))
+			Result.append_string_general (l_iso.substring (9, 10))
+			Result.append_string_general ("-")
+			Result.append_string_general (l_iso.substring (12, 13))
+			Result.append_string_general (l_iso.substring (15, 16))
+			Result.append_string_general (l_iso.substring (18, 19))
+		ensure
+			shaped: Result.count = 15
+		end
+
+	Backups_directory_name: STRING_32 = "backups"
+	Backup_extension: STRING_32 = ".db"
+	Backup_name_attempts: INTEGER = 1000
+			-- A thousand backups in one second is not a backup, it is a loop.
+
 	bad_credentials_error: CHAT_ERROR
 			-- The one refusal a guesser sees (no username oracle).
 		do
@@ -659,12 +746,6 @@ feature {NONE} -- Implementation
 	exists_error: CHAT_ERROR
 		do
 			create Result.make ({CHAT_ERROR}.Code_exists, "That username is already taken.", 409)
-		end
-
-	not_implemented_error: CHAT_ERROR
-			-- Phase 1 stub outcome.
-		do
-			create Result.make ({CHAT_ERROR}.Code_not_implemented, "Not implemented (Phase 1 skeleton)", 501)
 		end
 
 invariant

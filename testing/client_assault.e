@@ -168,6 +168,146 @@ feature -- CHAT_CLIENT: the token and the wire
 			assert ("still logged in", c.is_logged_in)
 		end
 
+	test_post_image_puts_the_bytes_on_the_wire_and_the_rest_in_headers
+			-- Phase 4 Task 9b: the image IS the body (that is what CHAT_REQUEST_HANDLER
+			-- reads), the name and caption ride on X-File-Name and X-Caption, the bearer
+			-- is where it always is, and the echo is checked exactly as a message's is.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			l_bytes: SPECIAL [NATURAL_8]
+			l_event: CHAT_RESULT [CHAT_EVENT]
+			l_body: STRING_8
+			l_same: BOOLEAN
+			i: INTEGER
+		do
+			create t.make
+			c := logged_in_client (t)
+			l_bytes := image_bytes (32)
+			t.script (201, wire_image (9, 1, 5, "sunset.png", "at the lake"))
+			l_event := c.post_image (1, l_bytes, {STRING_32} "sunset.png", {STRING_32} "at the lake")
+			assert ("the stored image event came back", l_event.is_success and attached l_event.value as ev
+				and then (ev.id = 9 and ev.room_id = 1 and ev.is_image and attached ev.attachment))
+			assert ("method and path", t.last_request.method.same_string ("POST")
+				and t.last_request.url.same_string ("http://127.0.0.1:8080/rooms/1/images"))
+			assert ("bearer header, token in no url and no body",
+				t.last_request.has_header ("Authorization")
+				and then t.last_request.header ("Authorization").same_string ("Bearer " + hex64)
+				and not t.last_request.url.has_substring (hex64) and not t.last_request.body.has_substring (hex64))
+			assert ("the body is typed as opaque bytes",
+				t.last_request.has_header ("Content-Type")
+				and then t.last_request.header ("Content-Type").same_string ("application/octet-stream"))
+			assert ("the name and caption travelled as headers, not in the body",
+				t.last_request.has_header ("X-File-Name") and t.last_request.has_header ("X-Caption")
+				and then (t.last_request.header ("X-File-Name").same_string ("sunset.png")
+					and t.last_request.header ("X-Caption").same_string ("at%%20the%%20lake")))
+			l_body := t.last_request.body
+			assert ("the body is exactly as long as the bytes given", l_body.count = l_bytes.count)
+			l_same := True
+			from
+				i := 0
+			until
+				i >= l_bytes.count
+			loop
+				l_same := l_same and l_body.code (i + 1) = l_bytes [i].to_natural_32
+				i := i + 1
+			variant
+				l_bytes.count - i
+			end
+			assert ("every byte survived, the zero byte included", l_same)
+			assert ("a header table WinHTTP would send verbatim", (create {SIMPLE_WINHTTP}.make).is_header_table_clean (t.last_request.headers))
+			assert ("an upload gets more than a message's fifteen seconds", t.last_request.timeout_seconds = 60)
+			assert ("still logged in", c.is_logged_in)
+		end
+
+	test_post_image_refuses_an_echo_that_is_not_this_rooms_image
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			l_event: CHAT_RESULT [CHAT_EVENT]
+		do
+			create t.make
+			c := logged_in_client (t)
+			t.script (201, wire_image (9, 2, 5, "sunset.png", "at the lake"))
+			l_event := c.post_image (1, image_bytes (16), {STRING_32} "sunset.png", {STRING_32} "x")
+			assert ("an echo for room 2 is a 502 result", not l_event.is_success and is_error_status (l_event.error, 502))
+			t.script (201, wire_message (9, 5, "not an image"))
+			l_event := c.post_image (1, image_bytes (16), {STRING_32} "sunset.png", {STRING_32} "x")
+			assert ("an echo of another kind is a 502 result", not l_event.is_success and is_error_status (l_event.error, 502))
+			t.script (413, "{%"code%":%"too_large%",%"message%":%"too big%"}")
+			l_event := c.post_image (1, image_bytes (16), {STRING_32} "sunset.png", {STRING_32} "x")
+			assert ("the server's own refusal is carried", not l_event.is_success and is_error_status (l_event.error, 413)
+				and attached l_event.error as e and then e.code.same_string ({CHAT_ERROR}.Code_too_large))
+			t.script_failure ({STRING_32} "connection refused")
+			l_event := c.post_image (1, image_bytes (16), {STRING_32} "sunset.png", {STRING_32} "x")
+			assert ("a transport failure is a 503 result, never an exception", not l_event.is_success and is_error_status (l_event.error, 503))
+			assert ("still logged in", c.is_logged_in)
+		end
+
+	test_post_image_carries_hebrew_and_an_emoji_through_ascii_headers
+			-- A header line holds printable ASCII and nothing else, so a Hebrew file
+			-- name and a caption ending in U+1F916 go out percent-encoded from UTF-8 -
+			-- and come back byte for byte through the very query the request handler
+			-- reads them with (CHAT_HEADER_TEXT.decoded, which `header_32' calls).
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			l_event: CHAT_RESULT [CHAT_EVENT]
+			l_name, l_caption: STRING_32
+			l_text: CHAT_HEADER_TEXT
+		do
+			create t.make
+			create l_text
+			c := logged_in_client (t)
+			create l_name.make_empty
+			l_name.append_code ({NATURAL_32} 0x05E9)
+			l_name.append_code ({NATURAL_32} 0x05DC)
+			l_name.append_code ({NATURAL_32} 0x05D5)
+			l_name.append_code ({NATURAL_32} 0x05DD)
+			l_name.append_string_general (".png")
+			create l_caption.make_empty
+			l_caption.append_string_general ("shalom ")
+			l_caption.append_code ({NATURAL_32} 0x05E9)
+			l_caption.append_code ({NATURAL_32} 0x05DC)
+			l_caption.append_code ({NATURAL_32} 0x05D5)
+			l_caption.append_code ({NATURAL_32} 0x05DD)
+			l_caption.append_string_general (" ")
+			l_caption.append_code ({NATURAL_32} 0x1F916)
+			t.script (201, wire_image (11, 1, 5, "image", "ok"))
+			l_event := c.post_image (1, image_bytes (16), l_name, l_caption)
+			assert ("the post was accepted", l_event.is_success)
+			assert ("both headers are printable ASCII - what a header line may carry",
+				l_text.is_wire_clean (t.last_request.header ("X-File-Name"))
+				and l_text.is_wire_clean (t.last_request.header ("X-Caption")))
+			assert ("WinHTTP would send this header table verbatim", (create {SIMPLE_WINHTTP}.make).is_header_table_clean (t.last_request.headers))
+			assert ("the file name comes back exactly", l_text.decoded (t.last_request.header ("X-File-Name")).same_string (l_name))
+			assert ("the caption comes back exactly, the astral code point included",
+				l_text.decoded (t.last_request.header ("X-Caption")).same_string (l_caption))
+			assert ("the hebrew went out as percent-encoded UTF-8, never as raw bytes",
+				t.last_request.header ("X-File-Name").same_string ("%%D7%%A9%%D7%%9C%%D7%%95%%D7%%9D.png"))
+			assert ("the emoji went out as its four UTF-8 bytes", t.last_request.header ("X-Caption").ends_with ("%%F0%%9F%%A4%%96"))
+			assert ("nothing non-ascii leaked into the url", t.last_request.url.same_string ("http://127.0.0.1:8080/rooms/1/images"))
+		end
+
+	test_header_text_round_trips_and_tolerates_a_hand_made_value
+			-- The one rule both sides use, on its own: the unreserved set passes
+			-- through, everything else is percent-encoded, and a value nobody
+			-- encoded (a bare ASCII name, a lone percent) still decodes sanely.
+		local
+			l_text: CHAT_HEADER_TEXT
+		do
+			create l_text
+			assert ("the unreserved set is untouched", l_text.encoded ({STRING_32} "photo-1_v2.png~").same_string ("photo-1_v2.png~"))
+			assert ("a blank is encoded, so the value carries none", l_text.encoded ({STRING_32} "my photo.png").same_string ("my%%20photo.png"))
+			assert ("a percent is encoded first of all", l_text.encoded ({STRING_32} "50%%.png").same_string ("50%%25.png"))
+			assert ("a percent survives the round trip", l_text.decoded (l_text.encoded ({STRING_32} "50%%.png")).same_string ({STRING_32} "50%%.png"))
+			assert ("an empty value stays empty", l_text.encoded ({STRING_32} "").is_empty and l_text.decoded ("").is_empty)
+			assert ("a value nobody encoded comes back unchanged", l_text.decoded ("plain.png").same_string ({STRING_32} "plain.png"))
+			assert ("a lone percent is not a decoder", l_text.decoded ("100%% done").same_string ({STRING_32} "100%% done"))
+			assert ("a truncated escape is not a decoder", l_text.decoded ("ab%%D").same_string ({STRING_32} "ab%%D"))
+			assert ("lower-case hex decodes too", l_text.decoded ("%%d7%%90").same_string (aleph))
+		end
+
 	test_session_handed_to_the_pollers_client
 			-- The GUI's client copies its session into a second client (the poller's, on its own
 			-- processor in the app; here on this one): that client polls with the same bearer, the
@@ -1089,6 +1229,60 @@ feature {NONE} -- Fixtures
 	member_json (a_id: INTEGER_64; a_username, a_display: STRING_8): STRING_8
 		do
 			Result := "{%"id%":" + a_id.out + ",%"username%":%"" + a_username + "%",%"display_name%":%"" + a_display + "%",%"is_admin%":false,%"is_bot%":false}"
+		end
+
+	image_bytes (a_count: INTEGER): SPECIAL [NATURAL_8]
+			-- `a_count' bytes beginning with the eight-byte PNG signature, the rest
+			-- climbing through the whole byte range from zero - so a body that lost
+			-- its zero byte, or that a C string truncated there, cannot pass.
+		require
+			room_for_signature: a_count >= 8
+		local
+			i: INTEGER
+		do
+			create Result.make_filled ({NATURAL_8} 0, a_count)
+			Result [0] := 0x89
+			Result [1] := 0x50
+			Result [2] := 0x4E
+			Result [3] := 0x47
+			Result [4] := 0x0D
+			Result [5] := 0x0A
+			Result [6] := 0x1A
+			Result [7] := 0x0A
+			from
+				i := 8
+			until
+				i >= a_count
+			loop
+				Result [i] := ((i + 248) \\ 256).to_natural_8
+				i := i + 1
+			variant
+				a_count - i
+			end
+		ensure
+			sized: Result.count = a_count
+		end
+
+	wire_image (a_id, a_room, a_sender: INTEGER_64; a_name, a_caption: STRING_8): STRING_8
+			-- One image event in wire form, carrying a stored PNG attachment.
+		do
+			Result := "{%"id%":" + a_id.out + ",%"room_id%":" + a_room.out + ",%"sender_id%":" + a_sender.out
+				+ ",%"kind%":%"image%",%"created_at%":%"2026-08-29T12:00:00%",%"body%":%"" + a_caption
+				+ "%",%"attachment%":{%"id%":3,%"mime%":%"image/png%",%"size%":32,%"name%":%"" + a_name
+				+ "%",%"sha256%":%"" + sha256_hex + "%"},%"payload%":{},%"is_bot%":false}"
+		end
+
+	sha256_hex: STRING_8
+			-- Sixty-four lowercase hex digits: the shape CHAT_ATTACHMENT_RULES admits.
+		do
+			Result := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+		end
+
+	aleph: STRING_32
+			-- The Hebrew letter alef (U+05D0), whose UTF-8 is D7 90.
+		do
+			create Result.make_empty
+			Result.append_code ({NATURAL_32} 0x05D0)
 		end
 
 	is_error_status (a_error: detachable CHAT_ERROR; a_status: INTEGER): BOOLEAN

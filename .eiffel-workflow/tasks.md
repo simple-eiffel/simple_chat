@@ -1,6 +1,7 @@
 # Implementation Tasks: simple_chat (Phase 4)
 
-**Status 2026-09-02:** Tasks 1–9 DONE. The server is complete (live; `@claude` answers in
+**Status 2026-09-02:** Tasks 1–9 DONE, plus Task 9b (the last two Phase 4 stubs: the
+client's `post_image` and the service's `backup`). The server is complete (live; `@claude` answers in
 the room — smoke-proven over HTTP; SSE streams and the per-IP lockout proven live; three SCOOP
 concurrency defects and the re-entrant-wake phantom raise found live and fixed). The client
 stack compiles and ran a live WinHTTP round trip. Task 10 (the visible client) is gated on
@@ -78,6 +79,36 @@ STREAM_SINK byte-count wording under real sockets (M-A), CHAT_WEB_APP pre-bind c
 (%APPDATA%, token only as DPAPI ciphertext), tray_notifier.e, client_app.e + POLLER_HOST wiring
 ### Dependencies: simple_winhttp (promote OCR_HTTP), SHELL_TRAY (simple_shell), DPAPI
 (simple_encryption) — all dependency tasks.
+
+## Task 9b (2026-09-02): client post_image + service backup  ✔ DONE
+**Files:** src/client/chat_client.e (post_image), src/domain/chat_header_text.e (NEW),
+src/web/chat_request_handler.e (header_32 now decodes what the client writes),
+src/service/chat_service.e (backup, fresh_backup_path), src/store/chat_store.e
+(ADDITIVE `backup_to`), sqlite_chat_store.e, memory_chat_store.e
+### What landed
+- `CHAT_CLIENT.post_image` sends the bytes as the body, the name and caption on
+  `X-File-Name` / `X-Caption` as percent-encoded UTF-8 (CHAT_HEADER_TEXT: a header
+  line carries printable ASCII and nothing else - SIMPLE_WINHTTP refuses the rest
+  before a byte leaves the machine), `Content-Type: application/octet-stream`, the
+  bearer where it always is, and decodes the 201 through CLIENT_CODEC.
+- **ADDITIVE store feature** (reported, not slipped in): `CHAT_STORE.backup_to
+  (a_path: READABLE_STRING_32): BOOLEAN` - SQLite effects it with `VACUUM INTO`,
+  the memory oracle answers False and writes nothing. No existing require, ensure,
+  invariant or signature was touched.
+- `CHAT_SERVICE.backup` writes to `<data_dir>/backups/simple_chat-<stamp>[-N].db`
+  and answers the path; a failure is a 503 result, never an exception. POST
+  /admin/backup has worked all along and now answers 200 with the path.
+### Acceptance
+- [x] Scripted post_image round trip: method, path, both headers, byte count,
+      bearer, decoded event (is_image, room id); Hebrew + U+1F916 survive to the
+      request and back through the server's own decoder; the header table passes
+      SIMPLE_WINHTTP.is_header_table_clean
+- [x] backup over a REAL SQLite store in a scratch data_dir: the path is under
+      data/backups/, the copy re-opens as a database and reads the posted event
+      back, two backups in one second are two files; the memory store answers an
+      error and never raises
+- [x] Live: the finalized server booted, the client posted a PNG whose Hebrew file
+      name and emoji caption came back byte for byte over real HTTP
 
 ## Task 10: The visible client
 **Files:** SW_CHAT_VIEW over simple_widgets (SW_CHAT_THREAD exists)
