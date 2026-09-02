@@ -27,6 +27,12 @@ HOSTING THE ROOM
 
 Only if you ticked the hosting box when you installed.
 
+Hosting requires an ADMINISTRATOR install - say yes when Windows asks for
+permission as the installer starts. A per-user ("just for me") install does not
+offer the hosting option at all, by design: the server writes to a machine-wide
+folder and registers a startup task for the whole PC. Re-run the installer,
+allow it to elevate, and tick the box.
+
 Start Menu -> SimpleChat Server -> Hosting guide.
 
 That guide is written for a non-programmer and covers the whole job: making

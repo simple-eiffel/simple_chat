@@ -15,6 +15,12 @@ of the system, so hosting the room no longer means building from source.
 ### Added
 
 - **`installer/SimpleChat.iss`** — one Inno Setup 6 installer, two components.
+  **Hosting requires an administrator install**: the server component and the
+  `host` type carry `Check: IsAdminInstallMode`, so a per-user install offers
+  neither and `/COMPONENTS=client,server` yields the client alone. That is
+  deliberate - the server writes to `{commonappdata}`, registers a machine-wide
+  logon task, and relies on an elevated install making `caddy.exe` unwritable
+  by the standard user whose elevated task launches it.
   - `client` is always installed and cannot be unticked: `SimpleChat.exe`,
     `cairo.dll`, the 3,768-file Noto emoji artwork, the licences, a `README.txt`
     and a `client.toml` template placed where `CLIENT_CONFIG` reads it.
@@ -58,6 +64,34 @@ of the system, so hosting the room no longer means building from source.
   the store) and `server_app_display_name_gate` (the gate's own cases,
   including the bot marker and bidi overrides). 183 assaults, all green.
 - A `CHANGELOG.md`, which the project did not have.
+
+### Fixed
+
+- **The client died instantly when launched from the Start Menu.** `SW_WINDOW`
+  writes its session log to the RELATIVE name `sw_session.log`, so it lands in
+  the working directory - and `open_write` on a folder the member cannot write
+  RAISES an operating-system exception rather than returning quietly, which its
+  own `is_open_write` guard never sees. With the shortcut's working directory
+  set to the install folder under Program Files, the client failed at "root's
+  creation" with *Permission denied* and the window never appeared: it flashed
+  and vanished. A read-only install folder is the normal case for a per-machine
+  install, so this was not an edge.
+  `CLIENT_APP.settle_working_directory` now moves to `%APPDATA%\simple_chat`
+  before anything opens a window, and the client shortcuts start there too.
+  Nothing else wanted the working directory: `SW_SHAPING` resolves the emoji
+  artwork beside the RUNNING EXECUTABLE, and `cairo.dll` is found on the
+  executable's own search path.
+- **UTF-8 display names were refused.** With stdin redirected from a BOM-less
+  UTF-8 file, a Hebrew name arrived as its raw bytes and was taken one
+  character per byte; `0x9C` among them is a C1 control, so the naming rule
+  refused it - correctly. The rule was right; the decoding never happened. The
+  reading path is now the pure function `SERVER_APP.decoded_text`, which
+  rebuilds the bytes with `append_code` rather than trusting a conversion that
+  depends on the runtime's dynamic type, decodes valid UTF-8, and leaves
+  already-decoded text and legacy code pages alone. Real control characters are
+  still refused: decoding is not permission.
+- The uninstaller now sweeps `{app}\*.log`, so a log written at run time cannot
+  keep the install folder alive after an otherwise clean uninstall.
 
 ### Changed
 

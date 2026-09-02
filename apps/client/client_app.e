@@ -52,8 +52,60 @@ feature {NONE} -- Initialization
 			-- The whole client: assemble, then run until the member closes the window
 			-- (or gives up at the door).
 		do
+			settle_working_directory
 			build (Void, Void)
 			run
+		end
+
+	settle_working_directory
+			-- Move to a folder this member can WRITE, before anything opens a
+			-- window.
+			--
+			-- SW_WINDOW's session log is a RELATIVE name ("sw_session.log"),
+			-- so it lands in the WORKING DIRECTORY - and `open_write' on a
+			-- folder the member cannot write RAISES an operating-system
+			-- exception rather than returning quietly, which its
+			-- `is_open_write' guard never sees. Launched from a Start Menu
+			-- shortcut whose working directory was the install folder under
+			-- Program Files, the client therefore died at "root's creation"
+			-- with "Permission denied" and the window never appeared: it
+			-- flashed and vanished. A read-only install folder is the NORMAL
+			-- case for a per-machine install, so this is not an edge.
+			--
+			-- %APPDATA%\simple_chat is the folder the client already owns -
+			-- client.toml lives there - so it is writable by definition for
+			-- whoever is running.
+			--
+			-- Nothing else wants the working directory: SW_SHAPING resolves
+			-- the emoji artwork beside the RUNNING EXECUTABLE, never the
+			-- working directory, and cairo.dll is found on the executable's
+			-- own search path. Moving is therefore free.
+			--
+			-- Every failure here is survivable - the worst case is the old
+			-- behaviour - so nothing is allowed to raise out of it.
+		local
+			l_env: EXECUTION_ENVIRONMENT
+			l_directory: DIRECTORY
+			l_path: PATH
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				create l_env
+				if attached l_env.item ("APPDATA") as l_appdata and then not l_appdata.is_empty then
+					create l_path.make_from_string (l_appdata)
+					l_path := l_path.extended ("simple_chat")
+					create l_directory.make_with_path (l_path)
+					if not l_directory.exists then
+						l_directory.recursive_create_dir
+					end
+					if l_directory.exists then
+						l_env.change_working_path (l_path)
+					end
+				end
+			end
+		rescue
+			l_failed := True
+			retry
 		end
 
 	make_for_test (a_transport: HTTP_TRANSPORT; a_config: CLIENT_CONFIG)

@@ -280,3 +280,82 @@ Every runtime item from the brief is still owed, and must be re-run with
 - **A real DuckDNS name and token**, and the first live certificate issue.
 - **Deciding the fate of `C:\ProgramData\SimpleChat`** left by the aborted run.
   It is safe to reinstall over; removing it needs elevation.
+
+---
+
+## 5. Second fix cycle - three defects the orchestrator's run exposed
+
+### 5.1 The client flashed and vanished (found by Larry, from the real shortcut)
+
+Reproduced exactly, with the installed binary:
+
+```
+cd "C:\Program Files\SimpleChat" && ./SimpleChat.exe
+  simple_chat: system execution failed.
+  CLIENT_APP   root's creation   Permission denied: Operating system error.  Exit
+```
+
+From a WRITABLE working directory the same binary runs fine and logs
+`sw: window up`. The cause is `SW_WINDOW.log_name` - a RELATIVE
+`"sw_session.log"` - resolved against the working directory; `open_write` on a
+folder the member cannot write RAISES rather than returning, so the
+`is_open_write` guard never runs. The Start Menu shortcut's `WorkingDir` was
+`{app}`, i.e. Program Files, which no standard user can write. **A read-only
+install folder is the normal case for a per-machine install.**
+
+Fixed in two places, belt and braces:
+`CLIENT_APP.settle_working_directory` moves to `%APPDATA%\simple_chat` before
+anything opens a window (covering an Explorer double-click too), and all three
+client launch points in the .iss now start there.
+
+### 5.2 UTF-8 display names refused
+
+Reproduced with `Start-Process -RedirectStandardInput` and a BOM-less UTF-8
+file, exactly as reported. After the fix, against the rebuilt binary:
+
+```
+--create-admin larry server.toml   < (UTF-8 "lamed alef resh yod")
+  exit=0
+  --create-admin: administrator "larry" created.
+```
+
+and the stored name is genuine UTF-8 Hebrew in the database, with no mojibake:
+
+```
+grep -a $'×××¨×'  data/simple_chat.db   -> found
+grep -a $'ÃÂ'                      data/simple_chat.db   -> absent
+```
+
+The reading path is now the pure `SERVER_APP.decoded_text`, assaulted with real
+UTF-8 BYTES (`server_app_decodes_utf8_console_bytes`) rather than decimal
+escapes of the finished code points - which would have proved nothing about
+decoding. Suite: **184 passed, 0 failed.**
+
+### 5.3 The server component in a per-user install - BY DESIGN, now stated
+
+`/CURRENTUSER` with `/COMPONENTS=client,server` installing the client alone is
+correct behaviour, and it is now explicit rather than incidental: the `server`
+component and the `host` type carry `Check: IsAdminInstallMode`.
+
+The reason is not tidiness. The server writes to `{commonappdata}`, registers a
+machine-wide logon task with `/rl highest`, and depends on an elevated install
+making `caddy.exe` **unwritable by a standard user** - which is precisely what
+stops that user tampering with the executable the elevated task launches (§2.6
+measured exactly that ACL). A per-user "host" would place that binary somewhere
+its own user could rewrite. The client needs none of this, which is why it
+stays per-user-installable.
+
+Stated in the hosting guide, `README.txt`, the project README and the .iss; and
+`CurStepChanged` says so out loud when `/COMPONENTS` asked for the server in a
+per-user install.
+
+### 5.4 Uninstall left the folder behind
+
+Caused by 5.1's stray `sw_session.log` - a file the installer never recorded,
+so Inno left it, and one file keeps the whole folder alive. 5.1 stops anything
+being written there; `[UninstallDelete] Type: files; Name: "{app}\*.log"` makes
+the sweep exact regardless.
+
+**None of §5 is runtime-verified by me against an installed tree** - I ran no
+installer or uninstaller. 5.1 and 5.2 are verified against the built binaries
+directly, which is where both defects lived.

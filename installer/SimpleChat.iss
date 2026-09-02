@@ -144,15 +144,28 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; CLIENT ONLY. Ticking the server component switches the drop-down to the
 ; custom type Inno supplies automatically.
 ; ---------------------------------------------------------------------------
+; HOSTING REQUIRES AN ADMINISTRATOR INSTALL. The server component and the
+; "host" type both carry Check: IsAdminInstallMode, so in a per-user install
+; (/CURRENTUSER, or the startup dialog's "just for me") they do not exist and
+; /COMPONENTS=client,server quietly yields the client alone.
+;
+; That is BY DESIGN, and it is now stated rather than merely happening: the
+; server writes to {commonappdata}, registers a machine-wide logon task with
+; /rl highest, and puts caddy.exe where an elevated install makes it
+; unwritable by a standard user - which is exactly what stops a standard user
+; tampering with the executable that elevated task launches. A per-user
+; "host" would put that binary somewhere its own user could rewrite.
+; The client is per-user-installable precisely because it needs none of that.
+; CurStepChanged says so out loud when someone asks for the server anyway.
 [Types]
 Name: "client"; Description: "Just use the chat (what most people want)"
-Name: "host";   Description: "Use the chat AND host the room on this PC"
+Name: "host";   Description: "Use the chat AND host the room on this PC"; Check: IsAdminInstallMode
 
 [Components]
 Name: "client"; Description: "SimpleChat - the chat window"; \
     Types: client host; Flags: fixed
 Name: "server"; Description: "This PC will host the chat room (installs the server, Caddy and the hosting tools)"; \
-    Types: host
+    Types: host; Check: IsAdminInstallMode
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut for the chat window"; \
@@ -220,10 +233,10 @@ Source: "src\server\server.toml.in"; DestDir: "{#ServerRoot}"; DestName: "server
 
 [Icons]
 ; --- client -----------------------------------------------------------------
-Name: "{group}\{#AppName}";              Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; \
+Name: "{group}\{#AppName}";              Filename: "{app}\{#AppExe}"; WorkingDir: "{userappdata}\{#ClientCfgDir}"; \
     Comment: "Open the chat window"; Components: client
 Name: "{group}\{#AppName} Read Me";      Filename: "{app}\README.txt"; Components: client
-Name: "{autodesktop}\{#AppName}";        Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; \
+Name: "{autodesktop}\{#AppName}";        Filename: "{app}\{#AppExe}"; WorkingDir: "{userappdata}\{#ClientCfgDir}"; \
     Components: client; Tasks: desktopicon
 Name: "{group}\Uninstall {#AppName}";    Filename: "{uninstallexe}"
 
@@ -259,7 +272,7 @@ Filename: "{sys}\schtasks.exe"; \
 Filename: "{app}\HOSTING-GUIDE.html"; Description: "Open the hosting guide"; \
     Flags: shellexec postinstall skipifsilent nowait; Components: server
 
-Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "Open {#AppName} now"; \
+Filename: "{app}\{#AppExe}"; WorkingDir: "{userappdata}\{#ClientCfgDir}"; Description: "Open {#AppName} now"; \
     Flags: postinstall skipifsilent nowait; Components: client
 
 [UninstallRun]
@@ -272,8 +285,18 @@ Filename: "{sys}\schtasks.exe"; Parameters: "/delete /tn ""{#TaskName}"" /f"; \
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#ServerExe}"; \
     Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "StopChatServer"
 
+[UninstallDelete]
+; A log dropped into {app} at run time is not a file the installer recorded,
+; so Inno leaves it - and one stray file keeps the whole install folder alive
+; after an otherwise clean uninstall. simple_widgets writes its session log to
+; the RELATIVE name "sw_session.log", i.e. into the working directory; the
+; client shortcuts now start in a per-user folder so nothing should ever land
+; here, but a shortcut someone made by hand, or a run from Explorer, still
+; could. Sweeping *.log costs nothing and makes the uninstall exact.
+Type: files; Name: "{app}\*.log"
+
 ; ---------------------------------------------------------------------------
-; NO [UninstallDelete] SECTION, DELIBERATELY.
+; NO OTHER [UninstallDelete] ENTRY, DELIBERATELY.
 ;
 ; The room - accounts, rooms, every message - lives in
 ; {commonappdata}\SimpleChat\data, the host's settings in server.toml beside
@@ -312,6 +335,26 @@ ConfirmUninstall=Remove %1 from this PC?%n%nYour chat history, accounts and sett
   Silent installs never see this. }
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  { Hosting was asked for, but this is a per-user install - so the server
+    component does not exist and only the client went down. Say so plainly
+    rather than letting the host discover an empty Start Menu folder. }
+  if (CurStep = ssPostInstall) and not IsAdminInstallMode
+     and not WizardIsComponentSelected('server')
+     and (Pos('server', Lowercase(ExpandConstant('{param:COMPONENTS|}'))) > 0) then
+  begin
+    Log('SimpleChat: /COMPONENTS asked for the server, but this is a per-user ' +
+        'install, where the server component does not exist. Only the chat ' +
+        'window was installed. Hosting requires an administrator install.');
+    if not WizardSilent then
+      MsgBox('Only the chat window was installed.' + #13#10#13#10 +
+             'Hosting the room requires an ADMINISTRATOR install, because the ' +
+             'server writes to a machine-wide folder and registers a startup ' +
+             'task for the whole PC.' + #13#10#13#10 +
+             'To host: run this installer again, allow it to elevate when ' +
+             'Windows asks, and tick the hosting box.',
+             mbInformation, MB_OK);
+  end;
+
   if (CurStep = ssPostInstall) and WizardIsComponentSelected('server')
      and not WizardSilent then
   begin

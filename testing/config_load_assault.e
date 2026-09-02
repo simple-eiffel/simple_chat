@@ -341,7 +341,7 @@ feature -- Tests: the server app's pure gates
 				--
 				-- Written as CODE POINT ESCAPES, never as literal glyphs: this
 				-- compiler reads a source file byte-for-byte, so a literal
-				-- "משה" arrives as its six UTF-8 bytes and the 0x9E among them
+				-- a Hebrew literal arrives as its raw UTF-8 bytes, and a 0x9E among them
 				-- is a C1 control - which `is_forbidden_in_name' rightly
 				-- refuses. The escapes say what is meant; the same convention
 				-- CHAT_EVENT_KINDS.Bot_marker already uses.
@@ -367,6 +367,91 @@ feature -- Tests: the server app's pure gates
 				-- gate and the service's precondition cannot drift apart.
 			assert ("gate equals the rule", l_app.is_acceptable_display_name ({STRING_32} "Nick")
 				= (create {CHAT_USER_RULES}).is_valid_human_display_name ({STRING_32} "Nick"))
+		end
+
+	test_server_app_decodes_utf8_console_bytes
+			-- The READING PATH, fed real UTF-8 BYTES - not decimal escapes of
+			-- the finished code points, which would prove nothing about
+			-- decoding.
+			--
+			-- This is the defect the orchestrator found against the installed
+			-- binary: with stdin redirected from a BOM-less UTF-8 file holding
+			-- a four-letter Hebrew display name, --create-admin refused it as
+			-- carrying control characters. The bytes D7 9C D7 90 D7 A8 D7 99
+			-- were being taken one character per byte, and 0x9C is a C1
+			-- control, so the naming rule refused them - correctly. The rule
+			-- was right; the decoding never happened.
+			--
+			-- `decoded_text' is exactly what `line_read_text' applies to
+			-- whatever `io.read_line' last read, so feeding it here drives the
+			-- same path a redirected stdin and a code-page-65001 console both
+			-- take. The console itself cannot be driven from a test.
+		local
+			l_app: SERVER_APP
+			l_utf8: STRING_8
+			l_text: STRING_32
+		do
+			create l_app.make_idle
+
+				-- The Hebrew name as the eight UTF-8 bytes stdin delivers:
+				-- D7 9C  D7 90  D7 A8  D7 99  (215/156, 215/144, 215/168, 215/153).
+			create l_utf8.make (8)
+			l_utf8.append_code (215); l_utf8.append_code (156)
+			l_utf8.append_code (215); l_utf8.append_code (144)
+			l_utf8.append_code (215); l_utf8.append_code (168)
+			l_utf8.append_code (215); l_utf8.append_code (153)
+
+			l_text := l_app.decoded_text (l_utf8)
+			assert ("four code points, not eight bytes", l_text.count = 4)
+			assert ("U+05DC lamed", l_text.code (1) = 1500)
+			assert ("U+05D0 alef", l_text.code (2) = 1488)
+			assert ("U+05E8 resh", l_text.code (3) = 1512)
+			assert ("U+05D9 yod", l_text.code (4) = 1497)
+
+				-- The whole point: the decoded name must now be ACCEPTED.
+			assert ("the Hebrew name is accepted", l_app.is_acceptable_display_name (l_text))
+
+				-- Greek too (Christos) = CE A7 CF 81 CE B9 CF 83 CF 84 CF 8C CF 82.
+			create l_utf8.make (14)
+			l_utf8.append_code (206); l_utf8.append_code (167)
+			l_utf8.append_code (207); l_utf8.append_code (129)
+			l_utf8.append_code (206); l_utf8.append_code (185)
+			l_utf8.append_code (207); l_utf8.append_code (131)
+			l_utf8.append_code (207); l_utf8.append_code (132)
+			l_utf8.append_code (207); l_utf8.append_code (140)
+			l_utf8.append_code (207); l_utf8.append_code (130)
+			l_text := l_app.decoded_text (l_utf8)
+			assert ("seven Greek code points", l_text.count = 7)
+			assert ("keeps the tonos", l_text.code (6) = 972)
+			assert ("the Greek name is accepted", l_app.is_acceptable_display_name (l_text))
+
+				-- Plain ASCII is valid UTF-8 and must come back untouched.
+			assert ("ASCII survives", l_app.decoded_text ({STRING_8} "Larry Rix").same_string ({STRING_32} "Larry Rix"))
+
+				-- A trailing CR from a CRLF stream is dropped: `io.read_line'
+				-- strips the newline but leaves the CR, and a name ending in
+				-- one would be refused by the naming rule.
+			assert ("trailing CR dropped", l_app.decoded_text ({STRING_8} "Nick%R").same_string ({STRING_32} "Nick"))
+
+				-- Bytes that are NOT valid UTF-8 (Latin-1 "Jos%/233/") must not
+				-- be mangled into nothing: the old byte-for-byte widening is
+				-- exactly right there, and this is what a console left at a
+				-- legacy code page delivers.
+			create l_utf8.make (4)
+			l_utf8.append_code (74); l_utf8.append_code (111)
+			l_utf8.append_code (115); l_utf8.append_code (233)
+			l_text := l_app.decoded_text (l_utf8)
+			assert ("invalid UTF-8 widened byte-for-byte", l_text.count = 4 and l_text.code (4) = 233)
+
+				-- REAL control characters must still be refused after decoding:
+				-- decoding is not permission. U+0007 is a C0 control.
+			assert ("a decoded control character is still refused",
+				not l_app.is_acceptable_display_name (l_app.decoded_text ({STRING_8} "Ni%/7/ck")))
+
+				-- Text that arrives ALREADY decoded (code points above 255) is
+				-- returned unchanged rather than mistaken for bytes.
+			l_text := l_app.decoded_text ({STRING_32} "%/1500/%/1488/")
+			assert ("already-decoded text is left alone", l_text.count = 2 and l_text.code (1) = 1500)
 		end
 
 feature {NONE} -- Assertion support

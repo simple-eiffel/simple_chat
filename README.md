@@ -66,6 +66,13 @@ components:
   with the box ticked adds the server to an existing install, which is how a friend is
   promoted to a standby host.
 
+**Hosting requires an administrator install**, by design: the server writes to
+`{commonappdata}`, registers a machine-wide logon task, and places `caddy.exe` where an
+elevated install makes it unwritable by a standard user - which is what stops that user
+tampering with the executable the elevated task launches. In a per-user install the server
+component does not exist and `/COMPONENTS=client,server` yields the client alone. The
+client is per-user-installable precisely because it needs none of that.
+
 A host gets a `SimpleChat Server` Start Menu folder — start, stop, create the first
 admin, create a user, the log, the config, back up the room, restore a backup — and a
 **hosting guide** written for a non-programmer: the two lines in `server.toml` that turn

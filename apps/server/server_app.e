@@ -314,6 +314,72 @@ feature -- Status report
 			definition: Result = (a_first.same_string (a_second) and a_first.count >= a_minimum)
 		end
 
+feature -- Text decoding
+
+	decoded_text (a_raw: READABLE_STRING_GENERAL): STRING_32
+			-- `a_raw' as text: the UTF-8 bytes decoded when that is what it
+			-- holds, and widened byte-for-byte when it is not.
+			--
+			-- THE READING PATH, ISOLATED SO IT CAN BE ASSAULTED WITHOUT A
+			-- CONSOLE. `line_read_text' is this function applied to whatever
+			-- `io.read_line' last read; feeding the same bytes here proves the
+			-- same behaviour, and the console cannot be driven from a test.
+			--
+			-- Every code point at 256 or above means the source already handed
+			-- over decoded text, so it is returned unchanged. Otherwise the
+			-- code points ARE bytes: rebuilt into a byte string and decoded
+			-- when they form valid UTF-8. A redirected stdin and a
+			-- code-page-65001 console both arrive here as bytes; a console
+			-- left at a legacy code page produces bytes that are not valid
+			-- UTF-8, and the byte-for-byte widening is then exactly right.
+			--
+			-- Note the bytes are rebuilt with `append_code' rather than taken
+			-- from `to_string_8': the conversion depends on the dynamic type
+			-- of what the runtime handed back, and this does not.
+			--
+			-- A trailing carriage return or space is dropped: `io.read_line'
+			-- strips the newline but a CRLF stream leaves the CR, and a
+			-- display name ending in one is refused by `is_forbidden_in_name'.
+			-- Control characters INSIDE the text are left alone - refusing
+			-- those is the naming rule's job, not this one's.
+		local
+			l_bytes: STRING_8
+			i: INTEGER
+			l_all_bytes: BOOLEAN
+		do
+			l_all_bytes := True
+			from i := 1 until i > a_raw.count or not l_all_bytes loop
+				if a_raw.code (i) > 255 then
+					l_all_bytes := False
+				end
+				i := i + 1
+			end
+			if l_all_bytes then
+				create l_bytes.make (a_raw.count)
+				from i := 1 until i > a_raw.count loop
+					l_bytes.append_code (a_raw.code (i))
+					i := i + 1
+				end
+				if {UTF_CONVERTER}.is_valid_utf_8_string_8 (l_bytes) then
+					Result := {UTF_CONVERTER}.utf_8_string_8_to_string_32 (l_bytes)
+				else
+					Result := l_bytes.to_string_32
+				end
+			else
+					-- `twin': never hand back the caller's own object, which
+					-- the trimming below would then mutate under them.
+				Result := a_raw.to_string_32.twin
+			end
+			from
+			until
+				Result.is_empty or else (Result.item (Result.count) /= '%R' and Result.item (Result.count) /= ' ')
+			loop
+				Result.remove_tail (1)
+			end
+		ensure
+			no_trailing_blank: not Result.is_empty implies (Result.item (Result.count) /= '%R' and Result.item (Result.count) /= ' ')
+		end
+
 feature -- Factory
 
 	new_front_door (a_config: SERVER_CONFIG): FRONT_DOOR
@@ -419,32 +485,14 @@ feature {NONE} -- Implementation
 			-- A trailing carriage return is dropped: `io.read_line' strips the
 			-- newline but a CRLF stream can leave the CR behind, and a display
 			-- name ending in one would be refused by `is_forbidden_in_name'.
-		local
-			l_bytes: STRING_8
 		do
 			if attached io.last_string as l_line then
-				if l_line.is_valid_as_string_8 then
-					l_bytes := l_line.to_string_8
-					if {UTF_CONVERTER}.is_valid_utf_8_string_8 (l_bytes) then
-						Result := {UTF_CONVERTER}.utf_8_string_8_to_string_32 (l_bytes)
-					else
-						Result := l_line.to_string_32
-					end
-				else
-					Result := l_line.to_string_32
-				end
+				Result := decoded_text (l_line)
 			else
 				create Result.make_empty
 			end
-			from
-			until
-				Result.is_empty or else (Result.item (Result.count) /= '%R' and Result.item (Result.count) /= ' ')
-			loop
-				Result.remove_tail (1)
-			end
-		ensure
-			no_trailing_blank: not Result.is_empty implies (Result.item (Result.count) /= '%R' and Result.item (Result.count) /= ' ')
 		end
+
 
 	config_path_from (a_args: ARGUMENTS_32): STRING_32
 		do
