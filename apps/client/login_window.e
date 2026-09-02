@@ -48,6 +48,17 @@ feature {NONE} -- Initialization
 			l_server_label, l_username_label, l_password_label: SW_LABEL
 		do
 			create theme.make_dark
+				-- READABILITY. SW_THEME ships body text at 16 px; at arm's length
+				-- on a high-DPI panel that is small, and Larry asked for two to
+				-- three times it. `set_text_scale' multiplies every type role at
+				-- once - body, label and chip together - so the proportions of the
+				-- design are kept and only the size changes. Its own precondition
+				-- caps the range at 0.5 .. 3.0.
+				--
+				-- Bubble heights follow, because a bubble is measured from
+				-- `layout.total_height' and never from a line count times a
+				-- constant - the one rule that makes scaling safe here.
+			theme.set_text_scale (Text_scale)
 			create window.make (Window_title, a_x, a_y, Window_width, Window_height, theme)
 			window.enable_shaped_text
 			create server_box.make_single_line (a_server_url)
@@ -301,6 +312,14 @@ feature {NONE} -- Implementation
 	error_label: SW_LABEL
 	login_button: SW_BUTTON
 	cancel_button: SW_BUTTON
+
+feature -- Constants
+
+	Text_scale: REAL_64 = 2.0
+			-- How much larger than SW_THEME's own sizes this window draws
+			-- its text. 1.0 is the library default; 2.0 is twice that.
+			-- SW_THEME.set_text_scale caps the range at 0.5 .. 3.0, so 3.0
+			-- is the most that can be asked for.
 
 invariant
 	one_outcome_at_most: not (is_accepted and is_cancelled)
