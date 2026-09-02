@@ -1,0 +1,474 @@
+================================================================================
+DOWNSTREAM COMPATIBILITY SWEEP - 2026-09-02 (low tier, 42 repos)
+================================================================================
+Trigger libraries changed today on their main branches:
+  * simple_json 0.2.0  - new SIMPLE_JSON_TEXT escaper; non-ASCII now emitted as
+                         raw UTF-8 instead of backslash-u escapes; astral chars
+                         (U+1F916) survive round trips; decoder combines
+                         surrogate-pair escapes.  (commit f225267, merge 0fd4fd6)
+  * simple_datetime    - SIMPLE_TIME.make_from_string: a bare 24-hour 12:MM:SS
+                         now parses as NOON, not midnight.
+Both are behavior fixes with unchanged signatures.
+
+Method per repo: record branch; pick test target from ECF (<repo>_tests in all
+42 cases); rm -rf EIFGENs/<target>; /d/prod/ec.sh test -config <repo>.ecf
+-target <target> run FOREGROUND and blocking; build judged PASS only on
+"System Recompiled" + "C compilation completed" + a fresh exe timestamp
+(never on exit code alone); then run the produced exe from the repo root with a
+300 s cap.
+
+HEADLINE: 42/42 BUILD PASS.  ZERO CAUSED-BY-TODAY breakages.  No fixes were
+required, so no fix branches and no PRs were created.
+
+STATIC PRE-SCAN (all 42, *.e outside EIFGENs):
+  * SIMPLE_JSON_TEXT      - 0 occurrences anywhere -> no class-name clash class
+                            of breakage is possible in this tier.
+  * literal backslash-u   - 3 hits, none a simple_json round-trip expectation:
+      simple_graphify/src/graphify_util.e:136   (graphify's OWN escaper)
+      simple_toml/src/core/toml_string.e:121    (TOML's OWN escaper)
+      simple_toml/src/lexer/toml_lexer.e:286    (TOML lexer comment)
+      simple_warp/test/lib_tests.e:684          ("café" stored as an opaque
+        SQLite payload, never re-serialized through simple_json - test passes)
+  * "12:MM" time literals - 0 occurrences anywhere -> the simple_datetime noon
+                            fix has no static footprint in this tier.
+
+================================================================================
+PER-REPO RESULTS
+================================================================================
+--------------------------------------------------------------------------------
+REPO   : proven_fetch
+BRANCH : master
+TARGET : proven_fetch_tests
+BUILD  : PASS  (380s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : see note
+NOTE   : TEST_APP writes results to ./test-results.txt rather than stdout
+         (stdout is empty by design). 54 tests reported OK; file ends
+         '=== All tests passed ==='.
+TESTS  : 54 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_ai_client
+BRANCH : main
+TARGET : simple_ai_client_tests
+BUILD  : PASS  (297s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 42 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_autospec
+BRANCH : main
+TARGET : simple_autospec_tests
+BUILD  : PASS  (101s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : see note
+TESTS  : not runnable headless: exe aborts at load with
+         'libz3.dll: cannot open shared object file'. Native Z3 solver DLL
+         absent from PATH. Build itself is clean.
+VERDICT: PRE-EXISTING (missing native DLL; not runnable headless)
+--------------------------------------------------------------------------------
+REPO   : simple_cache
+BRANCH : master
+TARGET : simple_cache_tests
+BUILD  : PASS  (38s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 25 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_ci
+BRANCH : main
+TARGET : simple_ci_tests
+BUILD  : PASS  (35s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 7 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_code
+BRANCH : master
+TARGET : simple_code_tests
+BUILD  : PASS  (235s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 10 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_config
+BRANCH : main
+TARGET : simple_config_tests
+BUILD  : PASS  (80s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 12 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_docker
+BRANCH : main
+TARGET : simple_docker_tests
+BUILD  : PASS  (90s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 57 passed, 1 failed
+NOTE   : the 1 failure is test_quick_redis. Every error line in the log is
+         a Docker Engine HTTP 409/404 from docker_client; the suite prints
+         'NOTE: Some tests may fail if Docker Desktop is not running'.
+VERDICT: PRE-EXISTING (needs Docker Desktop)
+--------------------------------------------------------------------------------
+REPO   : simple_encryption
+BRANCH : main
+TARGET : simple_encryption_tests
+BUILD  : PASS  (224s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 20 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_file
+BRANCH : main
+TARGET : simple_file_tests
+BUILD  : PASS  (120s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 14 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_github_runner
+BRANCH : master
+TARGET : simple_github_runner_tests
+BUILD  : PASS  (169s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 19 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_graphify
+BRANCH : main
+TARGET : simple_graphify_tests
+BUILD  : PASS  (445s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 24 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_graphql
+BRANCH : master
+TARGET : simple_graphql_tests
+BUILD  : PASS  (67s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 1 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_grpc
+BRANCH : main
+TARGET : simple_grpc_tests
+BUILD  : PASS  (67s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 45 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_hash
+BRANCH : master
+TARGET : simple_hash_tests
+BUILD  : PASS  (105s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 44 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_http
+BRANCH : wip/uncommitted-2026-09-02
+TARGET : simple_http_tests
+BUILD  : PASS  (205s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 15 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_i18n
+BRANCH : main
+TARGET : simple_i18n_tests
+BUILD  : PASS  (351s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 10 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_json
+BRANCH : main
+TARGET : simple_json_tests
+BUILD  : PASS  (201s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 265 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_jwt
+BRANCH : master
+TARGET : simple_jwt_tests
+BUILD  : PASS  (280s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 35 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_k8s
+BRANCH : master
+TARGET : simple_k8s_tests
+BUILD  : PASS  (233s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 101 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_logger
+BRANCH : wip/uncommitted-2026-09-02
+TARGET : simple_logger_tests
+BUILD  : PASS  (223s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 22 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_mock
+BRANCH : master
+TARGET : simple_mock_tests
+BUILD  : PASS  (111s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 1 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_mq
+BRANCH : main
+TARGET : simple_mq_tests
+BUILD  : PASS  (105s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 28 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_notebook
+BRANCH : master
+TARGET : simple_notebook_tests
+BUILD  : PASS  (49s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 80 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_pkg
+BRANCH : main
+TARGET : simple_pkg_tests
+BUILD  : PASS  (59s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Passed: 16
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_process
+BRANCH : main
+TARGET : simple_process_tests
+BUILD  : PASS  (30s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 17 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_python
+BRANCH : master
+TARGET : simple_python_tests
+BUILD  : PASS  (123s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : see note
+TESTS  : suite ABORTED (exit 1) at
+         TEST_HTTP_INTEGRATION_REAL.test_http_bridge_sends_to_python_server,
+         assertion 'response_message_id_matches'. See INVESTIGATION below.
+VERDICT: PRE-EXISTING (WIP breakage in simple_http dependency)
+--------------------------------------------------------------------------------
+REPO   : simple_randomizer
+BRANCH : main
+TARGET : simple_randomizer_tests
+BUILD  : PASS  (20s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 27 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_rate_limiter
+BRANCH : master
+TARGET : simple_rate_limiter_tests
+BUILD  : PASS  (20s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 24 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_reel
+BRANCH : wip/uncommitted-2026-09-02
+TARGET : simple_reel_tests
+BUILD  : PASS  (36s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 28 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_rixqwen
+BRANCH : main
+TARGET : simple_rixqwen_tests
+BUILD  : PASS  (28s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 15 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_scheduler
+BRANCH : main
+TARGET : simple_scheduler_tests
+BUILD  : PASS  (20s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 38 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_setup
+BRANCH : main
+TARGET : simple_setup_tests
+BUILD  : PASS  (22s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 4 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_smtp
+BRANCH : master
+TARGET : simple_smtp_tests
+BUILD  : PASS  (22s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 57 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_spec_viz
+BRANCH : master
+TARGET : simple_spec_viz_tests
+BUILD  : PASS  (31s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : see note
+TESTS  : not runnable headless: exe aborts at load with
+         'cgraph.dll: cannot open shared object file'. Graphviz native DLL
+         absent from PATH. Build itself is clean.
+VERDICT: PRE-EXISTING (missing native DLL; not runnable headless)
+--------------------------------------------------------------------------------
+REPO   : simple_sql
+BRANCH : wip/uncommitted-2026-09-02
+TARGET : simple_sql_tests
+BUILD  : PASS  (38s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 52 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_telemetry
+BRANCH : master
+TARGET : simple_telemetry_tests
+BUILD  : PASS  (18s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 22 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_toml
+BRANCH : main
+TARGET : simple_toml_tests
+BUILD  : PASS  (21s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 11 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_toon
+BRANCH : main
+TARGET : simple_toon_tests
+BUILD  : PASS  (25s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 35 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_uuid
+BRANCH : master
+TARGET : simple_uuid_tests
+BUILD  : PASS  (191s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 45 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_warp
+BRANCH : wip/uncommitted-2026-09-02
+TARGET : simple_warp_tests
+BUILD  : PASS  (59s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 50 passed, 0 failed
+VERDICT: CLEAN
+--------------------------------------------------------------------------------
+REPO   : simple_web
+BRANCH : main
+TARGET : simple_web_tests
+BUILD  : PASS  (61s; yes c_compiled=yes fresh_exe=yes; no compiler errors)
+TESTS  : Results: 79 passed, 0 failed
+VERDICT: CLEAN
+
+================================================================================
+INVESTIGATION - simple_python (the only non-environmental test failure)
+================================================================================
+Symptom: TEST_HTTP_INTEGRATION_REAL.test_http_bridge_sends_to_python_server
+fails on assertion "response_message_id_matches"; the suite then aborts.
+
+The Python test server DID answer (HTTP 200). What it answered, from
+D:/prod/simple_python/logs/simple_python.log:
+
+  {"type": "ERROR", "message_id": "unknown", "attributes":
+   {"error_code": "INVALID_JSON",
+    "error_message": "Invalid JSON received: Expecting property name enclosed
+                      in double quotes: line 1 column 2 (char 1)"}}
+
+So the request body Eiffel POSTED was malformed - broken after its opening
+brace. HTTP_PYTHON_BRIDGE.send_message builds that body with
+SIMPLE_JSON_OBJECT.as_json (src/http_python_bridge.e:154-155), which makes
+simple_json 0.2.0 an immediate suspect. It is NOT the cause. Two independent
+pieces of evidence:
+
+(1) simple_json 0.2.0 emits VALID JSON for this exact message shape.
+    A standalone probe (base + time + simple_json only, no simple_http, no
+    simple_python) replicating PYTHON_MESSAGE.to_json field-for-field
+    - put_string message_id / type / timestamp, put_object attributes - was
+    compiled and run:
+
+      BODY_BEGIN>>>{"message_id":"test_msg_001","type":"VALIDATION_REQUEST",
+      "timestamp":"09/02/2026T1:10:41.244 PM","attributes":{}}<<<BODY_END
+      LEN=113
+      CHAR0=123 CHAR1=34
+
+    Character 1 is 123 '{' and character 2 is 34 '"' - precisely the byte the
+    Python decoder said was missing. The serializer is correct; the corruption
+    happens after as_json returns, in transport.
+
+(2) The transport is untested WIP, not today's work.
+    simple_python builds against simple_http, and simple_http is checked out on
+    wip/uncommitted-2026-09-02. That branch's single commit (223060d) is:
+
+      "WIP found uncommitted on 2026-09-02: NET_HTTP_CLIENT -> CURL_HTTP_CLIENT
+       backend switch (files dated 2026-02-12); untested, preserved on a branch"
+
+    git diff main..HEAD is exactly the backend swap - simple_http.ecf trades
+    net_http_client.ecf for curl_http_client.ecf, and src/simple_http.e retypes
+    client, configure_session, execute_single_request and configure_redirects
+    from NET_HTTP_CLIENT* to CURL_HTTP_CLIENT*. SIMPLE_HTTP.post now runs
+    through a cURL session that has never been exercised against a real server.
+
+    simple_http's own 15/15 suite passes because it does not POST a body to a
+    live listener; simple_python's integration test is the first thing to do so.
+
+Corroboration that this test used to pass, so the regression is real but older:
+simple_python's tree is clean, TRANSPORT_STATUS.md line 32 records
+"test_http_bridge_sends_to_python_server: OK", and commit 196a405 is titled
+"all 34 tests passing".
+
+CLASSIFICATION: PRE-EXISTING (WIP breakage in the simple_http dependency, dated
+2026-02-12). NOT caused by simple_json 0.2.0 or by simple_datetime. The
+timestamp field in this message comes from ISE's DATE_TIME
+(src/python_message.e:43 - "timestamp: DATE_TIME"), not from simple_datetime, so
+the noon-parse fix cannot reach it either.
+ACTION: none taken. simple_python needs no adaptation. The item to raise with
+Larry is whether the simple_http cURL backend swap should be finished or
+reverted - that is a decision about simple_http's WIP branch, outside this
+sweep's remit.
+
+================================================================================
+SUMMARY TABLE
+================================================================================
+repo                 | branch                     | build | tests                | verdict
+---------------------+----------------------------+-------+----------------------+-------------------------
+proven_fetch         | master                     | PASS  | 54 passed, 0 failed  | CLEAN
+simple_ai_client     | main                       | PASS  | 42 passed, 0 failed  | CLEAN
+simple_autospec      | main                       | PASS  | not runnable (libz3.dll) | PRE-EXISTING (env)
+simple_cache         | master                     | PASS  | 25 passed, 0 failed  | CLEAN
+simple_ci            | main                       | PASS  | 7 passed, 0 failed   | CLEAN
+simple_code          | master                     | PASS  | 10 passed, 0 failed  | CLEAN
+simple_config        | main                       | PASS  | 12 passed, 0 failed  | CLEAN
+simple_docker        | main                       | PASS  | 57 passed, 1 failed  | PRE-EXISTING (needs Docker)
+simple_encryption    | main                       | PASS  | 20 passed, 0 failed  | CLEAN
+simple_file          | main                       | PASS  | 14 passed, 0 failed  | CLEAN
+simple_github_runner | master                     | PASS  | 19 passed, 0 failed  | CLEAN
+simple_graphify      | main                       | PASS  | 24 passed, 0 failed  | CLEAN
+simple_graphql       | master                     | PASS  | 1 passed, 0 failed   | CLEAN
+simple_grpc          | main                       | PASS  | 45 passed, 0 failed  | CLEAN
+simple_hash          | master                     | PASS  | 44 passed, 0 failed  | CLEAN
+simple_http          | wip/uncommitted-2026-09-02 | PASS  | 15 passed, 0 failed  | CLEAN
+simple_i18n          | main                       | PASS  | 10 passed, 0 failed  | CLEAN
+simple_json          | main                       | PASS  | 265 passed, 0 failed | CLEAN
+simple_jwt           | master                     | PASS  | 35 passed, 0 failed  | CLEAN
+simple_k8s           | master                     | PASS  | 101 passed, 0 failed | CLEAN
+simple_logger        | wip/uncommitted-2026-09-02 | PASS  | 22 passed, 0 failed  | CLEAN
+simple_mock          | master                     | PASS  | 1 passed, 0 failed   | CLEAN
+simple_mq            | main                       | PASS  | 28 passed, 0 failed  | CLEAN
+simple_notebook      | master                     | PASS  | 80 passed, 0 failed  | CLEAN
+simple_pkg           | main                       | PASS  | 16 passed, 0 failed  | CLEAN
+simple_process       | main                       | PASS  | 17 passed, 0 failed  | CLEAN
+simple_python        | master                     | PASS  | aborted at HTTP integ. | PRE-EXISTING (simple_http WIP)
+simple_randomizer    | main                       | PASS  | 27 passed, 0 failed  | CLEAN
+simple_rate_limiter  | master                     | PASS  | 24 passed, 0 failed  | CLEAN
+simple_reel          | wip/uncommitted-2026-09-02 | PASS  | 28 passed, 0 failed  | CLEAN
+simple_rixqwen       | main                       | PASS  | 15 passed, 0 failed  | CLEAN
+simple_scheduler     | main                       | PASS  | 38 passed, 0 failed  | CLEAN
+simple_setup         | main                       | PASS  | 4 passed, 0 failed   | CLEAN
+simple_smtp          | master                     | PASS  | 57 passed, 0 failed  | CLEAN
+simple_spec_viz      | master                     | PASS  | not runnable (cgraph.dll) | PRE-EXISTING (env)
+simple_sql           | wip/uncommitted-2026-09-02 | PASS  | 52 passed, 0 failed  | CLEAN
+simple_telemetry     | master                     | PASS  | 22 passed, 0 failed  | CLEAN
+simple_toml          | main                       | PASS  | 11 passed, 0 failed  | CLEAN
+simple_toon          | main                       | PASS  | 35 passed, 0 failed  | CLEAN
+simple_uuid          | master                     | PASS  | 45 passed, 0 failed  | CLEAN
+simple_warp          | wip/uncommitted-2026-09-02 | PASS  | 50 passed, 0 failed  | CLEAN
+simple_web           | main                       | PASS  | 79 passed, 0 failed  | CLEAN
+---------------------+----------------------------+-------+----------------------+-------------------------
+TOTALS: 42 builds attempted, 42 PASS, 0 FAIL.
+        37 suites fully green; 2 not runnable headless (missing native DLLs);
+        1 with a Docker-dependent failure; 1 aborted on a WIP simple_http
+        transport; 1 (proven_fetch) green via its file-based reporter.
+
+CAUSED-BY-TODAY: none.
+STOPPED items (library at fault): none. simple_json 0.2.0 was suspected once
+        (simple_python) and cleared by direct probe - see INVESTIGATION.
+REPOS THAT COULD NOT BE BUILT: none.
+FIX BRANCHES / PRs CREATED: none - nothing to adapt.
+
+Note: this evidence file is intentionally NOT committed.
