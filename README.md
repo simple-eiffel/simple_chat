@@ -4,7 +4,7 @@ A standalone group chat for a private circle of friends on Windows PCs: an Eiffe
 
 ## Status
 
-**Phase 1 — contracts and skeletons.** Nothing here chats yet. What exists is the full class design with its contracts (preconditions, postconditions, invariants, MML model queries and frame conditions), the parts small enough to implement outright, and an assault suite that exercises them: **148 unit tests plus a 6-scenario cross-processor SCOOP proof, zero compiler warnings.** Two adversarial review rounds and their repairs are done, and Phase 4 implementation Tasks 1–7 are complete: the server runs — accounts, rooms, messages, images, history, SQLite persistence, and a live `@claude` participant that answers in the room through a sandboxed `claude -p` (proven end to end over HTTP). The design record lives in `.eiffel-workflow/`; remaining work is SSE streaming, the public door, and the thick client.
+**Phase 4 — the server is complete; the visible client is the last task.** The full class design with its contracts (preconditions, postconditions, invariants, MML model queries and frame conditions) is implemented and exercised by an assault suite: **158 unit tests plus a 6-scenario cross-processor SCOOP proof, zero compiler warnings.** Two adversarial review rounds and their repairs are done, and Phase 4 implementation Tasks 1–9 are complete: the server runs — accounts, rooms, messages, images, history, SQLite persistence, SSE streams for bots and curl, a per-IP lockout keyed by the real peer, the Caddy front door and DuckDNS updater, and a live `@claude` participant that answers in the room through a sandboxed `claude -p` (proven end to end over HTTP). The client stack compiles and has run a live round trip over WinHTTP (login, post, events, logout) with the session remembered as a DPAPI blob and a tray notifier. The design record lives in `.eiffel-workflow/`; the remaining work is Task 10, the visible chat pane, which waits on `simple_shaping`.
 
 ## What it will be
 
@@ -37,7 +37,7 @@ cd /d/prod/simple_chat
 ./EIFGENs/simple_chat_tests/F_code/simple_chat.exe
 ```
 
-Targets: `simple_chat` (library), `simple_chat_server`, `simple_chat_client` (compiles once `SHELL_TRAY` in simple_shell and `simple_winhttp` exist), `simple_chat_tests`.
+Targets: `simple_chat` (library), `simple_chat_server`, `simple_chat_client` (compiles; the window itself arrives with Task 10), `simple_chat_tests`.
 
 ## Dependencies
 
