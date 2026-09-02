@@ -84,12 +84,16 @@ front_door = "none"
 # -----------------------------------------------------------------------------
 # An addressable participant is an ordinary member with a robot marker, its own
 # rate limit and its own engine. @claude runs on THIS PC's own Claude Code
-# subscription, sandboxed to the folder named in `engine'.
+# subscription (the `claude' command must be on the PATH of the account that
+# starts the server), with no tools, sandboxed to a folder the server creates
+# itself: <data_dir>\participants\claude. For a claude_code entry `engine'
+# only has to be non-empty; the sandbox is never anywhere else. The bot user
+# named by `bot_username' is created on first start if it does not exist.
 #
 # [[participants]]
 # handle = "@claude"
 # kind = "claude_code"
-# engine = "D:/sandbox"
+# engine = "data/participants/claude"
 # bot_username = "claude_bot"
 # display_name = "Claude"
 # requests_per_hour = 5
