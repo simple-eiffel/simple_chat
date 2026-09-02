@@ -93,6 +93,24 @@ of the system, so hosting the room no longer means building from source.
 - The uninstaller now sweeps `{app}\*.log`, so a log written at run time cannot
   keep the install folder alive after an otherwise clean uninstall.
 
+- **The shipped default port is 8090, not 8080.** Apache, XAMPP, Tomcat and a
+  dozen development tools squat on 8080, and a collision there is the commonest
+  reason the server never comes up - found on Larry's own PC, where Apache held
+  it. Both shipped templates move together; `SERVER_CONFIG`'s library default is
+  left alone (contracts frozen - it is only the no-file fallback).
+- **A port collision is now named, not silent.** `start_server.cmd` finds what
+  holds the configured port before launching and prints the image name and PID
+  plus the two lines to change; `run_server.cmd` does the same on the hidden
+  scheduled-task path and writes the finding to `server.log`, the only place
+  anyone looks after a silent failure at boot.
+- **The host could not save `server.toml`.** An elevated install left it owned by
+  Administrators and merely readable, so "Edit server config" opened Notepad on a
+  file that could not be saved - and the port is the one setting most likely to
+  need changing. `Permissions: users-modify` is granted on the config file and on
+  `data\` and `backups\`, and deliberately NOT on `caddy.exe`, which stays
+  admin-only so a standard user cannot rewrite the executable an elevated
+  `/rl highest` logon task launches.
+
 ### Changed
 
 - `RUNBOOK.md` §1 — the `--create-admin` invocation is corrected. It showed the

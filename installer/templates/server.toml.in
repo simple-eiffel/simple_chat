@@ -22,8 +22,13 @@
 # =============================================================================
 
 # The door the server listens on, on this PC only (it always binds 127.0.0.1).
-# If you host, this is the port you forward on your router.
-port = 8080
+#
+# 8090, not 8080: Apache, XAMPP, Tomcat and a dozen dev tools squat on 8080,
+# and a collision there is the single most common reason the server will not
+# start. If 8090 is taken too, THIS IS THE ONE LINE TO CHANGE - pick anything
+# free between 1024 and 65535, and change local_port in client.toml to match.
+# "Start server" tells you what holds the port if it is busy.
+port = 8090
 
 # Relative to the working folder. See the note above before changing it.
 data_dir = "data"

@@ -176,8 +176,10 @@ Name: "autostart"; Description: "Start the chat server when Windows starts"; \
 [Dirs]
 ; The room's home. Never removed by the uninstaller.
 Name: "{#ServerRoot}";        Components: server; Flags: uninsneveruninstall
-Name: "{#ServerRoot}\data";   Components: server; Flags: uninsneveruninstall
-Name: "{#ServerRoot}\backups"; Components: server; Flags: uninsneveruninstall
+; The server runs as an ordinary user and writes its store here; "Back up
+; the room" writes there. Both need modify, and neither holds an executable.
+Name: "{#ServerRoot}\data";   Components: server; Flags: uninsneveruninstall; Permissions: users-modify
+Name: "{#ServerRoot}\backups"; Components: server; Flags: uninsneveruninstall; Permissions: users-modify
 
 [Files]
 ; --- client -----------------------------------------------------------------
@@ -228,8 +230,18 @@ Source: "src\caddy\LICENSE-CADDY"; DestDir: "{#ServerRoot}"; Components: server;
 
 ; The server config template. Never overwrite a host's edited settings, and
 ; never delete them on uninstall.
+; PERMISSIONS. The hosting guide tells the host to edit two lines in this
+; file - so the host has to be able to SAVE it. An elevated install leaves
+; files under {commonappdata} owned by Administrators and merely READABLE
+; by the person running, so "Edit server config" opened Notepad on a file
+; that could not be saved: the host could not change the port, which is the
+; one setting most likely to need changing.
+;
+; users-modify is granted HERE, on the config file alone - deliberately NOT
+; on caddy.exe, which stays admin-only so a standard user cannot rewrite the
+; executable that an elevated /rl highest logon task launches.
 Source: "src\server\server.toml.in"; DestDir: "{#ServerRoot}"; DestName: "server.toml"; \
-    Components: server; Flags: onlyifdoesntexist uninsneveruninstall
+    Components: server; Flags: onlyifdoesntexist uninsneveruninstall; Permissions: users-modify
 
 [Icons]
 ; --- client -----------------------------------------------------------------
