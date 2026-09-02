@@ -332,6 +332,170 @@ feature -- The live round trip
 			end
 		end
 
+feature -- The live round trip, through CLIENT_APP and the real pane
+
+	test_live_client_app_shows_an_event_in_the_real_pane
+			-- Task 10, end to end and for real: the finalized server booted, then
+			-- CLIENT_APP - the very class the exe roots on - taken through the path its
+			-- window takes, with the GUI's two blocking calls (the door's `run', the
+			-- pane's `run') replaced by the calls those windows make. `attempt_login' is
+			-- the door's own button agent; `open_room' is what `run' calls next; `tick'
+			-- is what SW_WINDOW fires every 250 ms. The event comes back through the
+			-- REAL poller, on its own SCOOP processor, into the REAL SW_CHAT_VIEW - not
+			-- a double - and is looked for in the thread's bubbles.
+			--
+			-- Then the second half of D-018: the session sealed with DPAPI, a SECOND
+			-- CLIENT_APP built over the same file, and no password asked - proven
+			-- against a live server that really does honour the token at GET /me.
+			--
+			-- Skips, and passes, when the exe is not built. Teardown runs before the
+			-- verdict so a failure never strands a server.
+		local
+			l_exe: RAW_FILE
+			l_process: SIMPLE_PROCESS
+			l_server: SIMPLE_ASYNC_PROCESS
+			l_transport: WINHTTP_TRANSPORT
+			l_locator: SERVICE_LOCATOR
+			l_endpoint: CHAT_ENDPOINT
+			l_environment: EXECUTION_ENVIRONMENT
+			l_config, l_second_config: CLIENT_CONFIG
+			l_app, l_second_app: detachable CLIENT_APP
+			l_why: detachable STRING_32
+			l_transcript: STRING_8
+			l_tries: INTEGER
+			l_alive, l_logged_in, l_opened, l_shown, l_sealed, l_resumed: BOOLEAN
+		do
+			create l_exe.make_with_name (Server_exe_path)
+			if not l_exe.exists then
+				print ("  SKIP: the live pane round trip needs " + Server_exe_path + ", which is not built%N")
+				assert ("skipped cleanly without a server exe", True)
+			else
+				create l_transcript.make (512)
+				create l_process.make
+				l_process.command_output ("taskkill /F /IM " + Scratch_server_name).do_nothing
+				prepare_scratch
+				delete_file (client_scratch_toml)
+				create l_server.make
+				l_server.start ("cmd /c " + Scratch_root + backslash + Scratch_server_name + " " + Scratch_root + backslash + "server.toml > " + Scratch_root + backslash + "pane_boot.log 2>&1")
+				assert ("server process started", l_server.was_started_successfully)
+				create l_transport.make
+				create l_endpoint.make (Base_url)
+				create l_locator.make (l_transport)
+				create l_environment
+				from
+					l_tries := 0
+				until
+					l_alive or l_tries >= 40
+				loop
+					l_locator.probe (l_endpoint)
+					l_alive := l_locator.last_probe_alive
+					if not l_alive then
+						l_environment.sleep (500_000_000)
+					end
+					l_tries := l_tries + 1
+				variant
+					41 - l_tries
+				end
+				if l_alive then
+					create l_config.make_defaults
+					l_config.set_storage_path (client_scratch_toml)
+					l_config.set_prefers_local (False)
+					l_config.set_only_server_url (Base_url)
+					create l_app.make_for_test (l_transport, l_config)
+					l_transcript.append ("    CLIENT_APP located " + l_app.endpoint.base_url + "%N")
+					l_why := l_app.attempt_login (Base_url, Admin_username, Admin_password)
+					l_logged_in := l_app.client.is_logged_in
+					if attached l_why as w then
+						l_transcript.append ("    the door was refused: " + utf8_head (w, 80) + "%N")
+					end
+					if l_logged_in then
+						l_transcript.append ("    the door opened: attempt_login answered Void and the session is live%N")
+						l_app.client.remember_session_in (l_config)
+						l_sealed := l_config.has_session
+						l_transcript.append ("    remember me: " + (if l_sealed then "sealed as a DPAPI blob" else "no DPAPI here, so nothing remembered" end) + "%N")
+						l_app.open_room
+						l_opened := l_app.presenter.is_room_open
+						l_transcript.append ("    open_room -> room " + l_app.room_id.out
+							+ " (" + utf8_head (l_app.view.room_title, 40) + "), poller running: "
+							+ l_opened.out + "%N")
+						if l_opened then
+							l_app.send_text (Pane_body)
+							from
+								l_tries := 0
+							until
+								l_shown or l_tries >= 40
+							loop
+								l_app.tick
+								l_shown := across l_app.view.thread.messages as m some m.text.has_substring (Pane_body) end
+								if not l_shown then
+									l_environment.sleep (250_000_000)
+								end
+								l_tries := l_tries + 1
+							variant
+								41 - l_tries
+							end
+							l_transcript.append ("    the pane after " + l_tries.out + " ticks: "
+								+ l_app.view.shown_count.out + " event(s), " + l_app.view.thread.count.out
+								+ " bubble(s); the posted line is "
+								+ (if l_shown then "among them" else "MISSING" end) + "%N")
+							l_app.presenter.close_room
+						end
+						if l_sealed then
+							create l_second_config.make_defaults
+							l_second_config.set_storage_path (client_scratch_toml)
+							l_second_config.load
+							create l_second_app.make_for_test (l_transport, l_second_config)
+							l_second_app.try_remembered_session
+							l_resumed := l_second_app.client.is_logged_in
+							l_transcript.append ("    a second CLIENT_APP over the same client.toml: "
+								+ (if l_resumed then "logged in with no password (GET /me honoured the blob)" else "was NOT resumed" end) + "%N")
+							if l_resumed and then attached l_second_app as l_sa then
+								l_sa.client.logout
+							end
+						end
+					end
+				else
+					l_transcript.append ("    /health never alive after " + l_tries.out + " probes%N")
+				end
+					-- Teardown first: no assert may strand the scratch server.
+				if l_server.is_running then
+					l_server.kill.do_nothing
+				end
+				l_server.close
+				l_process.command_output ("taskkill /F /IM " + Scratch_server_name).do_nothing
+				delete_file (client_scratch_toml)
+				print (l_transcript)
+				assert ("the server answered /health with the health shape", l_alive)
+				assert ("the door agent opened a live session", l_logged_in)
+				assert ("the first room opened and the poller started", l_opened)
+				assert ("the posted line came back through the poller into the real pane", l_shown)
+				assert ("a sealed session was taken up by a second CLIENT_APP with no password",
+					l_resumed or not l_sealed)
+			end
+		end
+
+	Pane_body: STRING_8 = "The first line ever to reach a simple_chat window"
+
+	client_scratch_toml: STRING_32
+			-- The scratch client.toml, beside the scratch server's data.
+		do
+			create Result.make_from_string_general (Scratch_root)
+			Result.append_character (backslash_character)
+			Result.append ({STRING_32} "client.toml")
+		ensure
+			given: not Result.is_empty
+		end
+
+	backslash: STRING_8
+			-- One path separator, written as a code so no tool between here and the
+			-- compiler can eat it.
+		do
+			create Result.make (1)
+			Result.append_character ('%/92/')
+		end
+
+	backslash_character: CHARACTER_32 = '%/92/'
+
 feature {NONE} -- Transcript support
 
 	error_line (a_error: CHAT_ERROR): STRING_8

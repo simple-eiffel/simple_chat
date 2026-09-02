@@ -54,12 +54,18 @@
 	<!-- The thick client (intent-v3, D-015): simple_widgets, no browser. The UI-free client stack
 	     (CHAT_CLIENT, EVENT_POLLER, CHAT_PRESENTER, ...) lives in the library's src\client\ cluster and is
 	     assaulted by the tests target; this target adds the window, the tray and WinHTTP. SHELL_TRAY
-	     (simple_shell) and simple_winhttp have landed (Phase 4 Task 9); SW_CHAT_VIEW waits on simple_shaping. -->
+	     (simple_shell) and simple_winhttp landed with Phase 4 Task 9; SW_CHAT_VIEW and LOGIN_WINDOW
+	     landed with Task 10 over simple_widgets + simple_shaping. Stage the runnable folder with
+	     apps/client/stage_client.sh: cairo.dll, LICENSE-ASSETS.md and assets/noto-emoji/png/128. -->
 	<target name="simple_chat_client" extends="simple_chat">
 		<root class="CLIENT_APP" feature="make"/>
 		<setting name="console_application" value="false"/>
 		<library name="simple_shell" location="$SIMPLE_EIFFEL/simple_shell/simple_shell.ecf"/>
-		<library name="simple_widgets" location="$SIMPLE_EIFFEL/simple_widgets/simple_widgets.ecf"/>
+		<library name="simple_widgets" location="$SIMPLE_EIFFEL/simple_widgets/simple_widgets.ecf">
+			<!-- SW_LOCALE.format_number carries an unused local of the library's own; keep this
+			     project's build at zero warnings, as simple_toml is kept. -->
+			<option warning="none"/>
+		</library>
 		<cluster name="client" location=".\apps\client\" recursive="true"/>
 	</target>
 	<target name="simple_chat_tests" extends="simple_chat">
@@ -68,8 +74,22 @@
 		<library name="simple_testing" location="$SIMPLE_EIFFEL/simple_testing/simple_testing.ecf"/>
 		<library name="testing" location="$ISE_LIBRARY\library\testing\testing.ecf"/>
 		<!-- Phase 4 Task 9: the wiring assault drives WINHTTP_TRANSPORT, TRAY_NOTIFIER and the
-		     client apps cluster headlessly; simple_shell carries SHELL_TRAY for the tray tests. -->
+		     client apps cluster headlessly; simple_shell carries SHELL_TRAY for the tray tests.
+		     Phase 4 Task 10: simple_widgets joins for SW_CHAT_VIEW and LOGIN_WINDOW - the window
+		     assault constructs both OFFSCREEN (SW_WINDOW.make allocates a cairo image surface and
+		     nothing native; only `run' creates a window), so the pane's contracts are proven with
+		     no desktop. cairo.dll must sit beside the test exe: simple_cairo links an IMPORT
+		     library, so a missing DLL is a launch failure, not a degraded run.
+		     simple_shaping is named EXPLICITLY beside simple_widgets: an indirectly included
+		     library's classes are not in this system's universe, and the window assault reads
+		     the SHAPED_LAYOUT the pane's own kit produces for the acceptance line. -->
 		<library name="simple_shell" location="$SIMPLE_EIFFEL/simple_shell/simple_shell.ecf"/>
+		<library name="simple_shaping" location="$SIMPLE_EIFFEL/simple_shaping/simple_shaping.ecf"/>
+		<library name="simple_widgets" location="$SIMPLE_EIFFEL/simple_widgets/simple_widgets.ecf">
+			<!-- SW_LOCALE.format_number carries an unused local of the library's own; keep this
+			     project's build at zero warnings, as simple_toml is kept. -->
+			<option warning="none"/>
+		</library>
 		<cluster name="server" location=".\apps\server\" recursive="true"/>
 		<cluster name="client" location=".\apps\client\" recursive="true"/>
 		<cluster name="tests" location=".\testing\" recursive="true">

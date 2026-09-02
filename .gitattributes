@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings whatever core.autocrlf says: bash reads a
+# CRLF shebang line as an interpreter named "bash\r" and refuses to run.
+# (The same rule simple_widgets carries, for the same reason.)
+*.sh text eol=lf

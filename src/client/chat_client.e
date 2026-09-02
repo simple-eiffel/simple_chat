@@ -118,6 +118,49 @@ feature -- Session
 			endpoint_kept: endpoint = old endpoint
 		end
 
+	resume (a_token: READABLE_STRING_8): CHAT_RESULT [CHAT_MEMBER]
+			-- Take up a session remembered from an earlier run (CLIENT_CONFIG.load_session):
+			-- GET /me both proves the token is still live and says whose it is. Any other
+			-- answer drops the token again, so a stale blob can never leave a half-session
+			-- behind - the window then asks for a password, exactly as on a first run.
+		require
+			logged_out: not is_logged_in
+			token_shape: is_hex_64 (a_token)
+		local
+			l_reply: HTTP_REPLY
+		do
+			token := a_token.to_string_8
+			l_reply := exchange ("GET", Path_me, authorized_headers, Void, Default_timeout_seconds)
+			if l_reply.is_success and then attached codec.member (l_reply.body) as m then
+				me := m
+				create Result.make_success (m)
+			else
+				create token.make_empty
+				me := Void
+				create Result.make_error (error_of (l_reply))
+			end
+		ensure
+			outcome: Result.is_success = is_logged_in
+			me_on_success: Result.is_success implies (attached me as m and then attached Result.value as v and then m = v)
+			nothing_kept_on_failure: not Result.is_success implies me = Void
+			endpoint_kept: endpoint = old endpoint
+		end
+
+	remember_session_in (a_config: CLIENT_CONFIG)
+			-- Seal the live session into `a_config' (DPAPI, `CLIENT_CONFIG.save_session').
+			-- The command lives HERE and not on the window because the token never
+			-- leaves this object in clear: "remember me" is a request, not a getter.
+		require
+			logged_in: is_logged_in
+		do
+			a_config.save_session (token)
+		ensure
+			session_kept: is_logged_in and me = old me
+			remembered_or_no_dpapi: a_config.has_session or not (create {SIMPLE_ENCRYPTION}.make).is_dpapi_available
+			written: a_config.file_exists (a_config.storage_path)
+			endpoint_kept: endpoint = old endpoint
+		end
+
 	hand_session_to (a_other: separate CHAT_CLIENT)
 			-- Copy this session into `a_other' (the poller's client on its own processor).
 		require
@@ -195,6 +238,50 @@ feature -- Reading
 			bounded: (Result.is_success and then attached Result.value as p) implies p.events.count <= a_limit
 			all_after: (Result.is_success and then attached Result.value as p) implies across p.events as e all e.id > a_since_id end
 			same_room: (Result.is_success and then attached Result.value as p) implies (across p.events as e all e.room_id = a_room_id end and across p.statuses as s all s.room_id = a_room_id end)
+			session_kept: is_logged_in and me = old me
+		end
+
+	rooms: CHAT_RESULT [ARRAYED_LIST [TUPLE [id: INTEGER_64; name: STRING_32]]]
+			-- GET /rooms - [{id, name}] for this member, in the server's order. A bare
+			-- array, so it is decoded through CLIENT_CODEC.array; one malformed entry
+			-- makes the whole answer a 502 result, never a half-list.
+		require
+			logged_in: is_logged_in
+		local
+			l_reply: HTTP_REPLY
+			l_list: ARRAYED_LIST [TUPLE [id: INTEGER_64; name: STRING_32]]
+			l_ok: BOOLEAN
+			i: INTEGER
+		do
+			l_reply := exchange ("GET", Path_rooms, authorized_headers, Void, Default_timeout_seconds)
+			if l_reply.is_success and then attached codec.array (l_reply.body) as a then
+				create l_list.make (a.count)
+				l_ok := True
+				from
+					i := 1
+				until
+					i > a.count or not l_ok
+				loop
+					if attached a.object_item (i) as o and then o.integer_item ({CHAT_JSON}.Key_id) > 0
+						and then attached o.string_item ({CHAT_JSON}.Key_name) as n and then not n.is_empty
+					then
+						l_list.extend ([o.integer_item ({CHAT_JSON}.Key_id), n.to_string_32])
+					else
+						l_ok := False
+					end
+					i := i + 1
+				variant
+					a.count - i + 1
+				end
+			end
+			if l_ok and then attached l_list as l_rooms then
+				create Result.make_success (l_rooms)
+			else
+				create Result.make_error (error_of (l_reply))
+			end
+		ensure
+			all_identified: (Result.is_success and then attached Result.value as l_r) implies across l_r as l_one all l_one.id > 0 end
+			all_named: (Result.is_success and then attached Result.value as l_r) implies across l_r as l_one all not l_one.name.is_empty end
 			session_kept: is_logged_in and me = old me
 		end
 
@@ -333,6 +420,8 @@ feature -- Constants
 
 	Path_login: STRING_8 = "/login"
 	Path_logout: STRING_8 = "/logout"
+	Path_me: STRING_8 = "/me"
+	Path_rooms: STRING_8 = "/rooms"
 	Header_authorization: STRING_8 = "Authorization"
 	Header_content_type: STRING_8 = "Content-Type"
 	Header_file_name: STRING_8 = "X-File-Name"

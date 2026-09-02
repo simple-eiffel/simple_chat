@@ -1,12 +1,11 @@
 note
 	description: "[
-		The member's executable - the thick client (D-015). Loads the
-		config, locates the server (local service first, D-016), and
-		assembles the whole UI-free stack: the GUI's own CHAT_CLIENT over
-		WINHTTP_TRANSPORT, the presenter over a view and TRAY_NOTIFIER.
-		Single-instance focus and the window itself are a later UI pass.
+		The member's executable - the thick client (D-015), now with its
+		window. Loads the config, LOCATES the server (the local service
+		first, D-016), tries the session this PC remembers, asks for a
+		password when it will not do, opens the room and runs the pane.
 
-		Three processors (approach section 8): the root runs the window,
+		THREE PROCESSORS (approach section 8). The root runs the window,
 		the presenter and the GUI's own CHAT_CLIENT for posting; a
 		POLLER_HOST runs the EVENT_POLLER with a transport and CHAT_CLIENT
 		of its own; an EVENT_INBOX sits between them and never blocks.
@@ -17,10 +16,27 @@ note
 		launches the loop asynchronously with no separate argument at all,
 		so the launch does not wait for the loop to end.
 
-		The visible pane is deliberately absent: SW_CHAT_VIEW (the
-		simple_widgets room pane) waits for simple_shaping, without which
-		Hebrew cannot be rendered; until it lands, MEMORY_CHAT_VIEW
-		stands in so the full stack assembles and this target compiles.
+		THE HEARTBEAT IS THE PUMP. `SW_WINDOW' fires `on_tick' every 250
+		ms on the ROOT processor - the GUI thread - and `tick' does one
+		`CHAT_PRESENTER.pump' there. That is the whole live path: the
+		poller blocks on its own processor for up to 25 seconds at a time
+		and the window never waits for it, because the inbox is a
+		processor that never blocks.
+
+		THE SESSION CAN DIE UNDER THE WINDOW. When the poller meets a 401
+		the presenter closes the room, drops the token with no exchange
+		and sets `session_lost'; `tick' sees it, shuts the pane and `run'
+		goes round again - straight back to the door. simple_shell owns
+		ONE native window at a time, so the login window and the room pane
+		are never up together: the door runs, closes, and then the room
+		does.
+
+		WHAT IS REMEMBERED. "Remember me" seals the session into
+		client.toml with DPAPI (`CHAT_CLIENT.remember_session_in' - the
+		token never leaves the client in clear) and, at shutdown, the
+		client does NOT log out: revoking the token would make the next
+		launch ask for a password anyway. Unticked, the reverse: log out,
+		forget the blob. The window's placement is saved either way.
 	]"
 	author: "Larry Rix"
 
@@ -28,41 +44,68 @@ class
 	CLIENT_APP
 
 create
-	make
+	make, make_for_test
 
 feature {NONE} -- Initialization
 
 	make
-			-- Assemble everything that needs no pane: config, transport, locator,
-			-- endpoint, client, view, tray, notifier, presenter.
+			-- The whole client: assemble, then run until the member closes the window
+			-- (or gives up at the door).
+		do
+			build (Void, Void)
+			run
+		end
+
+	make_for_test (a_transport: HTTP_TRANSPORT; a_config: CLIENT_CONFIG)
+			-- The same assembly over a scripted transport and a scratch config, with
+			-- nothing shown and nothing run: the assault drives `try_remembered_session',
+			-- `attempt_login', `open_room' and `tick' itself, exactly as `run' does.
+		do
+			build (a_transport, a_config)
+		ensure
+			config_kept: config = a_config
+			transport_kept: transport = a_transport
+			logged_out: not client.is_logged_in
+			no_room: not presenter.is_room_open
+			nothing_shown: view.shown_count = 0
+		end
+
+	build (a_transport: detachable HTTP_TRANSPORT; a_config: detachable CLIENT_CONFIG)
+			-- Config, transport, locator, endpoint, client, view, tray, notifier, presenter -
+			-- and the two agents that make the window a client: the tick that pumps and the
+			-- submit that posts.
 		local
 			l_locator: SERVICE_LOCATOR
-			l_endpoint: CHAT_ENDPOINT
 			l_tray: SHELL_TRAY
+			l_winhttp: WINHTTP_TRANSPORT
 		do
-			create config.make_defaults
-			config.load
-			create transport.make
+			if attached a_config as l_given then
+				config := l_given
+			else
+				create config.make_defaults
+				config.load
+			end
+			if attached a_transport as l_wire then
+				transport := l_wire
+			else
+				create l_winhttp.make
+				transport := l_winhttp
+			end
 			create l_locator.make (transport)
-			l_endpoint := l_locator.locate (config)
-			create client.make (transport, l_endpoint)
-			create view.make
+			endpoint := l_locator.locate (config)
+			create client.make (transport, endpoint)
+			create view.make (Default_room_title,
+				config.window_x.max (0), config.window_y.max (0),
+				config.window_width.max (Minimum_window_width),
+				config.window_height.max (Minimum_window_height))
 			create l_tray.make ({TRAY_NOTIFIER}.Tooltip_base)
 			create notifier.make (l_tray)
 			create presenter.make (client, view, notifier)
-				-- The interactive part is UI-gated and stays honestly unbuilt here:
-				-- the login dialog and the room pane are SW_* panes (simple_widgets)
-				-- whose text path waits for simple_shaping (SW_CHAT_VIEW renders
-				-- Hebrew, or it does not ship). Once the pane lands, the flow is:
-				-- login dialog -> client.login (or a remembered session:
-				-- config.load_session handed back through the dialog);
-				-- start_polling (presenter, room, since); the window timer calls
-				-- presenter.pump every tick and, when presenter.session_lost is set
-				-- afterwards (the server answered 401: the room is closed and the
-				-- client logged out with no exchange), shows the login dialog again
-				-- and start_polling from presenter.last_seen_id; on close:
-				-- presenter.log_out while still logged in (the inbox is stopped and
-				-- the host's loop ends on its next poll), then config.save.
+			view.set_on_send (agent send_text)
+			view.window.set_on_tick (agent tick)
+		ensure
+			logged_out: not client.is_logged_in
+			no_room: not presenter.is_room_open
 		end
 
 feature -- Access
@@ -73,21 +116,242 @@ feature -- Access
 	config: CLIENT_CONFIG
 			-- What the member's machine remembers; saved again on close.
 
-	transport: WINHTTP_TRANSPORT
-			-- The root processor's transport: the locator's probes, the login,
-			-- every post. The poller's lives in POLLER_HOST, on its processor.
+	transport: HTTP_TRANSPORT
+			-- The root processor's transport: the locator's probes, the login, every
+			-- post. WINHTTP_TRANSPORT in a real run; the poller's lives in POLLER_HOST,
+			-- on its own processor.
 
-	view: MEMORY_CHAT_VIEW
-			-- Stand-in for SW_CHAT_VIEW until simple_shaping lands; the presenter
-			-- talks only to CHAT_VIEW, so the swap will not touch it.
+	endpoint: CHAT_ENDPOINT
+			-- Where SERVICE_LOCATOR said to talk, or where the door was pointed.
+
+	view: SW_CHAT_VIEW
+			-- The room pane: simple_widgets, shaped text, no browser.
 
 	notifier: TRAY_NOTIFIER
 			-- Balloons and the unread badge on the notification area.
 
 	presenter: CHAT_PRESENTER
 			-- The logic between the client, the inbox, the view and the notifier.
+			-- Rebuilt when the door is pointed at a different server, because a
+			-- presenter is bound to one client for its life.
+
+	room_id: INTEGER_64
+			-- The open room; 0 before one is.
+
+	last_seen_id: INTEGER_64
+			-- The highest id shown, carried across a re-login so a new session does not
+			-- replay the whole room.
+
+feature -- Status report
+
+	remembers: BOOLEAN
+			-- Did the member tick "remember me"? Then the session is sealed and the
+			-- shutdown does not revoke it.
+
+	session_was_lost: BOOLEAN
+			-- Did the last pane close because the server rejected the session?
 
 feature -- Basic operations
+
+	run
+			-- The door, the room, and round again if the session dies under the window.
+		local
+			l_done: BOOLEAN
+		do
+			from
+			until
+				l_done
+			loop
+				if not client.is_logged_in then
+					try_remembered_session
+				end
+				if not client.is_logged_in then
+					ask_for_login
+				end
+				if client.is_logged_in then
+					session_was_lost := False
+					open_room
+					view.run
+					if presenter.is_room_open then
+						presenter.close_room
+					end
+					l_done := not session_was_lost
+				else
+					l_done := True
+				end
+			end
+			shut_down
+		ensure
+			nothing_left_open: not presenter.is_room_open
+		end
+
+	try_remembered_session
+			-- The session this PC remembers, if it unseals and the server still honours
+			-- it (GET /me). A blob that does not is forgotten rather than kept to fail again.
+		require
+			logged_out: not client.is_logged_in
+		local
+			l_token: detachable STRING_8
+		do
+			l_token := config.load_session
+			if attached l_token as t and then client.is_hex_64 (t) then
+				if not client.resume (t).is_success then
+					config.forget_session
+				else
+					remembers := True
+				end
+			elseif config.has_session then
+				config.forget_session
+			end
+		ensure
+			no_blob_no_session: not (old config.has_session) implies not client.is_logged_in
+			remembered_when_in: client.is_logged_in implies remembers
+		end
+
+	ask_for_login
+			-- The door: run it until it is accepted or given up on, then seal the session
+			-- if the member asked for that.
+		require
+			logged_out: not client.is_logged_in
+		local
+			l_door: LOGIN_WINDOW
+		do
+			create l_door.make (endpoint.base_url, config.window_x.max (0), config.window_y.max (0))
+			l_door.set_attempt (agent attempt_login)
+			l_door.run
+			if l_door.is_accepted and then client.is_logged_in then
+				remembers := l_door.remembers
+				if remembers then
+					client.remember_session_in (config)
+				else
+					config.forget_session
+				end
+			end
+		end
+
+	attempt_login (a_url, a_username: READABLE_STRING_8; a_password: READABLE_STRING_GENERAL): detachable STRING_32
+			-- What the door's Log in button does: point the client at `a_url' (rebuilding
+			-- the client and the presenter when it is a different server), then log in.
+			-- Void on success; the server's own message on failure.
+		require
+			logged_out: not client.is_logged_in
+			named: not a_username.is_empty
+			secret_given: not a_password.is_empty
+		local
+			l_rules: CHAT_URL_RULES
+			l_endpoint: CHAT_ENDPOINT
+			l_result: CHAT_RESULT [CHAT_MEMBER]
+		do
+			create l_rules
+			if not l_rules.is_acceptable_url (a_url) then
+				Result := Message_bad_server
+			else
+				if not endpoint.base_url.same_string (a_url) then
+					create l_endpoint.make (a_url)
+					endpoint := l_endpoint
+					create client.make (transport, l_endpoint)
+					create presenter.make (client, view, notifier)
+					config.set_primary_url (a_url)
+				end
+				l_result := client.login (a_username, a_password)
+				if not l_result.is_success and then attached l_result.error as e then
+					Result := e.message
+				end
+			end
+		ensure
+			in_or_explained: client.is_logged_in = (Result = Void)
+			nothing_open: not presenter.is_room_open
+		end
+
+	open_room
+			-- The member's first room: its name in the header, its roster remembered, its
+			-- poller running, its pane ready. When the server will not say what rooms there
+			-- are, the room stays closed and the reason goes on the pane's error line - the
+			-- window still opens, because a member who is told nothing learns nothing.
+		require
+			logged_in: client.is_logged_in
+			closed: not presenter.is_room_open
+		local
+			l_rooms: CHAT_RESULT [ARRAYED_LIST [TUPLE [id: INTEGER_64; name: STRING_32]]]
+		do
+			l_rooms := client.rooms
+			if l_rooms.is_success and then attached l_rooms.value as l_list and then not l_list.is_empty then
+				room_id := l_list.first.id
+				view.set_room_title (l_list.first.name)
+				presenter.load_roster (room_id)
+				start_polling (presenter, room_id, last_seen_id)
+				view.set_unread (presenter.unread)
+			elseif attached l_rooms.error as e then
+				view.show_error (e.message)
+			else
+				view.show_error (Message_no_rooms)
+			end
+		ensure
+			room_named_when_open: presenter.is_room_open implies room_id > 0
+			explained_when_not: not presenter.is_room_open implies view.errors.count > old view.errors.count
+		end
+
+	tick
+			-- The window's 250 ms heartbeat, on the ROOT processor: one pump, the badge,
+			-- and - when the server has rejected the session - the end of this pane.
+		do
+			if presenter.is_room_open and then client.is_logged_in then
+				presenter.pump
+				last_seen_id := presenter.last_seen_id
+				view.set_unread (presenter.unread)
+				if presenter.session_lost then
+					session_was_lost := True
+					view.close
+				end
+			end
+		ensure
+			badge_matches: presenter.is_room_open implies view.unread = presenter.unread
+			seen_monotonic: last_seen_id >= old last_seen_id
+		end
+
+	send_text (a_text: READABLE_STRING_GENERAL)
+			-- The composer's line, posted. The echo comes back through the poller like
+			-- everybody else's, so nothing is shown here.
+		do
+			if presenter.is_room_open and then client.is_logged_in and then not a_text.is_empty then
+				presenter.send (a_text)
+			end
+		ensure
+			nothing_shown_here: view.shown_model |=| old view.shown_model
+		end
+
+	shut_down
+			-- Close the room, end the session unless it is being remembered, and write the
+			-- window's placement back to client.toml.
+		do
+			if presenter.is_room_open then
+				presenter.close_room
+			end
+			if client.is_logged_in and then not remembers then
+				client.logout
+				config.forget_session
+			end
+			config.set_window (view.window.win_x, view.window.win_y,
+				view.window.win_w.max (Minimum_window_width),
+				view.window.win_h.max (Minimum_window_height))
+			config.save
+		ensure
+			closed: not presenter.is_room_open
+			logged_out_unless_remembered: client.is_logged_in implies remembers
+		end
+
+feature -- Constants
+
+	Default_room_title: STRING_32 = "main"
+			-- What the header says before the server names the room.
+
+	Minimum_window_width: INTEGER = 480
+	Minimum_window_height: INTEGER = 360
+
+	Message_bad_server: STRING_32 = "That is not an address this client will send a password to"
+	Message_no_rooms: STRING_32 = "The server lists no room for this account"
+
+feature {NONE} -- Processors
 
 	start_polling (a_presenter: CHAT_PRESENTER; a_room_id, a_since_id: INTEGER_64)
 			-- The inbox on a processor of its own, the poller on another with the session copied into
@@ -111,8 +375,6 @@ feature -- Basic operations
 			open: a_presenter.is_room_open
 		end
 
-feature {NONE} -- Processors
-
 	hand_session (a_host: separate POLLER_HOST)
 			-- Copy the session into the host's client (synchronous: the token is read from here).
 		require
@@ -132,5 +394,10 @@ feature {NONE} -- Processors
 		do
 			a_host.poll (a_room_id, a_since_id)
 		end
+
+invariant
+	room_iff_open: presenter.is_room_open implies room_id > 0
+	seen_non_negative: last_seen_id >= 0
+	client_at_endpoint: client.endpoint = endpoint
 
 end
