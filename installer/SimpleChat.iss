@@ -263,7 +263,7 @@ Name: "{group}\{#AppName} Server\Create user";         Filename: "{app}\create_u
     WorkingDir: "{app}"; Comment: "Make an account for a friend - accounts are created by you, never self-registered"; Components: server
 Name: "{group}\{#AppName} Server\Server log";          Filename: "{app}\view_log.cmd"; \
     WorkingDir: "{app}"; Comment: "What the server printed"; Components: server
-Name: "{group}\{#AppName} Server\Edit server config";  Filename: "notepad.exe"; \
+Name: "{group}\{#AppName} Server\Edit server config";  Filename: "{sys}\notepad.exe"; \
     Parameters: """{#ServerRoot}\server.toml"""; Comment: "Turn hosting on by editing two lines"; Components: server
 Name: "{group}\{#AppName} Server\Back up the room";    Filename: "{app}\backup_room.cmd"; \
     WorkingDir: "{app}"; Comment: "Make a dated copy to send to your standby host"; Components: server

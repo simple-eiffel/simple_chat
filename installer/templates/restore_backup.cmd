@@ -11,6 +11,7 @@ REM database aside first (into backups\replaced_<date>_<time>\) - so a restore
 REM onto the wrong PC is never the end of the story.
 REM ===========================================================================
 setlocal EnableExtensions
+set "SYS=%SystemRoot%\System32"
 set "ROOT=%ProgramData%\SimpleChat"
 set "DATADIR=%ROOT%\data"
 
@@ -19,7 +20,7 @@ echo   Restore the room from a backup
 echo   ------------------------------
 echo.
 
-tasklist /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | find /i "SimpleChatServer.exe" >nul
+"%SYS%\tasklist.exe" /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | "%SYS%\find.exe" /i "SimpleChatServer.exe" >nul
 if not errorlevel 1 (
     echo   The server is RUNNING. Stop it first ^("Stop server" in the Start
     echo   Menu^), then run this again.
@@ -79,7 +80,7 @@ if not exist "%DATADIR%" mkdir "%DATADIR%"
 
 REM Set the current room aside, whole, before touching anything.
 if exist "%DATADIR%\simple_chat.db" (
-    for /f %%S in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "STAMP=%%S"
+    for /f %%S in ('"%SYS%\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "STAMP=%%S"
     call :setaside
 )
 

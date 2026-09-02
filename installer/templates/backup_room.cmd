@@ -14,6 +14,7 @@ REM run while the server is up, and copies the whole file set together so the
 REM copy is internally consistent.
 REM ===========================================================================
 setlocal
+set "SYS=%SystemRoot%\System32"
 set "ROOT=%ProgramData%\SimpleChat"
 set "DATADIR=%ROOT%\data"
 
@@ -22,7 +23,7 @@ echo   Back up the room
 echo   ----------------
 echo.
 
-tasklist /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | find /i "SimpleChatServer.exe" >nul
+"%SYS%\tasklist.exe" /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | "%SYS%\find.exe" /i "SimpleChatServer.exe" >nul
 if not errorlevel 1 (
     echo   The server is RUNNING.
     echo.
@@ -42,7 +43,7 @@ if not exist "%DATADIR%\simple_chat.db" (
     exit /b 1
 )
 
-for /f %%S in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "STAMP=%%S"
+for /f %%S in ('"%SYS%\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "STAMP=%%S"
 set "DEST=%ROOT%\backups\%STAMP%"
 
 mkdir "%DEST%" 2>nul
@@ -60,5 +61,5 @@ echo   Send that WHOLE FOLDER to your standby host - all of the files in it,
 echo   not just simple_chat.db. They put it in place with "Restore from
 echo   backup" on their PC.
 echo.
-start "" explorer.exe "%DEST%"
+start "" "%SystemRoot%\explorer.exe" "%DEST%"
 pause

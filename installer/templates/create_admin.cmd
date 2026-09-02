@@ -17,12 +17,13 @@ REM username never carries non-ASCII - the rules confine it to a-z, 0-9 and
 REM underscore - so nothing non-ASCII is ever put on the command line, which
 REM on Windows is where such things get mangled.
 REM ===========================================================================
-setlocal
+setlocal EnableDelayedExpansion
+set "SYS=%SystemRoot%\System32"
 set "ROOT=%ProgramData%\SimpleChat"
 
 REM Remember the console's code page and put it back on the way out.
-for /f "tokens=2 delims=:" %%C in ('chcp') do set "OLDCP=%%C"
-chcp 65001 >nul
+for /f "tokens=2 delims=:" %%C in ('"%SYS%\chcp.com"') do set "OLDCP=%%C"
+"%SYS%\chcp.com" 65001 >nul
 
 cd /d "%ROOT%" || (echo Cannot enter %ROOT% & pause & exit /b 1)
 
@@ -37,7 +38,7 @@ REM The store is SQLite in WAL mode, which does allow a second process to open
 REM it - but nothing here sets a busy timeout, so a write that races the
 REM running server's can come back SQLITE_BUSY and the account is simply not
 REM created. Stopping first is the reliable order.
-tasklist /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | find /i "SimpleChatServer.exe" >nul
+"%SYS%\tasklist.exe" /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | "%SYS%\find.exe" /i "SimpleChatServer.exe" >nul
 if not errorlevel 1 (
     echo   The server is RUNNING.
     echo.
@@ -45,7 +46,7 @@ if not errorlevel 1 (
     echo   account, then start it again. Creating an account while the server
     echo   is running can fail silently on a database lock.
     echo.
-    chcp %OLDCP% >nul
+    "%SYS%\chcp.com" %OLDCP% >nul
     pause
     exit /b 1
 )
@@ -61,10 +62,22 @@ echo.
 set "ADMIN="
 set /p "ADMIN=Username: "
 
-if "%ADMIN%"=="" (
+REM Lowercase in PURE BATCH: the rules allow a-z only, and a capital is the
+REM commonest first mistake ("Larry" -> refused outright). No external tool is
+REM used, because System32 is not on this PC's PATH.
+set "ADMIN=!ADMIN:A=a!" & set "ADMIN=!ADMIN:B=b!" & set "ADMIN=!ADMIN:C=c!" & set "ADMIN=!ADMIN:D=d!"
+set "ADMIN=!ADMIN:E=e!" & set "ADMIN=!ADMIN:F=f!" & set "ADMIN=!ADMIN:G=g!" & set "ADMIN=!ADMIN:H=h!"
+set "ADMIN=!ADMIN:I=i!" & set "ADMIN=!ADMIN:J=j!" & set "ADMIN=!ADMIN:K=k!" & set "ADMIN=!ADMIN:L=l!"
+set "ADMIN=!ADMIN:M=m!" & set "ADMIN=!ADMIN:N=n!" & set "ADMIN=!ADMIN:O=o!" & set "ADMIN=!ADMIN:P=p!"
+set "ADMIN=!ADMIN:Q=q!" & set "ADMIN=!ADMIN:R=r!" & set "ADMIN=!ADMIN:S=s!" & set "ADMIN=!ADMIN:T=t!"
+set "ADMIN=!ADMIN:U=u!" & set "ADMIN=!ADMIN:V=v!" & set "ADMIN=!ADMIN:W=w!" & set "ADMIN=!ADMIN:X=x!"
+set "ADMIN=!ADMIN:Y=y!" & set "ADMIN=!ADMIN:Z=z!"
+
+
+if "!ADMIN!"=="" (
     echo.
     echo   No username given. Nothing was created.
-    chcp %OLDCP% >nul
+    "%SYS%\chcp.com" %OLDCP% >nul
     echo.
     pause
     exit /b 1
@@ -77,11 +90,13 @@ echo   is looking at this screen; the password itself is never stored - only a
 echo   PBKDF2 hash at 600,000 iterations.
 echo.
 
-"%~dp0SimpleChatServer.exe" --create-admin "%ADMIN%" server.toml
+echo   Using username: !ADMIN!
+echo.
+"%~dp0SimpleChatServer.exe" --create-admin "!ADMIN!" server.toml
 
 echo.
 echo   Next: "Start server", then open SimpleChat and log in.
 echo   To make accounts for your friends, use "Create user".
 echo.
-chcp %OLDCP% >nul
+"%SYS%\chcp.com" %OLDCP% >nul
 pause

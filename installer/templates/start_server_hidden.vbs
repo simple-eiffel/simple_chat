@@ -13,7 +13,7 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 
 here = fso.GetParentFolderName(WScript.ScriptFullName)
-command = "cmd /c """ & here & "\run_server.cmd"""
+command = shell.ExpandEnvironmentStrings("%ComSpec%") & " /c """ & here & "\run_server.cmd"""
 
 ' 0 = hidden window, False = do not wait for it to finish.
 shell.Run command, 0, False
