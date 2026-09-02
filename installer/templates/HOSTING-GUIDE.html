@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SimpleChat - Hosting Guide</title>
+<style>
+  body { font: 16px/1.6 "Segoe UI", system-ui, sans-serif; max-width: 46em;
+         margin: 2em auto; padding: 0 1.2em; color: #1d2126; background: #fff; }
+  h1 { font-size: 1.9em; margin-bottom: .1em; }
+  h2 { margin-top: 1.8em; border-bottom: 2px solid #e3e7ec; padding-bottom: .25em; }
+  h3 { margin-top: 1.4em; font-size: 1.1em; }
+  .sub { color: #5b6672; margin-top: 0; }
+  code, .path { font-family: Consolas, "Courier New", monospace; background: #f2f4f7;
+         padding: .1em .35em; border-radius: 3px; font-size: .92em; }
+  pre { background: #f2f4f7; padding: .9em 1.1em; border-radius: 5px; overflow-x: auto;
+        border-left: 4px solid #8a97a5; }
+  pre code { background: none; padding: 0; }
+  .note { background: #eef5ff; border-left: 4px solid #3f7fd0; padding: .9em 1.1em;
+          border-radius: 4px; margin: 1.2em 0; }
+  .warn { background: #fff4e5; border-left: 4px solid #d08a3f; padding: .9em 1.1em;
+          border-radius: 4px; margin: 1.2em 0; }
+  .rule { background: #ffeef0; border-left: 4px solid #cc4455; padding: .9em 1.1em;
+          border-radius: 4px; margin: 1.2em 0; }
+  ol li, ul li { margin: .4em 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { text-align: left; padding: .5em .7em; border-bottom: 1px solid #e3e7ec;
+           vertical-align: top; }
+  th { background: #f7f9fb; }
+</style>
+</head>
+<body>
+
+<h1>SimpleChat &mdash; Hosting Guide</h1>
+<p class="sub">How to turn this PC into the chat room everybody else connects to.</p>
+
+<p>You do not need to be a programmer to follow this. It takes about twenty minutes,
+most of which is waiting for a router page to load.</p>
+
+<div class="note">
+<strong>Do you even need this?</strong> No, if you only want to <em>use</em> the chat.
+Just open <strong>SimpleChat</strong> from the Start Menu, type the address your host
+gave you, and log in. This guide is only for the one person whose PC holds the room.
+</div>
+
+<h2>1. What is on this PC</h2>
+
+<table>
+<tr><th>What</th><th>Where</th></tr>
+<tr><td>The programs</td><td class="path">C:\Program Files\SimpleChat</td></tr>
+<tr><td>Your settings</td><td class="path">C:\ProgramData\SimpleChat\server.toml</td></tr>
+<tr><td>The room itself &mdash; accounts, messages, history</td><td class="path">C:\ProgramData\SimpleChat\data\simple_chat.db</td></tr>
+<tr><td>What the server printed</td><td class="path">C:\ProgramData\SimpleChat\server.log</td></tr>
+<tr><td>The front door program (Caddy)</td><td class="path">C:\ProgramData\SimpleChat\caddy.exe</td></tr>
+<tr><td>Your own chat window's settings</td><td class="path">%APPDATA%\simple_chat\client.toml</td></tr>
+</table>
+
+<div class="note">
+Uninstalling SimpleChat <strong>never deletes the room</strong>. The
+<span class="path">data</span> folder, your <span class="path">server.toml</span> and your
+backups all survive an uninstall, and survive an upgrade. If you truly want them gone you
+delete <span class="path">C:\ProgramData\SimpleChat</span> yourself, on purpose.
+</div>
+
+<h2>2. First run &mdash; make yourself an account</h2>
+
+<p>Before anyone can log in, the room needs its first administrator. There is no default
+account and no default password; you create the only one there will ever be, once.</p>
+
+<ol>
+  <li>Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr; <strong>Create first admin</strong></li>
+  <li>Type a username (letters, digits and underscore, up to 32 characters).</li>
+  <li>Type a password twice when it asks.</li>
+</ol>
+
+<p>The password is shown on screen as you type it &mdash; this version has no
+echo&#8209;hiding on the console. It is never stored: what is kept is a PBKDF2 hash at
+600,000 iterations.</p>
+
+<p>Then Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr; <strong>Start server</strong>.
+It will tell you whether it came up. At this point the room works
+<em>on this PC only</em> &mdash; open <strong>SimpleChat</strong> and log in to prove it.</p>
+
+<h2>2a. Making accounts for your friends</h2>
+
+<p>Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr; <strong>Create user</strong>,
+once per person.</p>
+
+<p><strong>There is no sign-up page, and that is deliberate.</strong> Nobody can create
+an account on your room but you. It asks for three things:</p>
+
+<table>
+<tr><th>What</th><th>Rules</th></tr>
+<tr><td><strong>Username</strong></td><td>What they type to log in. 1&ndash;32 characters of <code>a-z</code>, <code>0-9</code> and underscore. No capitals, no spaces.</td></tr>
+<tr><td><strong>Display name</strong></td><td>What the room shows beside their messages. Capitals, spaces and any language are fine &mdash; Hebrew, Greek, anything. Press Enter to just use the username.</td></tr>
+<tr><td><strong>Password</strong></td><td>Typed twice. It is visible on screen as you type; it is never stored, only a PBKDF2 hash at 600,000 iterations.</td></tr>
+</table>
+
+<p>Then tell them their username, their password and the address of your room.
+They install SimpleChat, leave the hosting box unticked, and log in.</p>
+
+<div class="warn">
+<strong>Stop the server first.</strong> Both &ldquo;Create first admin&rdquo; and
+&ldquo;Create user&rdquo; open the database directly. They refuse to run while the server
+is up, because a write that races the running server's can fail on a database lock and
+the account would simply not be created. Stop, create the accounts, start again.
+</div>
+
+<h2>3. Going public</h2>
+
+<p>Three things have to be true before a friend on the other side of town can reach you:
+a <strong>name</strong>, an <strong>open door on your router</strong>, and the
+<strong>front door program</strong> turned on.</p>
+
+<h3>3a. Get a name (DuckDNS)</h3>
+
+<p>Your home internet connection almost certainly does not have a fixed address, and it
+has no name at all. <a href="https://www.duckdns.org">DuckDNS</a> gives you both, free.</p>
+
+<ol>
+  <li>Go to <strong>duckdns.org</strong> and sign in (Google, GitHub, etc.).</li>
+  <li>Make up a name &mdash; say <code>rixchat</code>. Your address becomes
+      <code>rixchat.duckdns.org</code>.</li>
+  <li>Copy the <strong>token</strong> shown at the top of the page. It is a long string of
+      letters and digits. Treat it like a password.</li>
+</ol>
+
+<h3>3b. Open the door on your router</h3>
+
+<p>Your router has to be told that when someone knocks from the internet, this PC answers.
+This is called <strong>port forwarding</strong>. Every router's screens differ, but the
+fields are always the same:</p>
+
+<table>
+<tr><th>Field</th><th>What to put</th></tr>
+<tr><td>External / public port</td><td><strong>443</strong> (and <strong>80</strong> as well &mdash; Caddy needs it to obtain the certificate)</td></tr>
+<tr><td>Internal / private port</td><td>the same, <strong>443</strong> (and <strong>80</strong>)</td></tr>
+<tr><td>Internal address</td><td>this PC's address on your home network, e.g. <code>192.168.1.40</code></td></tr>
+<tr><td>Protocol</td><td>TCP</td></tr>
+</table>
+
+<p>To find this PC's address, open a Command Prompt and run <code>ipconfig</code>; you want
+the <strong>IPv4 Address</strong> line, usually starting <code>192.168.</code> or
+<code>10.</code>. Give this PC a fixed address in the router (often called
+&ldquo;DHCP reservation&rdquo;) so it does not change next month and quietly break everything.</p>
+
+<div class="warn">
+<strong>Note that 443 is not 8080.</strong> The number in <span class="path">server.toml</span>
+(<code>port = 8080</code>) is the door the chat server itself listens on, <em>inside</em> this
+PC. Caddy is what listens on 443 to the outside world and passes traffic inwards. You forward
+<strong>443</strong>, not 8080. Leave 8080 alone.
+</div>
+
+<div class="warn">
+<strong>CGNAT &mdash; the one thing that can stop you dead.</strong> Many internet providers
+(especially mobile broadband, Starlink, and a growing number of cable providers) no longer give
+each home its own public address. They put hundreds of homes behind one shared address. This is
+called <em>carrier&#8209;grade NAT</em>, and if you are behind it <strong>no amount of port
+forwarding will work</strong> &mdash; the door you are opening is not the door the world knocks on.
+
+<p style="margin-bottom:0"><strong>How to tell:</strong> run <code>ipconfig</code> and look at
+your router's WAN address, or check your router's status page. If it starts with
+<code>100.64.</code> through <code>100.127.</code>, or it does not match what
+<a href="https://icanhazip.com">icanhazip.com</a> says, you are behind CGNAT.
+<strong>What to do:</strong> ring your provider and ask for a public IPv4 address &mdash; many
+will give you one free or for a small monthly fee. There is no software fix for this in
+SimpleChat.</p>
+</div>
+
+<h3>3c. Turn the front door on</h3>
+
+<p>Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr; <strong>Edit server config</strong>.
+You are changing <strong>two lines</strong>. Find this near the top:</p>
+
+<pre><code>front_door = "none"
+# front_door = "caddy"
+# public_name = "yourname.duckdns.org"</code></pre>
+
+<p>and make it this (delete the <code>#</code> marks, put your own name in):</p>
+
+<pre><code>front_door = "caddy"
+public_name = "rixchat.duckdns.org"</code></pre>
+
+<p>Further down, find the <code>[ddns]</code> block and uncomment it so your name keeps
+pointing at your house when your provider changes your address:</p>
+
+<pre><code>[ddns]
+enabled = true
+provider = "duckdns"
+domains = "rixchat"
+token = "paste-your-duckdns-token-here"
+interval_seconds = 300</code></pre>
+
+<div class="warn">
+Under <code>domains</code> put only the <strong>label</strong> &mdash; <code>rixchat</code> &mdash;
+<em>not</em> the whole <code>rixchat.duckdns.org</code>. This trips up nearly everyone once.
+</div>
+
+<p>Save the file. Then <strong>Stop server</strong> and <strong>Start server</strong> again.</p>
+
+<p>The first start after this takes a minute or so: Caddy is fetching a real HTTPS
+certificate for your name. You do not buy, copy or renew anything &mdash; that is entirely
+Caddy's business, and it renews itself from now on.</p>
+
+<h3>3d. Check it</h3>
+
+<p>From a phone, <strong>off</strong> your home wi-fi (use mobile data), open
+<code>https://rixchat.duckdns.org/health</code> in a browser. You should see a short line of
+text like <code>{"store":true,"last_event_id":0}</code>. That is the room answering from the
+outside world.</p>
+
+<p>Now your friends install SimpleChat (leaving the hosting box unticked), put
+<code>https://rixchat.duckdns.org</code> in the <strong>Server</strong> box on the login
+window, and they are in.</p>
+
+<h2>4. Keeping it running</h2>
+
+<p>If you ticked <strong>Start the server when Windows starts</strong> during installation,
+Windows starts it for you at every logon and there is nothing to do. If you did not, you can
+add it later by running the installer again and ticking the box &mdash; or just use
+<strong>Start server</strong> in the Start Menu whenever you want the room up.</p>
+
+<p>When something is not right, the answer is nearly always in the log: Start Menu &rarr;
+<strong>SimpleChat Server</strong> &rarr; <strong>Server log</strong>.</p>
+
+<h2>5. Backups</h2>
+
+<p>Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr; <strong>Back up the room</strong>.</p>
+
+<p>It stops nothing and asks nothing except that the server be stopped first &mdash; and it
+insists on that, because the database keeps recent messages in a companion file
+(<span class="path">simple_chat.db-wal</span>) until it is closed. Copying a live database is
+how people lose the last hour of a conversation.</p>
+
+<ol>
+  <li><strong>Stop server</strong></li>
+  <li><strong>Back up the room</strong> &mdash; it makes a dated folder under
+      <span class="path">C:\ProgramData\SimpleChat\backups</span> and opens it for you</li>
+  <li><strong>Start server</strong></li>
+</ol>
+
+<p>Send the <strong>whole folder</strong>, not just the one file.</p>
+
+<h2>6. A standby host &mdash; a friend who can take over</h2>
+
+<p>If your PC dies, or you go away for a fortnight and unplug it, the room goes with it.
+A <strong>standby host</strong> is a friend whose PC is set up and ready but switched off,
+so the room can come back within minutes instead of never.</p>
+
+<div class="warn">
+<strong>Be clear about what this is.</strong> This is a <em>cold</em> standby, done by hand.
+The standby is as up to date as the last backup you sent and no more &mdash; anything said
+after that backup is lost when you fail over. Automatic replication between hosts, and the
+fencing that would stop two servers both believing they are in charge, are
+<strong>not implemented</strong>. They are the next feature. Until then the discipline below
+is what keeps the room in one piece, and it is a discipline, not a safety net.
+</div>
+
+<h3>Setting the standby up (once)</h3>
+
+<ol>
+  <li>Your friend installs SimpleChat <strong>with the hosting box ticked</strong>.</li>
+  <li>They get their <strong>own</strong> DuckDNS name &mdash; e.g.
+      <code>rixchat-standby.duckdns.org</code> &mdash; and their own token. Not yours.</li>
+  <li>They set up their <strong>own</strong> port forward, exactly as in section 3b.</li>
+  <li>They edit their <span class="path">server.toml</span> with their own name, exactly as
+      in section 3c.</li>
+  <li><strong>They leave the server STOPPED.</strong> They untick
+      &ldquo;start when Windows starts&rdquo;, or run <strong>Stop server</strong> and
+      leave it. Their PC is ready and silent.</li>
+</ol>
+
+<h3>Everyone's chat window learns both addresses</h3>
+
+<p>Every member (you included) opens <span class="path">%APPDATA%\simple_chat\client.toml</span>
+and lists both, <strong>primary first</strong> (these two names are examples &mdash; put
+your own in):</p>
+
+<pre><code>server_urls = ["https://rixchat.duckdns.org", "https://rixchat-standby.duckdns.org"]</code></pre>
+
+<p>Nobody has to do anything on the day. The chat window tries each address in turn at
+startup and the first one that answers as a real SimpleChat server wins. If the primary is
+down and the standby is up, the window simply finds the standby. Leave the standby in the
+list permanently; an address that is not answering costs one short probe.</p>
+
+<h3>Keeping the standby fed</h3>
+
+<p>Every week or so &mdash; whatever you can keep up &mdash; you: <strong>Stop server</strong>,
+<strong>Back up the room</strong>, <strong>Start server</strong>, and send your friend the
+folder. They put it in place with <strong>Restore from backup</strong> and go back to doing
+nothing. That is the whole routine.</p>
+
+<h3>On the day it fails over</h3>
+
+<ol>
+  <li>Your friend runs <strong>Restore from backup</strong> with the newest folder you sent,
+      if they have not already.</li>
+  <li>They run <strong>Start server</strong>.</li>
+  <li>Everyone's chat window finds them on its own, at the next restart. The room resumes
+      from the last backup &mdash; anything said after it is gone.</li>
+</ol>
+
+<div class="rule">
+<strong>THE ONE RULE. Only one server runs at a time.</strong>
+<p>When you come back, do <strong>not</strong> start your server again. Your copy of the room
+is now the <em>old</em> one, and everything your friends said while you were away is on your
+friend's PC, not yours. Until you have restored from a backup <em>they</em> send <em>you</em>,
+you are a client only &mdash; you use the chat like everybody else, pointed at their address.</p>
+<p style="margin-bottom:0">To hand it back: your friend stops their server and sends you a
+backup; you restore it and start yours; they stay stopped. If you both run a server at once
+you get two rooms drifting apart, and there is nothing that merges them back together.</p>
+</div>
+
+<h2>7. If something goes wrong</h2>
+
+<table>
+<tr><th>What you see</th><th>What it usually is</th></tr>
+<tr><td>&ldquo;The server did not answer&rdquo; when starting</td><td>Read <strong>Server log</strong>. Most often a typo in <span class="path">server.toml</span> &mdash; the server names the exact field it refused.</td></tr>
+<tr><td>Works at home, not from a phone on mobile data</td><td>Port forwarding or CGNAT. See 3b.</td></tr>
+<tr><td>The certificate never arrives</td><td>Port <strong>80</strong> is not forwarded. Caddy needs it even though the chat runs on 443.</td></tr>
+<tr><td>Friends could connect, now they cannot</td><td>Your address changed and DDNS is off or the token is wrong. Check the <code>[ddns]</code> block.</td></tr>
+<tr><td>The robot in messages is an empty box</td><td>The emoji artwork did not install. Re-run the installer.</td></tr>
+<tr><td>The chat window will not start at all</td><td><span class="path">cairo.dll</span> is missing from the program folder. Re-run the installer.</td></tr>
+</table>
+
+<p style="margin-top:2.5em; color:#5b6672; font-size:.9em; border-top:1px solid #e3e7ec; padding-top:1em">
+SimpleChat is part of the Simple Eiffel ecosystem. The server binds
+<code>127.0.0.1</code> and is reached only through the front door; passwords are PBKDF2 at
+600,000 iterations; your remembered session is sealed to your Windows account with DPAPI.
+Bundled third&#8209;party components and their licences are listed in
+<span class="path">C:\Program Files\SimpleChat\THIRD-PARTY.md</span>.
+</p>
+
+</body>
+</html>

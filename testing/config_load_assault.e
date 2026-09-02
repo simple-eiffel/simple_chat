@@ -321,6 +321,54 @@ feature -- Tests: the server app's pure gates
 			assert ("public door under a public config matches", l_server.is_door_matching_config)
 		end
 
+	test_server_app_display_name_gate
+			-- The gate `--create-user' puts in front of
+			-- CHAT_SERVICE.create_user's `valid_display' precondition. A
+			-- person typing at a console is not a programming error, so the
+			-- application asks first and refuses politely; these are the
+			-- cases it has to get right.
+		local
+			l_app: SERVER_APP
+		do
+			create l_app.make_idle
+
+				-- Ordinary names pass.
+			assert ("a plain name passes", l_app.is_acceptable_display_name ({STRING_32} "Nick"))
+			assert ("a name with a space passes", l_app.is_acceptable_display_name ({STRING_32} "Larry Rix"))
+
+				-- Non-ASCII is the whole point of reading the console as UTF-8:
+				-- a Hebrew or Greek display name must be acceptable.
+				--
+				-- Written as CODE POINT ESCAPES, never as literal glyphs: this
+				-- compiler reads a source file byte-for-byte, so a literal
+				-- "משה" arrives as its six UTF-8 bytes and the 0x9E among them
+				-- is a C1 control - which `is_forbidden_in_name' rightly
+				-- refuses. The escapes say what is meant; the same convention
+				-- CHAT_EVENT_KINDS.Bot_marker already uses.
+			assert ("Hebrew passes", l_app.is_acceptable_display_name ({STRING_32} "%/1502/%/1513/%/1492/"))
+			assert ("Greek passes", l_app.is_acceptable_display_name ({STRING_32} "%/935/%/961/%/953/%/963/%/964/%/972/%/962/"))
+
+				-- Empty is refused; `create_member' substitutes the username
+				-- before it ever reaches here.
+			assert ("empty refused", not l_app.is_acceptable_display_name ({STRING_32} ""))
+
+				-- The bot marker authenticates bots and is theirs alone (NEW-4):
+				-- no human account may carry it, wherever it sits in the name.
+			assert ("leading bot marker refused", not l_app.is_acceptable_display_name ({CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Claude"))
+			assert ("embedded bot marker refused", not l_app.is_acceptable_display_name ({STRING_32} "Nick " + {CHAT_EVENT_KINDS}.Bot_marker))
+
+				-- Control and bidi-override characters are refused: a display
+				-- name is shown next to other people's, and an override would
+				-- let one account paint itself as another (U+202E, 8238).
+			assert ("a control character refused", not l_app.is_acceptable_display_name ({STRING_32} "Ni%/1/ck"))
+			assert ("a bidi override refused", not l_app.is_acceptable_display_name ({STRING_32} "Nick%/8238/"))
+
+				-- The query answers its own definition, so the application's
+				-- gate and the service's precondition cannot drift apart.
+			assert ("gate equals the rule", l_app.is_acceptable_display_name ({STRING_32} "Nick")
+				= (create {CHAT_USER_RULES}).is_valid_human_display_name ({STRING_32} "Nick"))
+		end
+
 feature {NONE} -- Assertion support
 
 	assert_defaults_stand (a_config: SERVER_CONFIG)

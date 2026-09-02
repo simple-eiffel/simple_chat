@@ -42,7 +42,20 @@ port = 8080
 data_dir = "C:/Users/Public/simple_chat/data"
 TOML
 
-dist/simple_chat_server.exe /c/Users/Public/simple_chat/server.toml --create-admin larry "Larry" "your real password here"
+dist/simple_chat_server.exe --create-admin larry C:/Users/Public/simple_chat/server.toml
+```
+
+The flag comes **first**: `SERVER_APP.make` matches `--create-admin` on argument 1 and
+takes the config path as argument 3. Written the other way round, argument 1 is a path
+that does not start with `--`, so the server would quietly *serve* instead of creating
+anything. There is no password argument either — it prompts for a display name (press
+Enter for the username) and then for the password twice, and it echoes: plain Eiffel
+console input has no echo suppression in v1.
+
+To add anyone else afterwards, same shape — there is no self-registration:
+
+```bash
+dist/simple_chat_server.exe --create-user nick C:/Users/Public/simple_chat/server.toml
 ```
 
 Then run it. **Redirect its stdout to a file, never into a pipe** — a console write into

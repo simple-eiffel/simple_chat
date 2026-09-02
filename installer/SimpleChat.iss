@@ -1,0 +1,328 @@
+; ===========================================================================
+; Inno Setup script for SimpleChat - a standalone group chat for a private
+; circle of friends: an Eiffel server you host yourself and an Eiffel thick
+; client, both from the same source tree.
+;
+; Build:    installer\stage_payload.sh          (stages installer\src\)
+; Compile:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\SimpleChat.iss
+; Output:   installer\SimpleChat-Setup.exe
+;
+; ---------------------------------------------------------------------------
+; THE TWO ROLES, AND WHY THE SERVER IS UNTICKED BY DEFAULT
+;
+;   Everybody gets the client. It is the same executable for the host and for
+;   every friend; the only difference between them is which address the window
+;   talks to (SERVICE_LOCATOR, D-016).
+;
+;   The server is an OPTION, off by default, because most installs are a friend
+;   who only wants to use the chat. Larry - or a standby host - ticks it.
+;   Re-running this installer later with the box ticked ADDS the server to an
+;   existing client-only install: that is how a friend is promoted to standby.
+;   Inno restores the previously installed component selection on a reinstall,
+;   so the user only has to tick the extra one.
+;
+; ---------------------------------------------------------------------------
+; WHY THE SERVER'S WORKING FOLDER IS {commonappdata}\SimpleChat
+;
+;   Not cosmetic - it is forced by the code, in two places:
+;
+;   1. CADDY_FRONT_DOOR.make computes
+;          executable := current_working_path.extended ("caddy.exe")
+;      so caddy.exe is found in the server's WORKING DIRECTORY, not beside the
+;      server executable. caddy.exe is therefore installed into that working
+;      folder, and every launcher cd's there first.
+;
+;   2. The same feature computes
+;          caddyfile_path := current_working_path.extended (data_dir)
+;                                                .extended ("Caddyfile")
+;      and PATH.extended carries the precondition `a_name_has_no_root'. An
+;      absolute data_dir would violate it - silently, in this lean build, since
+;      contracts are compiled out. So data_dir MUST stay relative ("data"), and
+;      the working folder is what makes it land somewhere writable.
+;
+;   Program Files cannot be the working folder: a standard user cannot create
+;   the store there. {commonappdata} can be written by the server without
+;   elevation and survives uninstall, which is exactly what the room needs.
+; ===========================================================================
+
+#define AppVersion     "0.1.0"
+#define AppPublisher   "Larry Rix"
+#define AppExe         "SimpleChat.exe"
+#define ServerExe      "SimpleChatServer.exe"
+
+; ---------------------------------------------------------------------------
+; VERIFICATION BUILD - ISCC /DVERIFY=1
+;
+; A test install MUST NOT share ANY identity with the real product. On
+; 2026-09-02 a verification run and Larry's own interactive install of the same
+; installer were live on this PC at the same moment; they shared an AppId, so
+; they shared one uninstall registration, and the test's uninstall took his
+; registration with it. Nothing of his was lost - the data folder is never
+; deleted - but the installed product was de-registered underneath him.
+;
+; Everything two installs could collide over is therefore switched here:
+; the AppId (the uninstall key), the visible name, the install directory, the
+; Start Menu group, the server's data root, the scheduled task name, the
+; per-user client config folder, and the output filename. A verify build is a
+; different product that happens to be built from the same source.
+;
+; The REAL installer is built with no define at all. Never ship a /DVERIFY
+; build, and never point a verification at the real names.
+; ---------------------------------------------------------------------------
+#ifdef VERIFY
+  #define AppName      "SimpleChat (verify)"
+  #define AppIdGuid    "{{9D4E7B15-3C82-4A6F-B0E9-5F1A28C7D634}"
+  #define DirName      "SimpleChat-verify"
+  #define ServerRoot   "{commonappdata}\SimpleChat-verify"
+  #define TaskName     "SimpleChat Server (verify)"
+  #define ClientCfgDir "simple_chat-verify"
+  #define OutBase      "SimpleChat-Setup-VERIFY"
+#else
+  #define AppName      "SimpleChat"
+  #define AppIdGuid    "{{B7F42A19-6C3E-4D85-9A0F-1E5C8D2B7436}"
+  #define DirName      "SimpleChat"
+  #define ServerRoot   "{commonappdata}\SimpleChat"
+  #define TaskName     "SimpleChat Server"
+  #define ClientCfgDir "simple_chat"
+  #define OutBase      "SimpleChat-Setup"
+#endif
+
+[Setup]
+AppId={#AppIdGuid}
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersion}
+AppPublisher={#AppPublisher}
+DefaultDirName={autopf}\{#DirName}
+DefaultGroupName={#AppName}
+DisableProgramGroupPage=yes
+UninstallDisplayName={#AppName}
+UninstallDisplayIcon={app}\{#AppExe}
+; Per-machine into {autopf}, elevated - the fleet precedent (RixGPT.iss,
+; RixQwen.iss both install this way).
+PrivilegesRequired=admin
+; ...but allow the person to say otherwise, on the command line or in the
+; startup dialog. Two reasons this is worth having:
+;   - a friend on a locked-down work PC with no admin rights can still install
+;     the client, into {localappdata}\Programs\SimpleChat;
+;   - it is what makes the installer verifiable without a human clicking a UAC
+;     prompt (see installer\VERIFICATION-2026-09-02.md).
+; The DEFAULT is unchanged: a plain double-click still elevates and installs
+; per-machine. Nothing about the server layout needs elevation either - the
+; server writes only under {commonappdata}, which a standard user may create
+; and write in.
+PrivilegesRequiredOverridesAllowed=dialog commandline
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+Compression=lzma2/max
+SolidCompression=yes
+WizardStyle=modern
+OutputDir=.
+OutputBaseFilename={#OutBase}
+LicenseFile=src\common\LICENSE-SIMPLECHAT.txt
+ShowComponentSizes=yes
+
+; This is an administrative (per-machine) install that ALSO drops one
+; convenience file into a per-user area: %APPDATA%\simple_chat\client.toml.
+; Inno warns about that, rightly, because in an admin install {userappdata} is
+; the profile of whoever elevated - which is not necessarily the person who
+; will use the chat.
+;
+; It is acknowledged rather than avoided, because the consequence is nil: the
+; file is written with `onlyifdoesntexist', it holds nothing but an address
+; list and a window position, and CLIENT_CONFIG writes its own copy in the
+; right profile the first time that user closes the window. The same template
+; is installed as {app}\client.toml.template for anyone who wants to place it
+; by hand. Nothing is lost if it lands in the wrong profile.
+UsedUserAreasWarning=no
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+; ---------------------------------------------------------------------------
+; The first type listed is the default, so a plain Next-Next-Next install is
+; CLIENT ONLY. Ticking the server component switches the drop-down to the
+; custom type Inno supplies automatically.
+; ---------------------------------------------------------------------------
+[Types]
+Name: "client"; Description: "Just use the chat (what most people want)"
+Name: "host";   Description: "Use the chat AND host the room on this PC"
+
+[Components]
+Name: "client"; Description: "SimpleChat - the chat window"; \
+    Types: client host; Flags: fixed
+Name: "server"; Description: "This PC will host the chat room (installs the server, Caddy and the hosting tools)"; \
+    Types: host
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a &desktop shortcut for the chat window"; \
+    GroupDescription: "Additional shortcuts:"; Components: client; Flags: unchecked
+Name: "autostart"; Description: "Start the chat server when Windows starts"; \
+    GroupDescription: "Hosting:"; Components: server; Flags: unchecked
+
+[Dirs]
+; The room's home. Never removed by the uninstaller.
+Name: "{#ServerRoot}";        Components: server; Flags: uninsneveruninstall
+Name: "{#ServerRoot}\data";   Components: server; Flags: uninsneveruninstall
+Name: "{#ServerRoot}\backups"; Components: server; Flags: uninsneveruninstall
+
+[Files]
+; --- client -----------------------------------------------------------------
+Source: "src\client\SimpleChat.exe";      DestDir: "{app}"; Components: client; Flags: ignoreversion
+Source: "src\client\cairo.dll";           DestDir: "{app}"; Components: client; Flags: ignoreversion
+Source: "src\client\LICENSE-ASSETS.md";   DestDir: "{app}"; Components: client; Flags: ignoreversion
+Source: "src\common\README.txt";          DestDir: "{app}"; Components: client; Flags: ignoreversion isreadme
+Source: "src\common\THIRD-PARTY.md";      DestDir: "{app}"; Components: client; Flags: ignoreversion
+Source: "src\common\LICENSE-SIMPLECHAT.txt"; DestDir: "{app}"; Components: client; Flags: ignoreversion
+
+; The Noto emoji artwork: 3,768 PNG files. SW_SHAPING.make looks for them
+; beside the RUNNING EXECUTABLE, never in the working directory.
+;
+; COMPRESSED, not `nocompression' - measured, not assumed. See the compression
+; note at the foot of this file: RixQwen.iss stores its payload raw because a
+; quantized GGUF really is incompressible; PNG is only deflate, and under solid
+; compression lzma2 still finds redundancy across 3,768 similar glyphs.
+Source: "src\client\assets\noto-emoji\png\128\*"; DestDir: "{app}\assets\noto-emoji\png\128"; \
+    Components: client; Flags: ignoreversion
+
+; The client's own config template, and a copy placed where the client reads
+; it. `onlyifdoesntexist' + `uninsneveruninstall': an existing config is never
+; overwritten and never removed.
+Source: "src\client\client.toml.in";      DestDir: "{app}"; DestName: "client.toml.template"; \
+    Components: client; Flags: ignoreversion
+Source: "src\client\client.toml.in";      DestDir: "{userappdata}\{#ClientCfgDir}"; DestName: "client.toml"; \
+    Components: client; Flags: onlyifdoesntexist uninsneveruninstall
+
+; --- server -----------------------------------------------------------------
+Source: "src\server\SimpleChatServer.exe";     DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\run_server.cmd";           DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\start_server.cmd";         DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\start_server_hidden.vbs";  DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\stop_server.cmd";          DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\create_admin.cmd";         DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\create_user.cmd";          DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\view_log.cmd";             DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\backup_room.cmd";          DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\restore_backup.cmd";       DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\HOSTING-GUIDE.html";       DestDir: "{app}"; Components: server; Flags: ignoreversion
+
+; Caddy lives in the SERVER'S WORKING FOLDER, because that is where
+; CADDY_FRONT_DOOR looks for it. Its licence ships beside it.
+Source: "src\caddy\caddy.exe";    DestDir: "{#ServerRoot}"; Components: server; \
+    Flags: ignoreversion uninsneveruninstall
+Source: "src\caddy\LICENSE-CADDY"; DestDir: "{#ServerRoot}"; Components: server; \
+    Flags: ignoreversion uninsneveruninstall
+
+; The server config template. Never overwrite a host's edited settings, and
+; never delete them on uninstall.
+Source: "src\server\server.toml.in"; DestDir: "{#ServerRoot}"; DestName: "server.toml"; \
+    Components: server; Flags: onlyifdoesntexist uninsneveruninstall
+
+[Icons]
+; --- client -----------------------------------------------------------------
+Name: "{group}\{#AppName}";              Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; \
+    Comment: "Open the chat window"; Components: client
+Name: "{group}\{#AppName} Read Me";      Filename: "{app}\README.txt"; Components: client
+Name: "{autodesktop}\{#AppName}";        Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; \
+    Components: client; Tasks: desktopicon
+Name: "{group}\Uninstall {#AppName}";    Filename: "{uninstallexe}"
+
+; --- server -----------------------------------------------------------------
+Name: "{group}\{#AppName} Server\Start server";        Filename: "{app}\start_server.cmd"; \
+    WorkingDir: "{app}"; Comment: "Start hosting the room on this PC"; Components: server
+Name: "{group}\{#AppName} Server\Stop server";         Filename: "{app}\stop_server.cmd"; \
+    WorkingDir: "{app}"; Comment: "Stop the chat server"; Components: server
+Name: "{group}\{#AppName} Server\Create first admin";  Filename: "{app}\create_admin.cmd"; \
+    WorkingDir: "{app}"; Comment: "Make the first account - do this once, before anyone logs in"; Components: server
+Name: "{group}\{#AppName} Server\Create user";         Filename: "{app}\create_user.cmd"; \
+    WorkingDir: "{app}"; Comment: "Make an account for a friend - accounts are created by you, never self-registered"; Components: server
+Name: "{group}\{#AppName} Server\Server log";          Filename: "{app}\view_log.cmd"; \
+    WorkingDir: "{app}"; Comment: "What the server printed"; Components: server
+Name: "{group}\{#AppName} Server\Edit server config";  Filename: "notepad.exe"; \
+    Parameters: """{#ServerRoot}\server.toml"""; Comment: "Turn hosting on by editing two lines"; Components: server
+Name: "{group}\{#AppName} Server\Back up the room";    Filename: "{app}\backup_room.cmd"; \
+    WorkingDir: "{app}"; Comment: "Make a dated copy to send to your standby host"; Components: server
+Name: "{group}\{#AppName} Server\Restore from backup"; Filename: "{app}\restore_backup.cmd"; \
+    WorkingDir: "{app}"; Comment: "Put a backup in place as the room"; Components: server
+Name: "{group}\{#AppName} Server\Hosting guide";       Filename: "{app}\HOSTING-GUIDE.html"; \
+    Comment: "Router, DuckDNS, backups and standby hosts - written for a non-programmer"; Components: server
+
+[Run]
+; Register the logon task only when the host asked for it. /rl highest so the
+; front door can bind its ports; /f so re-running the installer replaces it
+; rather than failing on an existing task.
+Filename: "{sys}\schtasks.exe"; \
+    Parameters: "/create /tn ""{#TaskName}"" /tr ""wscript.exe \""{app}\start_server_hidden.vbs\"""" /sc onlogon /rl highest /f"; \
+    Flags: runhidden waituntilterminated; Components: server; Tasks: autostart; \
+    StatusMsg: "Registering the server to start with Windows..."
+
+Filename: "{app}\HOSTING-GUIDE.html"; Description: "Open the hosting guide"; \
+    Flags: shellexec postinstall skipifsilent nowait; Components: server
+
+Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "Open {#AppName} now"; \
+    Flags: postinstall skipifsilent nowait; Components: client
+
+[UninstallRun]
+; Remove the logon task. Runs before files are deleted. It is harmless when no
+; task was ever registered - schtasks simply reports there is nothing to delete.
+Filename: "{sys}\schtasks.exe"; Parameters: "/delete /tn ""{#TaskName}"" /f"; \
+    Flags: runhidden waituntilterminated; RunOnceId: "DelChatTask"
+
+; Stop the server before pulling its executable out from under it.
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#ServerExe}"; \
+    Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "StopChatServer"
+
+; ---------------------------------------------------------------------------
+; NO [UninstallDelete] SECTION, DELIBERATELY.
+;
+; The room - accounts, rooms, every message - lives in
+; {commonappdata}\SimpleChat\data, the host's settings in server.toml beside
+; it, the backups under backups\, and each member's own settings in
+; %APPDATA%\simple_chat\client.toml. None of it is touched by an uninstall.
+;
+; This follows the fleet precedent: neither RixGPT.iss nor RixQwen.iss deletes
+; user data, and an uninstaller that can silently destroy a year of a family's
+; conversation is not worth the tidiness. A host who really wants it gone
+; deletes C:\ProgramData\SimpleChat by hand, on purpose. The uninstall message
+; below says so plainly.
+; ---------------------------------------------------------------------------
+
+; ---------------------------------------------------------------------------
+; COMPRESSION: everything is compressed. Measured on 2026-09-02, same payload,
+; same machine (see installer\VERIFICATION-2026-09-02.md):
+;
+;   assets + caddy stored raw (nocompression) ... 76,278,954 b   6.4 s
+;   assets compressed, caddy raw ............... 75,577,228 b   6.5 s
+;   everything compressed ...................... 37,920,223 b  13.3 s
+;
+; Halving the download for seven seconds of build time is not a close call.
+; The fleet's `nocompression' precedent (RixQwen.iss) is sound for what it
+; guards - a quantized GGUF is already at the entropy limit and gains ~5% for
+; many minutes. Neither of this installer's big payloads is that: caddy.exe is
+; an ordinary uncompressed Go binary, and PNG is only deflate, so solid lzma2
+; still finds cross-file redundancy over 3,768 near-identical glyphs.
+; ---------------------------------------------------------------------------
+
+[Messages]
+ConfirmUninstall=Remove %1 from this PC?%n%nYour chat history, accounts and settings will be KEPT (in C:\ProgramData\SimpleChat and in your own AppData folder), so reinstalling picks up where you left off.%n%nOnly the programs are removed.
+
+[Code]
+
+{ Warn a host who ticks the hosting box that there is a guide to follow.
+  Silent installs never see this. }
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsComponentSelected('server')
+     and not WizardSilent then
+  begin
+    MsgBox('The chat server is installed, but the room is not reachable from ' +
+           'the internet yet - that is deliberate.' + #13#10#13#10 +
+           'Next steps, all in the Start Menu under "SimpleChat Server":' + #13#10 +
+           '  1. Create first admin' + #13#10 +
+           '  2. Start server' + #13#10 +
+           '  3. Hosting guide - for going public (router, DuckDNS) and for ' +
+           'setting up a standby host' + #13#10#13#10 +
+           'Your settings are at C:\ProgramData\SimpleChat\server.toml.',
+           mbInformation, MB_OK);
+  end;
+end;

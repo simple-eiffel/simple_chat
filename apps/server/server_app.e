@@ -4,8 +4,25 @@ note
 		`simple_chat_server --create-admin <name> [config.toml]' creates
 		the first admin (prompting for the password twice; refused when an
 		admin exists, which CHAT_SERVICE.create_first_admin guarantees) -
-		so no default password ever exists (intent-v2). Any other `--flag'
+		so no default password ever exists (intent-v2);
+		`simple_chat_server --create-user <name> [config.toml]' mints an
+		ordinary member the same way, prompting for a display name and the
+		password twice, and refused until an admin exists. There is no
+		self-registration: the host makes every account, which is what
+		these two flags are for. Any other `--flag'
 		prints usage instead of being mistaken for a configuration path.
+
+		Only the username travels in argv, and the rules confine it to
+		a-z, 0-9 and underscore - so nothing non-ASCII is ever put on a
+		Windows command line. The display name is typed at the console and
+		decoded as UTF-8 (`line_read_text'), so a Hebrew or Greek name
+		survives when the console is at code page 65001.
+
+		CONCURRENCY: both flags open their own connection to the same
+		SQLite file. The store is WAL, which does admit a second process,
+		but nothing here sets a busy timeout - so a write racing the
+		running server's can come back SQLITE_BUSY and fail the creation.
+		Stop the server first. The shipped wrappers say so and check.
 		Warns when ANTHROPIC_API_KEY is set in its environment (RISK-016):
 		that key would shadow the Claude subscription login for every
 		participant.
@@ -36,6 +53,13 @@ feature {NONE} -- Initialization
 					create_admin (l_args.argument (2).to_string_8, admin_config_path_from (l_args))
 				else
 					print ("--create-admin: the username must be 1..32 characters of a-z, 0-9 and underscore.%N")
+					usage
+				end
+			elseif l_args.argument_count >= 2 and then l_args.argument (1).same_string ("--create-user") then
+				if is_acceptable_username (l_args.argument (2)) then
+					create_member (l_args.argument (2).to_string_8, admin_config_path_from (l_args))
+				else
+					print ("--create-user: the username must be 1..32 characters of a-z, 0-9 and underscore.%N")
 					usage
 				end
 			elseif l_args.argument_count >= 1 and then l_args.argument (1).starts_with ("--") then
@@ -101,16 +125,21 @@ feature -- Commands
 		end
 
 	create_admin (a_username: READABLE_STRING_8; a_config_path: READABLE_STRING_GENERAL)
-			-- Prompt for the password twice and create the first admin
-			-- through CHAT_SERVICE.create_first_admin, against the same
-			-- store `serve' would open. The password echoes: plain Eiffel
-			-- console input has no echo suppression - acceptable for v1.
+			-- Prompt for a display name and the password twice, then create
+			-- the first admin through CHAT_SERVICE.create_first_admin,
+			-- against the same store `serve' would open. The password
+			-- echoes: plain Eiffel console input has no echo suppression -
+			-- acceptable for v1.
+			--
+			-- The display name is read as UTF-8 (`line_read_text') and
+			-- defaults to the username, so the old behaviour is what an
+			-- empty answer still gives.
 		require
 			acceptable: is_acceptable_username (a_username)
 			path_given: not a_config_path.is_empty
 		local
 			l_config: SERVER_CONFIG
-			l_first, l_second: STRING_32
+			l_display, l_first, l_second: STRING_32
 			l_result: CHAT_RESULT [CHAT_USER]
 		do
 			create l_config.make_from_file (a_config_path)
@@ -119,37 +148,127 @@ feature -- Commands
 				print_errors (l_config)
 			else
 				print ("WARNING: the password will echo on this console (no echo suppression in v1).%N")
-				print ("Password (at least " + l_config.password_minimum.out + " characters): ")
+				print ("Display name (press Enter to use %"" + a_username + "%"): ")
 				io.read_line
-				l_first := line_read
-				print ("Again: ")
-				io.read_line
-				l_second := line_read
-				if not passwords_acceptable (l_first, l_second, l_config.password_minimum) then
-					if not l_first.same_string (l_second) then
-						print ("--create-admin: the two entries do not match; nothing was created.%N")
-					else
-						print ("--create-admin: the password must be at least " + l_config.password_minimum.out + " characters; nothing was created.%N")
-					end
-				elseif attached new_service (l_config) as l_service then
-					l_result := l_service.create_first_admin (a_username, a_username, l_first)
-					if l_result.is_success then
-						print ("--create-admin: administrator %"" + a_username + "%" created.%N")
-					elseif attached l_result.error as l_error then
-						print ("--create-admin: refused - ")
-						print_line_32 (l_error.message)
-					end
-					if l_service.store.is_open then
-							-- Close before teardown: an open SQLite handle disposed during
-							-- run-time shutdown segfaulted after every successful run.
-						l_service.store.close
-					end
-				else
-						-- No memory fallback here: an admin created in a memory
-						-- store would vanish with this process (unlike the serving
-						-- path, which must stay up and logs its fallback).
-					print ("--create-admin: the store cannot be opened; nothing was created.%N")
+				l_display := line_read_text
+				if l_display.is_empty then
+					l_display := a_username.to_string_32
 				end
+				if not is_acceptable_display_name (l_display) then
+					print ("--create-admin: that display name is refused (1..64 characters, no control or bidi-override characters, and it may not carry the bot marker); nothing was created.%N")
+				else
+					print ("Password (at least " + l_config.password_minimum.out + " characters): ")
+					io.read_line
+					l_first := line_read
+					print ("Again: ")
+					io.read_line
+					l_second := line_read
+					if not passwords_acceptable (l_first, l_second, l_config.password_minimum) then
+						if not l_first.same_string (l_second) then
+							print ("--create-admin: the two entries do not match; nothing was created.%N")
+						else
+							print ("--create-admin: the password must be at least " + l_config.password_minimum.out + " characters; nothing was created.%N")
+						end
+					elseif attached new_service (l_config) as l_service then
+						l_result := l_service.create_first_admin (a_username, l_display, l_first)
+						if l_result.is_success then
+							print ("--create-admin: administrator %"" + a_username + "%" created.%N")
+						elseif attached l_result.error as l_error then
+							print ("--create-admin: refused - ")
+							print_line_32 (l_error.message)
+						end
+						if l_service.store.is_open then
+								-- Close before teardown: an open SQLite handle disposed during
+								-- run-time shutdown segfaulted after every successful run.
+							l_service.store.close
+						end
+					else
+							-- No memory fallback here: an admin created in a memory
+							-- store would vanish with this process (unlike the serving
+							-- path, which must stay up and logs its fallback).
+						print ("--create-admin: the store cannot be opened; nothing was created.%N")
+					end
+				end
+			end
+		end
+
+	create_member (a_username: READABLE_STRING_8; a_config_path: READABLE_STRING_GENERAL)
+			-- Prompt for a display name and a password twice, then create an
+			-- ORDINARY member through CHAT_SERVICE.create_user, against the
+			-- same store `serve' would open. There is no self-registration:
+			-- the host mints every account, which is why this exists.
+			--
+			-- Refused until an administrator exists, so the first account on a
+			-- fresh database is always the admin's own (`--create-admin').
+			-- The password echoes, exactly as `create_admin' says it does.
+			--
+			-- The display name is read as UTF-8 (see `line_read_text'), so a
+			-- Hebrew or Greek name survives when the console is at code page
+			-- 65001 - which the shipped console wrapper sets. It is never
+			-- passed as a command-line argument: only the username, which the
+			-- rules confine to a-z, 0-9 and underscore, travels in argv.
+		require
+			acceptable: is_acceptable_username (a_username)
+			path_given: not a_config_path.is_empty
+		local
+			l_config: SERVER_CONFIG
+			l_display, l_first, l_second: STRING_32
+			l_result: CHAT_RESULT [CHAT_USER]
+		do
+			create l_config.make_from_file (a_config_path)
+			if not l_config.is_valid then
+				print ("--create-user: the configuration is refused; fix it first:%N")
+				print_errors (l_config)
+			elseif attached new_service (l_config) as l_service then
+				if not l_service.store.has_admin then
+						-- An ordinary member before there is anyone to administer
+						-- them is the wrong order, and it would quietly make the
+						-- database's first account a non-admin one.
+					print ("--create-user: there is no administrator yet; nothing was created.%N")
+					print ("Create the first admin first:%N")
+					print ("  simple_chat_server --create-admin <username> [simple_chat_server.toml]%N")
+				else
+					print ("WARNING: the password will echo on this console (no echo suppression in v1).%N")
+					print ("Display name (press Enter to use %"" + a_username + "%"): ")
+					io.read_line
+					l_display := line_read_text
+					if l_display.is_empty then
+						l_display := a_username.to_string_32
+					end
+					if not is_acceptable_display_name (l_display) then
+						print ("--create-user: that display name is refused (1..64 characters, no control or bidi-override characters, and it may not carry the bot marker); nothing was created.%N")
+					else
+						print ("Password (at least " + l_config.password_minimum.out + " characters): ")
+						io.read_line
+						l_first := line_read
+						print ("Again: ")
+						io.read_line
+						l_second := line_read
+						if not passwords_acceptable (l_first, l_second, l_config.password_minimum) then
+							if not l_first.same_string (l_second) then
+								print ("--create-user: the two entries do not match; nothing was created.%N")
+							else
+								print ("--create-user: the password must be at least " + l_config.password_minimum.out + " characters; nothing was created.%N")
+							end
+						else
+							l_result := l_service.create_user (a_username, l_display, l_first, False)
+							if l_result.is_success then
+								print ("--create-user: member %"" + a_username + "%" created.%N")
+							elseif attached l_result.error as l_error then
+								print ("--create-user: refused - ")
+								print_line_32 (l_error.message)
+							end
+						end
+					end
+				end
+				if l_service.store.is_open then
+						-- Close before teardown: an open SQLite handle disposed
+						-- during run-time shutdown segfaulted after every
+						-- successful run (the same reason `create_admin' closes).
+					l_service.store.close
+				end
+			else
+				print ("--create-user: the store cannot be opened; nothing was created.%N")
 			end
 		end
 
@@ -157,6 +276,7 @@ feature -- Commands
 		do
 			print ("simple_chat_server [simple_chat_server.toml]%N")
 			print ("simple_chat_server --create-admin <username> [simple_chat_server.toml]%N")
+			print ("simple_chat_server --create-user <username> [simple_chat_server.toml]%N")
 		end
 
 feature -- Status report
@@ -173,6 +293,17 @@ feature -- Status report
 	is_acceptable_username (a_name: READABLE_STRING_GENERAL): BOOLEAN
 		do
 			Result := a_name.is_valid_as_string_8 and then (create {CHAT_USER_RULES}).is_valid_username (a_name.to_string_8)
+		end
+
+	is_acceptable_display_name (a_name: READABLE_STRING_GENERAL): BOOLEAN
+			-- Would CHAT_SERVICE.create_user accept `a_name' as a display name?
+			-- Asked BEFORE the call, so the precondition `valid_display' is
+			-- discharged by this application rather than tripped by it: a
+			-- person typing at a console is not a programming error.
+		do
+			Result := (create {CHAT_USER_RULES}).is_valid_human_display_name (a_name)
+		ensure
+			definition: Result = (create {CHAT_USER_RULES}).is_valid_human_display_name (a_name)
 		end
 
 	passwords_acceptable (a_first, a_second: READABLE_STRING_GENERAL; a_minimum: INTEGER): BOOLEAN
@@ -269,6 +400,50 @@ feature {NONE} -- Implementation
 			else
 				create Result.make_empty
 			end
+		end
+
+	line_read_text: STRING_32
+			-- What the last `io.read_line' read, DECODED AS UTF-8 when the
+			-- bytes are valid UTF-8, and byte-for-byte otherwise.
+			--
+			-- `line_read' widens each byte to a character, which is right for
+			-- a password (an opaque byte sequence, hashed as given) and wrong
+			-- for a name a person reads: at code page 65001 the console hands
+			-- over UTF-8, so a three-letter Hebrew name (U+05DE U+05E9 U+05D4)
+			-- arrives as six bytes that `line_read' would
+			-- turn into six mojibake characters. The shipped console wrapper
+			-- sets 65001; the fallback covers a console left at its default,
+			-- where the bytes will not be valid UTF-8 and the old behaviour is
+			-- exactly what is wanted.
+			--
+			-- A trailing carriage return is dropped: `io.read_line' strips the
+			-- newline but a CRLF stream can leave the CR behind, and a display
+			-- name ending in one would be refused by `is_forbidden_in_name'.
+		local
+			l_bytes: STRING_8
+		do
+			if attached io.last_string as l_line then
+				if l_line.is_valid_as_string_8 then
+					l_bytes := l_line.to_string_8
+					if {UTF_CONVERTER}.is_valid_utf_8_string_8 (l_bytes) then
+						Result := {UTF_CONVERTER}.utf_8_string_8_to_string_32 (l_bytes)
+					else
+						Result := l_line.to_string_32
+					end
+				else
+					Result := l_line.to_string_32
+				end
+			else
+				create Result.make_empty
+			end
+			from
+			until
+				Result.is_empty or else (Result.item (Result.count) /= '%R' and Result.item (Result.count) /= ' ')
+			loop
+				Result.remove_tail (1)
+			end
+		ensure
+			no_trailing_blank: not Result.is_empty implies (Result.item (Result.count) /= '%R' and Result.item (Result.count) /= ' ')
 		end
 
 	config_path_from (a_args: ARGUMENTS_32): STRING_32

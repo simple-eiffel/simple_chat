@@ -35,6 +35,63 @@ feature -- Administration
 			assert ("second person fresh", l_result.is_success and l_service.store.user_count = 2)
 		end
 
+	test_ordinary_member_created_by_the_host
+			-- What `--create-user' does: the host mints an ordinary member,
+			-- who joins the default room and can log in, and who is NOT an
+			-- administrator. There is no self-registration anywhere.
+			--
+			-- The ordering rule `--create-user' enforces is `store.has_admin':
+			-- CHAT_SERVICE.create_user itself has no such guard (it is the
+			-- shared body `create_first_admin' calls), so the flag has to ask
+			-- before it calls. Both states of that discriminator are pinned
+			-- here.
+		local
+			l_service: CHAT_SERVICE
+			l_result: CHAT_RESULT [CHAT_USER]
+			l_login: CHAT_RESULT [CHAT_SESSION]
+		do
+			l_service := service
+
+				-- On a fresh store there is no admin: this is the state in
+				-- which `--create-user' refuses and sends the host to
+				-- `--create-admin' instead.
+			assert ("no admin on a fresh store", not l_service.store.has_admin)
+
+			l_result := l_service.create_first_admin ("larry", {STRING_32} "Larry", {STRING_32} "open sesame 42")
+			assert ("admin created", l_result.is_success)
+			assert ("now there is an admin", l_service.store.has_admin)
+
+				-- The ordinary member. A display name that is not the username,
+				-- and one the console must carry as UTF-8.
+			l_result := l_service.create_user ("nick", {STRING_32} "Nick", {STRING_32} "open sesame 42", False)
+			assert ("member created", l_result.is_success)
+			assert ("member is not an admin", attached l_result.value as u and then not u.is_admin)
+			assert ("member is stored", attached l_result.value as u2 and then u2.is_stored)
+			assert ("member joined the default room", attached l_result.value as u3 and then l_service.store.is_member (u3.id, l_service.store.default_room_id))
+			assert ("the display name is kept as given", attached l_result.value as u4 and then u4.display_name.same_string ({STRING_32} "Nick"))
+			assert ("two people now", l_service.store.user_count = 2)
+
+				-- A non-ASCII display name survives the whole way through the
+				-- store: this is what reading the console as UTF-8 is for.
+				-- "משה" as code points (U+05DE U+05E9 U+05D4) - never as
+				-- literal glyphs, which this compiler would read as their raw
+				-- UTF-8 bytes.
+			l_result := l_service.create_user ("moshe", {STRING_32} "%/1502/%/1513/%/1492/", {STRING_32} "open sesame 42", False)
+			assert ("Hebrew display name accepted", l_result.is_success)
+			assert ("Hebrew display name round-trips", attached l_result.value as u5 and then u5.display_name.same_string ({STRING_32} "%/1502/%/1513/%/1492/"))
+
+				-- Minting an account is only useful if it can be used.
+			l_login := l_service.authenticate ("nick", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("the member can log in", l_login.is_success)
+
+				-- Creating one twice is refused, and creating a member never
+				-- makes a second administrator.
+			l_result := l_service.create_user ("nick", {STRING_32} "Nick Again", {STRING_32} "open sesame 42", False)
+			assert ("duplicate member refused", not l_result.is_success and attached l_result.error as e and then e.code.same_string ({CHAT_ERROR}.Code_exists))
+			l_result := l_service.create_first_admin ("mallory", {STRING_32} "Mallory", {STRING_32} "open sesame 42")
+			assert ("still only one admin may be minted", not l_result.is_success)
+		end
+
 	test_reset_password_revokes_sessions
 		local
 			l_service: CHAT_SERVICE
