@@ -1,11 +1,12 @@
 # Implementation Tasks: simple_chat (Phase 4)
 
-**Status 2026-09-02:** Tasks 1–9 DONE, plus Task 9b (the last two Phase 4 stubs: the
-client's `post_image` and the service's `backup`). The server is complete (live; `@claude` answers in
-the room — smoke-proven over HTTP; SSE streams and the per-IP lockout proven live; three SCOOP
-concurrency defects and the re-entrant-wake phantom raise found live and fixed). The client
-stack compiles and ran a live WinHTTP round trip. Task 10 (the visible client) is gated on
-simple_shaping, which is at its Phase 2 repair pass.
+**Status 2026-09-02:** Tasks 1–10 DONE, plus Task 9b. The server is complete (live; `@claude`
+answers in the room — smoke-proven over HTTP; SSE streams and the per-IP lockout proven live; three
+SCOOP concurrency defects and the re-entrant-wake phantom raise found live and fixed). The client
+stack ran a live WinHTTP round trip, and **Task 10 landed the window**: `SW_CHAT_VIEW` over
+simple_widgets with shaped text on, `LOGIN_WINDOW`, and a `CLIENT_APP` that locates, resumes or asks,
+opens the room and pumps the presenter from the window's own heartbeat. What remains is not code:
+Larry's console smoke at the keyboard (`RUNBOOK.md`), because no headless assault can look at pixels.
 
 Ordered by dependency (approach.md section 4; stub inventory of 2026-08-31: 80 `Phase 4` markers).
 Standing rules for every task: the contracts are the specification — bodies satisfy them; a
@@ -110,9 +111,53 @@ src/service/chat_service.e (backup, fresh_backup_path), src/store/chat_store.e
 - [x] Live: the finalized server booted, the client posted a PNG whose Hebrew file
       name and emoji caption came back byte for byte over real HTTP
 
-## Task 10: The visible client
-**Files:** SW_CHAT_VIEW over simple_widgets (SW_CHAT_THREAD exists)
-### Dependencies: /eiffel.research D:\prod\simple_shaping (the long pole), WIC image decoder.
+## Task 10: The visible client  ✔ DONE (console smoke pending)
+**Files:** `apps/client/sw_chat_view.e` (CHAT_VIEW effected over simple_widgets: SW_CHAT_THREAD with
+`enable_shaped_text`, composer, send, header strip with the room name / unread badge / connection
+line, status and error lines), `apps/client/login_window.e` (server, name, masked password,
+remember-me, refusal line; `attempt` is the host's agent, so the door is assaultable with no server),
+`apps/client/chat_input_box.e` (SW_TEXT_BOX with Enter-to-send, the hook the toolkit does not offer),
+`apps/client/client_app.e` (locate → remembered session or the door → first room → poller → the
+window whose 250 ms tick is one `pump`), `apps/client/stage_client.sh`, `testing/window_assault.e`,
+the live pane round trip in `testing/wiring_assault.e`, and `RUNBOOK.md`.
+
+Additive, contract-carrying features in `src/` (no existing clause touched): `CHAT_CLIENT.resume`
+(take up a remembered token, proved at `GET /me`), `CHAT_CLIENT.rooms`, `CHAT_CLIENT.remember_session_in`
+(seals the session without ever exposing the token), `CLIENT_CODEC.member` / `.array`.
+
+### Acceptance
+- [x] Every CHAT_VIEW contract discharged by SW_CHAT_VIEW; the pane assaulted OFFSCREEN
+      (SW_WINDOW allocates a cairo image surface in `make` and creates nothing native
+      until `run`), including under a real CHAT_PRESENTER with a real EVENT_INBOX
+- [x] The window carries an SW_SHAPING kit and lays the D-015 acceptance line out RTL,
+      Greek run leftmost and Hebrew run rightmost, every character covered
+- [x] Enter submits; an empty line is never handed on; an ordinary character types
+- [x] LOGIN_WINDOW refuses a non-https stranger, an empty or spaced name and an empty
+      password before a byte leaves the PC, and shows the server's own message otherwise
+- [x] CLIENT_APP's decision tree over a scripted transport: a sealed blob that `GET /me`
+      honours means no password; no blob (or a refused one) means the door
+- [x] LIVE: the booted server exe, `attempt_login` (the door's own agent), `open_room`,
+      `send_text`, and `tick` until the posted line comes back through the REAL poller
+      into the REAL pane; then a second CLIENT_APP over the same client.toml logs in
+      with no password at all
+- [ ] **Console smoke (Larry, at the keyboard):** `שלום 🤖 Χριστός` renders with the
+      Hebrew rightmost, the robot as the Noto picture and the Greek intact; `@claude`
+      answers; resize re-wraps at the drag's end; close and reopen skips the login.
+      `RUNBOOK.md` is the script.
+
+### Stated limits (deliberate, not omissions)
+- An IMAGE event is shown as a named, sized attachment line carrying its caption, NOT as
+  a picture: no WIC decoder is linked into this client (D-020's deferred half). The bytes
+  and the name are already on the wire; only the decode is missing.
+- The unread badge lives in the pane's header strip and the tray tooltip, never in the
+  native title bar: simple_shell publishes no `SetWindowText` and is not this project's
+  to change.
+- `is_foreground` is answered by `GetForegroundWindow` against the window's own handle
+  (simple_shell raises no activation event), and is False whenever there is no native
+  window — which is the honest answer and the branch the headless assault drives.
+
+### Dependencies: simple_shaping (LANDED, reached through simple_widgets' SW_SHAPING);
+WIC image decoder (still deferred — see the stated limits).
 
 ## External dependency tasks (tracked, not simple_chat code)
 simple_toml (existence check first) · simple_process wait_for_exit/kill · simple_winhttp ·

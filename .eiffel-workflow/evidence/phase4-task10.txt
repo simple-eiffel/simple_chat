@@ -1,0 +1,423 @@
+================================================================================
+PHASE 4 TASK 10 - THE VISIBLE CLIENT
+branch phase4/window, from main 62de6d6
+2026-09-02
+================================================================================
+
+The last build task of simple_chat: the room pane, the door, and the assembly
+that makes an exe out of the UI-free client stack Tasks 1-9b proved. Everything
+below was run in the worktree D:/prod/simple_chat_wt_window.
+
+
+--------------------------------------------------------------------------------
+1. ACCEPTANCE - DONE / LEFT
+--------------------------------------------------------------------------------
+
+DONE
+
+ [x] apps/client/sw_chat_view.e - SW_CHAT_VIEW effects CHAT_VIEW over
+     simple_widgets. An SW_WINDOW with SHAPED TEXT ON (enable_shaped_text: one
+     SW_SHAPING kit for the window's life, the Noto artwork resolved beside the
+     RUNNING EXECUTABLE), an SW_CHAT_THREAD for the bubbles (roles: mine right,
+     theirs left, system centred; sticky bottom, so a new event scrolls to the
+     tail unless the reader has scrolled back), a CHAT_INPUT_BOX composer, a
+     Send button, a header strip carrying the room name + the unread badge +
+     the connection line, a status line for ephemeral "Claude is thinking"
+     statuses, and an error line.
+     EVERY CHAT_VIEW CONTRACT IS DISCHARGED: shown_model / shown_count (an
+     ARRAYED_LIST [INTEGER_64] behind an MML_SEQUENCE), show_event's `counted'
+     and `appended', show_status / show_error / show_connection's
+     `events_unchanged', show_connection's `recorded', is_foreground,
+     is_connected. Nine `ensure then' clauses and a four-clause invariant were
+     added on top; no inherited clause was touched.
+
+ [x] apps/client/login_window.e - LOGIN_WINDOW: server URL (prefilled from the
+     endpoint SERVICE_LOCATOR found, or the configured primary), name, MASKED
+     password (SW_TEXT_BOX.make_password: bullets, no clipboard copy, no
+     spellcheck), "Remember me on this PC" (ticked by default), an error line
+     for refused logins, Log in and Cancel. The verdict is NOT this class's:
+     `attempt' is an agent the host supplies, answering Void on success and the
+     message to show on failure - which is what makes the door assaultable with
+     no server anywhere.
+
+ [x] CLIENT_APP assembly - locate (SERVICE_LOCATOR) -> the remembered session
+     (CLIENT_CONFIG.load_session, unsealed by DPAPI, proved live at GET /me) ->
+     else the door -> the first room -> the separate EVENT_POLLER / EVENT_INBOX
+     under POLLER_HOST -> the pane. The window's own 250 ms heartbeat
+     (SW_WINDOW.set_on_tick) is one CHAT_PRESENTER.pump ON THE ROOT PROCESSOR;
+     the poller blocks up to 25 s on its own processor and the GUI never waits
+     for it, because the inbox is a processor that never blocks. The tray
+     notifier balloons and badges while the pane is not in front. Clean
+     shutdown: room closed, logout ONLY when "remember me" was not ticked (a
+     logout revokes the token, which would defeat the whole point), the DPAPI
+     blob kept when it was, and the window's placement written back to
+     client.toml.
+
+ [x] Runnable folder - apps/client/stage_client.sh stages SimpleChat.exe (the
+     client target RENAMED, because every target of this system finalizes to
+     simple_chat.exe and a taskkill by image name would otherwise be a loaded
+     gun), cairo.dll, LICENSE-ASSETS.md, assets/noto-emoji/png/128/ (3,768
+     files) and a client.toml template into dist/simple_chat_client/. A folder
+     you cd into and run, never a zip. Documented in README.md.
+
+ [x] Tests - testing/window_assault.e: 14 tests, all headless, registered in
+     the fleet runner under "=== THE VISIBLE CLIENT (Phase 4 Task 10) ===".
+     Plus one LIVE test added to testing/wiring_assault.e.
+
+ [x] RUNBOOK.md - the console script for Larry: build both halves, stage,
+     --create-admin, boot the server with stdout to a FILE (never a pipe), run
+     the client, log in, post, make @claude answer, post the acceptance line and
+     check three named properties, resize, close and reopen on the remembered
+     session, and what to report back.
+
+LEFT (and why)
+
+ [ ] THE PIXELS. A pane that is never shown paints nothing, so "the Hebrew is
+     rightmost, the robot is a robot, the Greek is intact" is asserted one layer
+     down - on the SHAPED_LAYOUT the pane's own kit produces - and must be
+     LOOKED AT by a human. That is RUNBOOK.md sections 5 and 6. simple_widgets
+     already proves the paint half on pixels (evidence/shaped-d015.png).
+
+ [ ] INLINE IMAGE DECODE - deliberately out of scope, and said out loud in the
+     class note, in tasks.md and in README.md. An IMAGE event is shown as
+     "<who>: [image] <file name> (<n> bytes) - <caption>". No WIC decoder is
+     linked into this client, and none was added: `windowscodecs' appears ZERO
+     times in the client exe. The bytes and the name are already on the wire;
+     only the decode is missing. D-020 (WIC) stays deferred exactly as it was.
+
+ [ ] THE UNREAD COUNT IN THE NATIVE TITLE BAR - IMPOSSIBLE without editing a
+     read-only library. simple_shell publishes no SetWindowText binding and no
+     SW_WINDOW.set_title, so the count lives in the pane's header strip and in
+     the tray tooltip TRAY_NOTIFIER keeps ("(3) simple_chat"). Both are per the
+     presenter's laws: the presenter owns the count, the view only shows it.
+
+
+--------------------------------------------------------------------------------
+2. EVERY ADDED CLASS AND FEATURE
+--------------------------------------------------------------------------------
+
+NEW CLASSES (apps/client - the client target and the tests target)
+
+  SW_CHAT_VIEW        effects CHAT_VIEW. make, shown_model, shown_count,
+                      shown_ids, errors, status_text, endpoint, unread, window,
+                      thread, input, root, room_title, on_send, is_foreground,
+                      is_connected, set_on_send, set_room_title, set_unread,
+                      show_event, show_status, show_error, show_connection, run,
+                      close, role_for, bubble_text, Window_title, Text_send,
+                      Text_connected, Text_unreachable, Attachment_mark,
+                      refresh_header, submit, redraw, c_foreground_window,
+                      theme / title_label / unread_label / connection_label /
+                      status_label / error_label / send_button.
+
+  LOGIN_WINDOW        inherits CHAT_URL_RULES. make, window, root, server_box,
+                      username_box, password_box, remember_box, last_error,
+                      attempt, server_url, username, password, remembers,
+                      is_accepted, is_cancelled, validation_error, is_usable,
+                      set_attempt, set_fields, try_login, cancel, run, close,
+                      Window_title / Window_width / Window_height / Text_*,
+                      ascii_of, redraw, theme / error_label / login_button /
+                      cancel_button.
+
+  CHAT_INPUT_BOX      inherits SW_TEXT_BOX, redefines handle_char. on_submit,
+                      set_on_submit, handle_char, Return_code. Exists because
+                      SW_TEXT_BOX drops Return in single-line mode and offers
+                      the host no hook for it: Enter-to-send had nowhere to live.
+
+  WINDOW_ASSAULT      testing/ - 14 tests plus fixtures.
+
+REWRITTEN
+
+  CLIENT_APP          make (build + run), make_for_test (build only, over a
+                      scripted transport and a scratch config), build, run,
+                      try_remembered_session, ask_for_login, attempt_login,
+                      open_room, tick, send_text, shut_down, room_id,
+                      last_seen_id, remembers, session_was_lost, endpoint,
+                      Default_room_title, Minimum_window_*, Message_bad_server,
+                      Message_no_rooms. start_polling / hand_session /
+                      attach_inbox / launch are unchanged from Task 9. `view' is
+                      now SW_CHAT_VIEW instead of the MEMORY_CHAT_VIEW stand-in,
+                      and `transport' is declared HTTP_TRANSPORT so the assault
+                      can script it.
+
+ADDITIVE FEATURES IN src/ - NO EXISTING require / ensure / invariant OR
+SIGNATURE WAS TOUCHED (the Phase 4 law)
+
+  CHAT_CLIENT.resume (a_token): CHAT_RESULT [CHAT_MEMBER]
+        Take up a session remembered from an earlier run. GET /me both proves
+        the token is still live and says whose it is; any other answer drops the
+        token again, so a stale blob never leaves a half-session. This closes
+        the one gap that made a remembered session unusable: `adopt_session' is
+        exported to {CHAT_CLIENT} only, so no window could ever have called it.
+        require logged_out, token_shape; ensure outcome, me_on_success,
+        nothing_kept_on_failure, endpoint_kept.
+
+  CHAT_CLIENT.rooms: CHAT_RESULT [ARRAYED_LIST [TUPLE [id; name]]]
+        GET /rooms. A bare JSON array, so it goes through CLIENT_CODEC.array;
+        one malformed entry makes the whole answer a 502 result, never a
+        half-list. ensure all_identified, all_named, session_kept.
+
+  CHAT_CLIENT.remember_session_in (a_config)
+        Seal the live session into the config with DPAPI. The command lives on
+        the CLIENT and not on the window because the token never leaves this
+        object in clear: "remember me" is a request, not a getter.
+        ensure session_kept, remembered_or_no_dpapi, written, endpoint_kept.
+
+  CHAT_CLIENT.Path_me, CHAT_CLIENT.Path_rooms - two constants.
+
+  CLIENT_CODEC.member (a_bytes), CLIENT_CODEC.array (a_bytes)
+        The same never-raises rescue shape as every other query in that class.
+
+CONFIGURATION
+
+  simple_chat.ecf   simple_widgets added to simple_chat_tests (it was already on
+                    simple_chat_client), with <option warning="none"/> on BOTH -
+                    SW_LOCALE.format_number carries an unused local of the
+                    library's own, and this project is kept at zero warnings the
+                    way simple_toml is kept. simple_shaping is named EXPLICITLY
+                    in the tests target: an indirectly included library's
+                    classes are NOT in this system's universe (proved by a VTCT
+                    on SHAPED_LAYOUT), and the assault reads the layout the
+                    pane's own kit produces.
+
+  .gitignore        testing/window_scratch/ added.
+
+
+--------------------------------------------------------------------------------
+3. WHAT COULD AND COULD NOT BE EXERCISED HEADLESS
+--------------------------------------------------------------------------------
+
+COULD, and was. SW_WINDOW.make allocates a cairo image surface and a painter and
+creates NOTHING native; only `run' calls shell_run. So both windows are built
+offscreen in the suite and driven exactly as a member drives them:
+
+  - three events -> three bubbles -> three ids in order, with the roles the
+    thread will draw them with (mine right, system centred, theirs left)
+  - an image event -> a marked, named, sized, captioned attachment line
+  - the badge, the ephemeral line (replaces, never stacks), the error line
+    (kept in order), the connection state - and the law that none of them
+    disturbs the events
+  - is_foreground False with no native window, before and after showing
+  - the window's SW_SHAPING kit laying out the D-015 acceptance line:
+    3 runs, base_direction RTL, first run LTR (the Greek, leftmost), last run
+    RTL (the Hebrew, rightmost), every character covered, total_height 25
+  - Enter submits, an empty line goes nowhere, an ordinary character types
+  - CHAT_PRESENTER against the REAL pane with a REAL EVENT_INBOX: two events in
+    order, unread counted twice and the tray notified twice (because a pane with
+    no window is not in front - the honest answer AND the interesting branch),
+    a status that is not an event, a garbage page that is an error and not an
+    exception
+  - the door's three refusals (non-https stranger, empty/spaced name, empty
+    password) before a byte leaves the PC, the host's refusal message, and an
+    acceptance
+  - CLIENT_APP's decision tree over a scripted transport: a sealed blob that
+    GET /me honours means no password (and the request really is GET /me); no
+    blob means the door; a 401 comes back as the server's own message; a good
+    password opens the session; a plain-http stranger is refused with zero
+    exchanges beyond the locator's one probe; the first room is opened, named,
+    rostered and polled, and `tick' keeps the badge equal to the presenter's
+    count; a server that lists no room leaves the room closed and the reason on
+    the pane's error line.
+
+COULD NOT, and is honestly left to the console:
+
+  - PIXELS. Nothing is painted until `run', and `run' needs an interactive
+    desktop. No SKIP was needed anywhere - every headless test really runs -
+    but the three visual properties of the acceptance line are RUNBOOK.md's.
+  - The tray BALLOON itself (SHELL_TRAY degrades to silence with no shell; the
+    counts still hold exactly, which is what TRAY_NOTIFIER's contracts promise
+    and what the Task 9 test already proves).
+  - Resize behaviour (R10: re-layout at the drag's END). SW_CHAT_THREAD's own
+    debounce is assaulted in simple_widgets; here it is a runbook step.
+
+
+--------------------------------------------------------------------------------
+4. THE BUILDS
+--------------------------------------------------------------------------------
+
+Command shape (foreground, blocking, one at a time):
+
+    cd /d/prod/simple_chat_wt_window
+    /d/prod/ec.sh test -config simple_chat.ecf -target <target>
+
+simple_chat_client
+    [CLI] Done.
+    ✓ Built: EIFGENs/simple_chat_client/F_code/simple_chat.exe (0s ago)
+    EXIT=0
+
+simple_chat_tests
+    [CLI] Done.
+    ✓ Built: EIFGENs/simple_chat_tests/F_code/simple_chat.exe (1s ago)
+    EXIT=0
+
+simple_chat_server
+    [CLI] Done.
+    ✓ Built: EIFGENs/simple_chat_server/F_code/simple_chat.exe (1s ago)
+    EXIT=0
+
+simple_chat_doorbell_tests
+    [CLI] Done.
+    ✓ Built: EIFGENs/simple_chat_doorbell_tests/F_code/simple_chat.exe (0s ago)
+    EXIT=0
+
+EXE TIMESTAMPS AND SIZES (all newer than their build start; ec.sh silently
+leaves a stale exe on a compile error, so this is checked, not assumed)
+
+    simple_chat_client           2026-09-02 14:49:37    16908288 bytes   (build started 2026-09-02 14:49:14)
+    simple_chat_tests            2026-09-02 14:43:53    25819648 bytes   (build started 2026-09-02 14:40:49)
+    simple_chat_server           2026-09-02 14:45:47    22242304 bytes   (verified newer than its build)
+    simple_chat_doorbell_tests   2026-09-02 14:47:47    17765888 bytes   (verified newer than its build)
+
+WARNINGS - grep "Error code" and "Warning code" over each build log
+
+    build_client2.log            Error code: 0   Warning code: 0
+    build_tests.log              Error code: 0   Warning code: 1
+    build_server.log             Error code: 0   Warning code: 1
+    build_doorbell.log           Error code: 0   Warning code: 1
+
+The single warning in the three logs that carry one is the PRE-EXISTING
+simple_toml obsolete call ("Obsolete feature calls are detected, but not
+reported due to project configuration settings"); the client target now reports
+none at all. ZERO new warnings anywhere. The SW_LOCALE unused-local that
+arrived with simple_widgets is silenced at the library entry, exactly as
+simple_toml is, so it is the library's business and not this project's.
+
+
+--------------------------------------------------------------------------------
+5. THE TEST TOTALS
+--------------------------------------------------------------------------------
+
+    cp $SIMPLE_EIFFEL/simple_cairo/cairo.dll EIFGENs/simple_chat_tests/F_code/
+    ./EIFGENs/simple_chat_tests/F_code/simple_chat.exe
+
+BEFORE (main 62de6d6):   166 passed, 0 failed
+AFTER:                   Results: 181 passed, 0 failed
+
+    +14 window tests (WINDOW_ASSAULT)
+    + 1 live test    (WIRING_ASSAULT.test_live_client_app_shows_an_event_in_the_real_pane)
+
+cairo.dll now has to be beside the test runner: the suite builds real
+SW_CHAT_VIEW and LOGIN_WINDOW objects, and simple_cairo links an IMPORT library -
+a missing DLL is a launch failure, not a degraded run.
+
+    ./EIFGENs/simple_chat_doorbell_tests/F_code/simple_chat.exe
+
+BEFORE: 6 passed, 0 failed.  AFTER: 6 passed, 0 failed (3 s)
+
+THE TASK 10 SECTION, VERBATIM
+
+    === THE VISIBLE CLIENT (Phase 4 Task 10) ===
+      PASS: view_shows_events_in_order_and_never_twice
+      PASS: view_shows_an_image_as_an_attachment_line
+      PASS: view_badge_status_error_and_connection
+      PASS: view_is_never_in_front_without_a_window
+        pane: 3 runs, width 113.3515625, total_height 25
+      PASS: view_shaped_text_is_on_and_lays_out_the_acceptance_line
+      PASS: input_box_submits_on_return_and_never_sends_an_empty_line
+      PASS: presenter_pumps_pages_into_the_real_pane
+      PASS: login_window_validates_its_fields
+      PASS: login_window_shows_a_refusal_and_accepts_a_success
+      PASS: client_app_prefers_the_remembered_session
+      PASS: client_app_falls_back_to_the_door_and_logs_in
+      PASS: client_app_refuses_to_send_a_password_to_a_plain_http_stranger
+      PASS: client_app_opens_the_first_room_and_ticks
+      PASS: client_app_reports_a_server_that_lists_no_room
+
+THE LIVE PANE ROUND TRIP, VERBATIM - the booted server exe, CLIENT_APP taken
+through the path its window takes (attempt_login is the door's own button agent;
+open_room is what run calls next; tick is what SW_WINDOW fires every 250 ms), the
+event returning through the REAL poller on its own SCOOP processor into the REAL
+SW_CHAT_VIEW:
+
+    CLIENT_APP located http://127.0.0.1:18213
+    the door opened: attempt_login answered Void and the session is live
+    remember me: sealed as a DPAPI blob
+    open_room -> room 1 (main), poller running: True
+    the pane after 2 ticks: 1 event(s), 1 bubble(s); the posted line is among them
+    a second CLIENT_APP over the same client.toml: logged in with no password (GET /me honoured the blob)
+
+
+--------------------------------------------------------------------------------
+6. THE CLIENT EXE AND WHAT TRAVELS WITH IT
+--------------------------------------------------------------------------------
+
+    EIFGENs/simple_chat_client/F_code/simple_chat.exe  16908288 bytes (16.1 MiB), built 2026-09-02 14:49:37
+
+DLLs the exe imports (read out of the image):
+
+    bcrypt.dll      Windows - PBKDF2 / random
+    cairo.dll       *** THE ONLY ONE THAT SHIPS *** (simple_cairo links
+                    cairo.LIB, an IMPORT library: the DLL must be found at
+                    PROCESS START or the exe does not launch at all - there is
+                    no runtime check to degrade through and the failure looks
+                    exactly like a crash)
+    crypt32.dll     Windows - DPAPI (the remembered session)
+    gdi32.dll       Windows
+    kernel32.dll    Windows
+    ole32.dll       Windows - COM, for DirectWrite
+    shell32.dll     Windows - the notification area (SHELL_TRAY)
+    user32.dll      Windows
+    winhttp.dll     Windows - simple_winhttp
+    ws2_32.dll      Windows
+
+    dwrite          referenced (DirectWrite, simple_shaping's first backend) -
+                    a Windows system DLL, nothing to ship
+    windowscodecs   ZERO occurrences: no WIC is linked, which is the binary
+                    proof of the stated image limit
+
+The staged runnable folder:
+
+        staged: SimpleChat.exe (17M)
+    staged: cairo.dll
+    staged: LICENSE-ASSETS.md
+    staged: assets/noto-emoji/png/128 (3768 files)
+    staged: client.toml (template)
+    
+    runnable folder ready: /d/prod/simple_chat_wt_window/dist/simple_chat_client
+      run it from a command prompt:  cd "/d/prod/simple_chat_wt_window/dist/simple_chat_client" && SimpleChat.exe
+
+3,768 emoji PNGs is about 20 MiB. Missing artwork is NOT a crash - simple_shaping
+degrades to a note and a box - but the robot will not be a robot.
+
+
+--------------------------------------------------------------------------------
+7. NOTES A LATER READER WILL WANT
+--------------------------------------------------------------------------------
+
+ONE NATIVE WINDOW AT A TIME. simple_shell keeps a single module-global
+s_shell_hwnd, so the door and the room pane can never be up together. `run'
+therefore runs the door, lets it CLOSE, and only then runs the pane. WM_DESTROY
+posts WM_QUIT, GetMessage consumes it and returns 0, and a second shell_run
+registers the same window class again (RegisterClassW's failure on an existing
+class is ignored and CreateWindowExW still succeeds), so the sequence works.
+This is also why a lost session is handled by CLOSING the pane and going round
+the loop rather than by opening a dialog over it.
+
+WHY THE PRESENTER IS SOMETIMES REBUILT. CHAT_PRESENTER binds to one CHAT_CLIENT
+for its life, and pointing the door at a different server needs a new endpoint
+and therefore a new client. `attempt_login' rebuilds both. Nothing else holds
+the presenter - `tick' reads the attribute at call time - so the swap is safe,
+and it can only happen while no room is open.
+
+VOID SAFETY AND AGENTS. An agent on Current lets Current escape, so every
+attribute must be set before one is made. Both windows therefore build their
+whole widget tree first and wire `on_click' / `on_submit' LAST. The first
+compile failed on exactly this (VEVI, attributes send_button and root).
+
+THE FOREGROUND QUESTION. CHAT_PRESENTER's whole unread law turns on
+CHAT_VIEW.is_foreground, and simple_shell raises no activation event and is not
+this project's to change. SW_CHAT_VIEW asks Windows directly - one inline C
+external, GetForegroundWindow() against its own hwnd - and answers False
+whenever there is no native window, which is both the honest answer and the
+branch the headless assault drives.
+
+INDIRECT LIBRARIES ARE NOT IN THE UNIVERSE. simple_widgets includes
+simple_shaping, but SHAPED_LAYOUT / SHAPED_LINE / SHAPING_CONSTANTS were VTCT
+"unknown class" from this system's own clusters until simple_shaping was named
+explicitly in the ECF. Worth knowing before the next library adopts another.
+
+THE C-PHASE HAZARD DID NOT BITE. simple_shell/Clib/simple_shell.h declares a
+local named `small' (a Windows SDK macro) which has broken the C phase of some
+release builds. All four targets finalized here without a C2059. Nothing in
+simple_shell was edited.
+
+================================================================================

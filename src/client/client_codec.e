@@ -72,6 +72,34 @@ feature -- Decoding (never raises)
 			retry
 		end
 
+	array (a_bytes: READABLE_STRING_8): detachable SIMPLE_JSON_ARRAY
+			-- The JSON array `a_bytes' encodes, or Void (the room list is a bare array).
+		local
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				Result := json.array_from_bytes (a_bytes)
+			end
+		rescue
+			l_failed := True
+			retry
+		end
+
+	member (a_bytes: READABLE_STRING_8): detachable CHAT_MEMBER
+			-- The single member of a /me reply, or Void.
+		local
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				if attached json.object_from_bytes (a_bytes) as o then
+					Result := json.member_from_json (o)
+				end
+			end
+		rescue
+			l_failed := True
+			retry
+		end
+
 	members (a_bytes: READABLE_STRING_8): detachable ARRAYED_LIST [CHAT_MEMBER]
 		local
 			l_failed: BOOLEAN
