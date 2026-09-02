@@ -3,7 +3,7 @@
 The console smoke for Phase 4 Task 10: the window exists, the tests are green, and the
 one thing no headless assault can prove is that the **pixels** are right. This is the
 script for that. Everything below is typed at a Git Bash prompt in
-`D:/prod/simple_chat_wt_window` unless it says otherwise.
+`D:/prod/simple_chat` unless it says otherwise.
 
 Allow about twenty minutes the first time — two builds at three to six minutes each.
 
@@ -12,9 +12,9 @@ Allow about twenty minutes the first time — two builds at three to six minutes
 ## 0. Build both halves
 
 ```bash
-cd /d/prod/simple_chat_wt_window
+cd /d/prod/simple_chat
 /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_server
-cp EIFGENs/simple_chat_server/F_code/simple_chat.exe /d/prod/simple_chat_wt_window/dist/simple_chat_server.exe 2>/dev/null || \
+cp EIFGENs/simple_chat_server/F_code/simple_chat.exe /d/prod/simple_chat/dist/simple_chat_server.exe 2>/dev/null || \
   { mkdir -p dist && cp EIFGENs/simple_chat_server/F_code/simple_chat.exe dist/simple_chat_server.exe; }
 
 /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_client
@@ -50,7 +50,7 @@ an undrained pipe wedges the server mid-request: `/health` keeps answering 200 a
 login times out. This was found the hard way.
 
 ```bash
-cd /d/prod/simple_chat_wt_window
+cd /d/prod/simple_chat
 cmd //c "dist\simple_chat_server.exe C:\Users\Public\simple_chat\server.toml > C:\Users\Public\simple_chat\server.log 2>&1" &
 ```
 
@@ -68,7 +68,7 @@ curl -s http://127.0.0.1:8080/health
 From a **command prompt**, not from Explorer (so you can see anything it says):
 
 ```
-cd D:\prod\simple_chat_wt_window\dist\simple_chat_client
+cd D:\prod\simple_chat\dist\simple_chat_client
 SimpleChat.exe
 ```
 
