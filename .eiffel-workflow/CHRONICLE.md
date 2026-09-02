@@ -218,7 +218,9 @@ and the agent relaunched. **Verify the branch exists before reporting a phase do
   `wip/uncommitted-2026-09-02` branches with main untouched — verified today in simple_calculus,
   simple_http, simple_logger, simple_lsp, simple_onnx, simple_oracle, simple_reel, simple_scholar,
   simple_speech, simple_sql, simple_testing, simple_tui, simple_ucf, simple_vision, simple_warp.
-  (The memory records "18 repos had WIP"; 15 branches exist.)
+  (Resolved: the survey found 18 dirty repos; three were deliberately left alone — simple_gobo is a gobo-eiffel clone, simple_chart and simple_pdf held only regenerated test PDFs — so 15 branches exist.)
+- Six code-less research folders published as design-only repos at Larry's word ("Publish the six research folders as design-only repos"): simple_dot, simple_loop (a survey of Eiffel-Loop, credited), simple_langchain, simple_observability, simple_playwright, simple_tasks — honest "design only" READMEs, Pages off; agent 131k tokens. With these, every simple_* folder under D:/prod is on GitHub except the gobo clone.
+- This CHRONICLE started (agent 202k tokens) after Larry's instruction to keep the design/build/test/deliver notes as a byproduct for the Eiffel users group; the orchestrator appends from here on.
 - **simple_bnf published** (`a825912`, agent 203k, orchestrator-verified 17/17): three real defects
   fixed, and a **simple_regex defect candidate** raised out of it. **Rix apps published** (agent
   188k): simple_rixgpt (16 files) and simple_rixqwen (19 files), 1.9 GB installers and model
