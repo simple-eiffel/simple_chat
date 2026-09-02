@@ -36,6 +36,7 @@ feature {NONE} -- Initialization
 			endpoint := a_endpoint
 			create token.make_empty
 			create codec.make
+			create header_text
 		ensure
 			set: transport = a_transport and endpoint = a_endpoint
 			logged_out: not is_logged_in
@@ -249,14 +250,29 @@ feature -- Posting
 		end
 
 	post_image (a_room_id: INTEGER_64; a_bytes: SPECIAL [NATURAL_8]; a_file_name: READABLE_STRING_GENERAL; a_caption: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
-			-- POST /rooms/{id}/images (multipart).
+			-- POST /rooms/{id}/images: `a_bytes' ARE the body (that is what the
+			-- request handler reads), the name and the caption ride on X-File-Name
+			-- and X-Caption as CHAT_HEADER_TEXT writes them; 201 with the stored
+			-- image event. An echo for another room, or of another kind, is a 502
+			-- result, exactly as `post_message' treats one.
 		require
 			logged_in: is_logged_in
 			positive_room: a_room_id > 0
 			has_bytes: a_bytes.count > 0
+		local
+			l_reply: HTTP_REPLY
 		do
-			-- Implementation in Phase 4 (multipart body through the transport)
-			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_not_implemented, "Not implemented (Phase 1 skeleton)", 501))
+			l_reply := exchange ("POST", room_path (a_room_id, "/images"), image_headers (a_file_name, a_caption),
+				byte_string (a_bytes), Upload_timeout_seconds)
+			if l_reply.is_success and then attached codec.event (l_reply.body) as e then
+				if e.room_id = a_room_id and e.is_image then
+					create Result.make_success (e)
+				else
+					create Result.make_error (unexpected_answer)
+				end
+			else
+				create Result.make_error (error_of (l_reply))
+			end
 		ensure
 			image_on_success: (Result.is_success and then attached Result.value as e) implies e.is_image
 			echoed: (Result.is_success and then attached Result.value as e) implies e.room_id = a_room_id
@@ -310,9 +326,18 @@ feature -- Constants
 	Wait_slack_seconds: INTEGER = 5
 	Default_timeout_seconds: INTEGER = 15
 
+	Upload_timeout_seconds: INTEGER = 60
+			-- An image is up to the server's `upload_bytes' (8 MiB by default) and
+			-- goes out on one exchange: a message's fifteen seconds is not enough
+			-- room on a domestic uplink.
+
 	Path_login: STRING_8 = "/login"
 	Path_logout: STRING_8 = "/logout"
 	Header_authorization: STRING_8 = "Authorization"
+	Header_content_type: STRING_8 = "Content-Type"
+	Header_file_name: STRING_8 = "X-File-Name"
+	Header_caption: STRING_8 = "X-Caption"
+	Content_type_octets: STRING_8 = "application/octet-stream"
 	Key_username: STRING_32 = "username"
 	Key_password: STRING_32 = "password"
 	Key_body: STRING_32 = "body"
@@ -339,6 +364,50 @@ feature {NONE} -- Requests
 			Result.force ("application/json; charset=utf-8", "Content-Type")
 		ensure
 			no_token: not Result.has (Header_authorization)
+		end
+
+	image_headers (a_file_name, a_caption: READABLE_STRING_GENERAL): HASH_TABLE [STRING_8, STRING_8]
+			-- `authorized_headers' with the body typed as opaque bytes and the name
+			-- and caption written the one way a header line can carry them.
+		require
+			logged_in: is_logged_in
+		do
+			Result := authorized_headers
+			Result.force (Content_type_octets, Header_content_type)
+			Result.force (header_text.encoded (a_file_name), Header_file_name)
+			Result.force (header_text.encoded (a_caption), Header_caption)
+		ensure
+			bearer: attached Result [Header_authorization] as h and then h.same_string ("Bearer " + token)
+			octets: attached Result [Header_content_type] as t and then t.same_string (Content_type_octets)
+			name_encoded: attached Result [Header_file_name] as n and then n.same_string (header_text.encoded (a_file_name))
+			caption_encoded: attached Result [Header_caption] as c and then c.same_string (header_text.encoded (a_caption))
+		end
+
+	byte_string (a_bytes: SPECIAL [NATURAL_8]): STRING_8
+			-- `a_bytes' as a byte string body. SIMPLE_WINHTTP marshals a body
+			-- byte for byte - it copies `code (i)' into a MANAGED_POINTER rather
+			-- than handing the string to C_STRING - so every value 0..255 put
+			-- here, the zero byte included, is what goes on the wire.
+		local
+			i: INTEGER
+		do
+			create Result.make_filled ('%U', a_bytes.count)
+			from
+				i := 0
+			until
+				i >= a_bytes.count
+			loop
+				Result.put (a_bytes [i].to_character_8, i + 1)
+				i := i + 1
+			variant
+				a_bytes.count - i
+			end
+		ensure
+			sized: Result.count = a_bytes.count
+				-- Byte-for-byte equality is proved in the assault, not asserted here:
+				-- a per-byte postcondition would walk a whole image on every upload.
+			first_byte_kept: a_bytes.count > 0 implies Result.code (1) = a_bytes [0].to_natural_32
+			last_byte_kept: a_bytes.count > 0 implies Result.code (a_bytes.count) = a_bytes [a_bytes.count - 1].to_natural_32
 		end
 
 	exchange (a_method, a_path: READABLE_STRING_8; a_headers: HASH_TABLE [STRING_8, STRING_8]; a_body: detachable READABLE_STRING_8;
@@ -441,6 +510,10 @@ feature {NONE} -- Implementation
 
 	transport: HTTP_TRANSPORT
 	codec: CLIENT_CODEC
+
+	header_text: CHAT_HEADER_TEXT
+			-- The one rule for a file name or a caption on a header line; the
+			-- request handler reads them back through the same class.
 
 	token: STRING_8
 			-- Empty, or exactly `Token_length' lowercase hex digits.

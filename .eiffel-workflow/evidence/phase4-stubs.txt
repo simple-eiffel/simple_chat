@@ -1,0 +1,387 @@
+# Phase 4 Task 9b Evidence - the last two stubs
+# Project: D:\prod\simple_chat  (worktree D:\prod\simple_chat_wt_stubs, branch phase4/stubs)
+# Base:    main 0cce1e4
+# Date:    2026-09-02
+
+=====================================================================
+1. WHAT EACH STUB DOES NOW
+=====================================================================
+
+--- STUB 1: CHAT_CLIENT.post_image (src/client/chat_client.e) ---------
+
+Was: `create Result.make_error (... Code_not_implemented, "Not implemented
+(Phase 1 skeleton)", 501)`.
+
+Now: one exchange, shaped exactly as CHAT_REQUEST_HANDLER.handle_post_image
+reads it.
+
+  POST /rooms/{id}/images
+  Authorization: Bearer <64 hex>          (authorized_headers, as everywhere else)
+  Accept: application/json
+  Content-Type: application/octet-stream  (the body is opaque bytes, not JSON)
+  X-File-Name: <percent-encoded UTF-8>
+  X-Caption:   <percent-encoded UTF-8>
+  <body> = the SPECIAL [NATURAL_8] verbatim
+
+  timeout 60 s (`Upload_timeout_seconds`), not the 15 s a message gets: an image
+  is up to the server's upload_bytes (8 MiB by default) on one exchange.
+
+  The 201 is decoded through CLIENT_CODEC.event exactly as post_message decodes
+  its echo; an event for another room or of another kind is a 502 result, a 4xx
+  carries the server's own error, a transport failure is 503. The two existing
+  ensures (`image_on_success`, `echoed`) hold; neither they nor `session_kept`
+  were touched.
+
+  New {NONE} helpers: `image_headers` (with its own postconditions naming every
+  header it sets) and `byte_string`.
+
+BYTE FIDELITY OF THE BODY - verified in the library, not assumed.
+  D:/prod/simple_winhttp/src/simple_winhttp.e, `send`, lines ~212-227:
+
+        -- The body is marshalled byte-for-byte: C_STRING would
+        ...
+      if attached a_body as la_body and then not la_body.is_empty then
+          l_body_len := la_body.count
+          create l_body_area.make (l_body_len)
+          ... l_body_area.put_natural_8 (la_body.code (i).to_natural_8, i - 1)
+
+  It copies `code (i)` into a MANAGED_POINTER rather than handing the string to
+  C_STRING, so every value 0..255 - the zero byte included - reaches the wire.
+  A STRING_8 body is therefore byte-faithful; no re-encoding, no truncation at
+  a NUL. `byte_string` states `sized`, `first_byte_kept`, `last_byte_kept`; the
+  full per-byte equality is proved in the assault instead of asserted per call,
+  because a per-byte postcondition would walk a whole image on every upload.
+
+--- The header encoding: a NEW shared class, and one server-side read ------
+
+  NEW: src/domain/chat_header_text.e (CHAT_HEADER_TEXT)
+       `encoded (READABLE_STRING_GENERAL): STRING_8`  - UTF-8, then percent-
+            encode every byte outside RFC 3986's unreserved set
+       `decoded (READABLE_STRING_8): STRING_32`       - the inverse, tolerant
+       `is_wire_clean`, `is_unreserved`, `is_hex_digit` (contract support)
+
+  WHY it is needed: a header value may carry printable ASCII and nothing else.
+  WINHTTP_TRANSPORT.send refuses a request outright - before a byte leaves the
+  machine - when `SIMPLE_WINHTTP.is_header_table_clean` is False, and that query
+  admits only codes 32..126. Raw UTF-8 in X-Caption would therefore never have
+  reached the server over the real transport: the client would have answered a
+  transport failure for every non-ASCII file name or caption.
+
+  Both sides use the one class (Single Choice): CHAT_CLIENT writes with
+  `encoded`, CHAT_REQUEST_HANDLER.header_32 reads with `decoded`. `decoded` is
+  tolerant on purpose and cannot raise - a value with no percent sign comes back
+  as plain UTF-8, so a hand-made request with an ASCII name still works, and a
+  percent not followed by two hex digits stays a percent.
+
+  SERVER-SIDE CHANGE (reported, not slipped in - no contract touched):
+    src/web/chat_request_handler.e `header_32` now percent-decodes before the
+    UTF-8 decode. It is a {NONE} implementation helper with no require/ensure;
+    nothing else in the project calls it; no route, reply or contract changed.
+    Behaviour is a strict superset for anything already working (no '%' -> same
+    answer as before).
+
+--- A REAL DEFECT FOUND IN simple_web (worked around here, NOT fixed there) --
+
+  `SIMPLE_WEB_SERVER_REQUEST.header` (D:/prod/simple_web/src/server/, line ~218):
+
+      l_header_name := "HTTP_" + a_name.to_string_32.as_upper.to_string_8
+      ... al_l_request.meta_string_variable (l_header_name)
+
+  It upper-cases and prefixes, but does NOT turn hyphens into underscores, which
+  is what CGI (RFC 3875 4.1.18) requires of a meta-variable name. So `header
+  ("X-File-Name")` asks for HTTP_X-FILE-NAME and can never match the real meta
+  variable HTTP_X_FILE_NAME. Every hyphenated custom header is invisible to this
+  query. Nothing had caught it because the only header simple_chat read before
+  today was "Authorization", which has no hyphen.
+
+  PROVEN, not deduced: with the handler asking for "X-File-Name" the live server
+  answered with an EMPTY caption and file name (transcript: `name and caption
+  came back MANGLED ()`); with the handler asking for the CGI meta spelling
+  "X_File_Name" the same live post answered `byte for byte (shalom + robot)`.
+
+  Worked around inside this repo only, as instructed: `handle_post_image` now
+  asks for `Meta_file_name` = "X_File_Name" and `Meta_caption` = "X_Caption",
+  with a comment naming the wire headers (still X-File-Name / X-Caption) and the
+  library defect. NO file outside D:/prod/simple_chat_wt_stubs was modified.
+  -> simple_web should be fixed upstream: convert '-' to '_' in `header`.
+
+--- STUB 2: CHAT_SERVICE.backup (src/service/chat_service.e) -----------
+
+Was: `create Result.make_error (not_implemented_error)`  (501).
+
+Now: asks the store for the copy and answers where it landed.
+
+      l_path := fresh_backup_path
+      if not l_path.is_empty and then store.backup_to (l_path) then
+          log.info ("backup written")
+          create Result.make_success (l_path)
+      else
+          ... Code_unavailable, "The database could not be copied; nothing was
+              written.", 503
+      end
+
+  `fresh_backup_path` ({NONE}): <data_dir>/backups/simple_chat-YYYYMMDD-HHMMSS
+  [-N].db, the directory created, the name proved free (so two backups in the
+  same second are two files), empty when it cannot be made; wrapped in a
+  rescue/retry so it never raises. `compact_stamp` drops ISO 8601's colons,
+  which Windows does not admit in a file name, and keeps the name sortable.
+
+  Added ensures on `backup` (additive, nothing rewritten):
+      path_on_success: (Result.is_success and then attached Result.value as p)
+                        implies (not p.is_empty and store.is_file_at (p))
+      store_untouched: store.last_event_id = old store.last_event_id
+                        and store.event_count = old store.event_count
+  The pre-existing `never_void` stands unchanged.
+
+  Dead helper removed: `not_implemented_error` had no other caller once the stub
+  went, and a class with no stubs should not carry a "Phase 1 stub outcome".
+
+  SCOOP: `backup` runs on the API's processor like every other service command;
+  the store call is a plain (non-separate) call inside that same processor. No
+  new type, no MUTEX, no second processor.
+
+  POST /admin/backup already existed end to end (CHAT_REQUEST_HANDLER
+  handle_admin_backup -> CHAT_API.admin_backup -> service.backup) and has been
+  answering the service's 501; it now answers 200 {"path": ...}. Its comment
+  ("once the SQLite task lands") was updated. That is the whole wiring change.
+
+=====================================================================
+2. THE ADDITIVE STORE FEATURE (the one thing that had to be added)
+=====================================================================
+
+src/store/chat_store.e, feature -- Lifecycle:
+
+    backup_to (a_path: READABLE_STRING_32): BOOLEAN
+        require
+            open: is_open
+            path_given: not a_path.is_empty
+            fresh: not is_file_at (a_path)
+        deferred
+        ensure
+            written: Result implies is_file_at (a_path)
+            nothing_left_behind: not Result implies not is_file_at (a_path)
+            still_open: is_open
+            data_untouched: last_event_id = old last_event_id
+                and event_count = old event_count
+                and user_count = old user_count and room_count = old room_count
+                and session_count = old session_count
+                and attachment_count = old attachment_count
+
+and, in the same class, the contract support the ensures speak of (effective,
+so both heirs answer it identically):
+
+    is_file_at (a_path: READABLE_STRING_32): BOOLEAN
+        -- Is there a file at `a_path'?
+
+EFFECTED IN BOTH STORES:
+
+  SQLITE_CHAT_STORE.backup_to - `active_db.perform_with ("VACUUM INTO ?", ...)`,
+    the same statement `open` already uses to back a behind-version file up
+    before migrating: SQLite reads the database through the very connection that
+    holds it, so nothing has to pry a locked file open (a plain file copy on
+    Windows cannot), and what lands is one consistent, defragmented database
+    with the WAL folded in - not a file plus two companions. Wrapped in
+    rescue/retry; a failed or empty copy is deleted through `discard_file`
+    (itself rescue-guarded), so `nothing_left_behind` holds even when the delete
+    is the thing that fails.
+
+  MEMORY_CHAT_STORE.backup_to - an empty body (Result stays False), with
+    `ensure then never: not Result; nothing_written: not is_file_at (a_path);
+    models_untouched: ...`. The oracle keeps its rows in memory; writing a
+    hand-rolled dump would make it claim a backup a restart could not read back.
+
+NOTHING ELSE IN THE STORE OR SERVICE CONTRACTS WAS TOUCHED. `git diff
+src/store/chat_store.e` is additions only - no existing require, ensure,
+invariant or signature was modified anywhere in this branch. No item had to be
+STOPPED.
+
+=====================================================================
+3. TESTS ADDED
+=====================================================================
+
+testing/client_assault.e (+4 tests, +3 fixtures: image_bytes, wire_image,
+sha256_hex, aleph)
+  post_image_puts_the_bytes_on_the_wire_and_the_rest_in_headers
+      method POST; url .../rooms/1/images; the bearer present and the token in
+      no url and no body; Content-Type application/octet-stream; X-File-Name
+      "sunset.png" and X-Caption "at%20the%20lake"; body count = byte count AND
+      every byte equal one by one (the fixture plants a zero byte after the PNG
+      signature); the recorded header table passes
+      SIMPLE_WINHTTP.is_header_table_clean - i.e. WinHTTP would really send it;
+      timeout 60; the decoded event is_image with room id 1 and an attachment.
+  post_image_refuses_an_echo_that_is_not_this_rooms_image
+      foreign room -> 502; another kind -> 502; a 413 carries the server's own
+      code; a transport failure is a 503 result and never an exception.
+  post_image_carries_hebrew_and_an_emoji_through_ascii_headers
+      file name in Hebrew letters + ".png", caption "shalom <hebrew> U+1F916".
+      Both header values are printable ASCII; the table passes
+      is_header_table_clean; CHAT_HEADER_TEXT.decoded - the very query
+      `header_32` calls - gives both back exactly; the Hebrew name is asserted
+      literally as %D7%A9%D7%9C%D7%95%D7%9D.png and the emoji as its four UTF-8
+      bytes %F0%9F%A4%96; nothing non-ASCII leaked into the URL.
+  header_text_round_trips_and_tolerates_a_hand_made_value
+      the unreserved set untouched; a blank becomes %20; a percent becomes %25
+      and round-trips; empty stays empty; "plain.png" decodes unchanged; a lone
+      percent and a truncated escape are not decoders; lower-case hex decodes.
+
+testing/service_assault.e (+3 tests, + a Backup fixtures section)
+  backup_writes_a_copy_that_opens_as_a_database
+      a REAL SQLITE_CHAT_STORE in testing/backup_scratch, a SERVER_CONFIG loaded
+      from a written TOML whose data_dir is that directory, an admin and a
+      posted message; `backup` succeeds; the path lies under data/backups/; the
+      file is there and the original is untouched; a SECOND store opens the copy
+      at the current schema and reads the posted event and the admin back.
+  two_backups_in_the_same_second_are_two_files
+      both succeed, the paths differ, both files exist.
+  backup_over_the_memory_store_is_an_error_never_a_raise
+      not success; 503 / Code_unavailable; the backups directory is left empty.
+
+testing/equivalence_assault.e (+1 test)
+  backup_to_is_where_the_two_stores_lawfully_differ
+      the additive operation through the CHAT_STORE interface on both heirs
+      after the same `populate`: the oracle answers False and writes nothing,
+      the SQLite store answers True, the file is where it was asked for, no row
+      moved and the store is still open, and the copy re-opens with the same
+      event and user counts.
+
+testing/wiring_assault.e (the live round trip extended; +3 fixtures)
+  test_live_client_stack_round_trip now posts an image between the message and
+  the events read: a 64-byte PNG whose file name is Hebrew and whose caption
+  ends in U+1F916, through WINHTTP_TRANSPORT against the finalized server exe.
+  The verdict asserts the echoed event is an image whose body equals the caption
+  sent AND whose attachment's original_name equals the file name sent. The
+  skip-and-pass convention is kept and now prints an explicit line:
+      SKIP: the live round trip needs EIFGENs\simple_chat_server\F_code\
+            simple_chat.exe, which is not built
+
+testing/api_assault.e (1 expectation corrected, not a new test)
+  test_api_participants_and_backup_answers asserted "backup is honestly 501
+  until SQLite". Over the memory oracle the honest answer is now 503 (there is
+  no database file to copy), so the assertion says that instead.
+
+testing/test_app.e: the 8 new tests registered (167 run_test calls).
+
+=====================================================================
+4. BUILDS - COMMANDS, OUTPUT TAILS, EXE TIMESTAMPS, WARNINGS
+=====================================================================
+
+All four targets were built. Every build is `ec.sh test` (finalize with -keep),
+never freeze, never raw. Exe timestamps were checked against the build start
+after each one, because ec.sh silently leaves the previous exe in place when a
+compilation fails.
+
+BASELINE (before any edit, this worktree, main 0cce1e4):
+  $ /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_tests
+      OK  Built: EIFGENs/simple_chat_tests/F_code/simple_chat.exe (1s ago)
+  $ ./EIFGENs/simple_chat_tests/F_code/simple_chat.exe
+      Results: 158 passed, 0 failed
+      ALL TESTS PASSED
+  $ /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_doorbell_tests
+  $ ./EIFGENs/simple_chat_doorbell_tests/F_code/simple_chat.exe
+      Results: 6 passed, 0 failed (4 s)
+      ALL TESTS PASSED
+
+SERVER TARGET (proves the server still compiles; also the exe the live test needs):
+  $ /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_server
+      Degree -3: Generating Optimized Code
+      System Recompiled.
+      OK  Built: EIFGENs/simple_chat_server/F_code/simple_chat.exe (2s ago)
+  exe: 2026-09-02 11:05:28 (first build), rebuilt 11:29 after the header_32 fix.
+
+CLIENT TARGET (proves the thick client still compiles):
+  $ /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_client
+      Degree -3: Generating Optimized Code
+      System Recompiled.
+      OK  Built: EIFGENs/simple_chat_client/F_code/simple_chat.exe (2s ago)
+  exe: 2026-09-02 11:07:00, 15,067,648 bytes.
+
+FULL RUN WITH EVERYTHING IN (server exe present, so the live test really ran):
+  $ ./EIFGENs/simple_chat_tests/F_code/simple_chat.exe
+      GET  /health          -> 200 {"store":true,"last_event_id":0}
+      POST /login           -> success: member #1 (wiring), a real minted token
+                               held in memory only
+      POST /rooms/1/messages -> echo id 1
+      POST /rooms/1/images   -> image event id 2; name and caption came back
+                               byte for byte (<hebrew shalom> <robot>)
+      GET  /rooms/1/events   -> 2 event(s); the posted message is among them
+      POST /logout          -> token dropped before the request went out
+      Results: 166 passed, 0 failed
+      ALL TESTS PASSED
+
+FINAL CLEAN COMPILE (the proof that counts):
+  $ rm -rf EIFGENs/simple_chat_tests EIFGENs/simple_chat_doorbell_tests
+  $ date -u   ->  CLEAN BUILD START 2026-09-02T15:33:25Z  (11:33:25 -0400)
+  $ /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_tests
+      OK  Built: EIFGENs/simple_chat_tests/F_code/simple_chat.exe (3s ago)
+      exit=0
+  $ /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_doorbell_tests
+      OK  Built: EIFGENs/simple_chat_doorbell_tests/F_code/simple_chat.exe (0s ago)
+      exit=0
+  $ date -u   ->  CLIENT REBUILD START 2026-09-02T15:42:29Z  (the client target
+                  rebuilt last, so every exe is newer than the final source)
+  $ /d/prod/ec.sh test -config simple_chat.ecf -target simple_chat_client
+      OK  Built: EIFGENs/simple_chat_client/F_code/simple_chat.exe (0s ago)
+      exit=0
+
+  EXE TIMESTAMP CHECK - each newer than its own build start, so no stale exe:
+      simple_chat_tests           2026-09-02 11:37:26   24,003,584 B  (start 11:33:25)
+      simple_chat_doorbell_tests  2026-09-02 11:40:43   17,718,272 B  (start 11:33:25)
+      simple_chat_client          2026-09-02 11:43:27   15,067,648 B  (start 11:42:29)
+      simple_chat_server          2026-09-02 11:23:55   22,192,128 B  (rebuilt after
+                                  the header_32 fix, before the run that used it)
+
+  $ ./EIFGENs/simple_chat_tests/F_code/simple_chat.exe       exit=0
+      POST /rooms/1/images   -> image event id 2; name and caption came back
+                                byte for byte (<hebrew shalom> <robot>)
+      Results: 166 passed, 0 failed
+      ALL TESTS PASSED
+  $ ./EIFGENs/simple_chat_doorbell_tests/F_code/simple_chat.exe
+      Results: 6 passed, 0 failed (5 s)
+      ALL TESTS PASSED
+
+WARNINGS
+  $ grep -Ein "^Error|Error code" <every build log>      -> 0
+  $ grep -n "Warning code" <every build log>
+      Warning code: Obsolete Call
+      Warning: call uses obsolete feature.
+  One warning, in every target, from simple_toml's own to_toml writers calling
+  the obsolete as_string_8 - the pre-existing warning the CHRONICLE already
+  records as the only one left in this project, suppressed in the ECF for the
+  library but still reported once by the finalizer. Nothing in simple_chat
+  produces a warning; no new warning was introduced.
+
+CRLF
+  Every .e file under src/, testing/ and apps/ was normalized to CRLF with a
+  Python bytes replace before each build and before the commit; the last run
+  reported "normalized 0", i.e. nothing had drifted.
+
+=====================================================================
+5. TOTALS
+=====================================================================
+
+  target                       before          after
+  ---------------------------  --------------  --------------------------
+  simple_chat_tests            158 passed      166 passed, 0 failed
+                               0 failed        (+8 new tests; 1 existing
+                                                expectation corrected)
+  simple_chat_doorbell_tests   6 passed        6 passed, 0 failed
+                               0 failed
+  simple_chat_server           compiles        compiles (exe fresh)
+  simple_chat_client           compiles        compiles (exe fresh, 15 MB)
+
+LIVE IMAGE ROUND TRIP: YES, it ran. Not the scripted transport - the finalized
+server exe, booted through `cmd /c ... > server_boot.log 2>&1` (never a piped
+stdout: the undrained-pipe wedge), copied to sc_wiring_server.exe before any
+taskkill so the runner is never killed by its own image name, and driven by
+CHAT_CLIENT over WINHTTP_TRANSPORT. The non-ASCII went out through the Eiffel
+client itself, so no console ever touched it - the curl-mangling trap does not
+apply, and no python was needed. The image event came back with its Hebrew file
+name and its emoji caption byte for byte.
+
+=====================================================================
+6. STOPPED ITEMS
+=====================================================================
+
+None. Neither stub needed a change to an existing require, ensure, invariant or
+signature. The single addition to the frozen store interface is `backup_to`
+(with its `is_file_at` contract support), reported in section 2 above.

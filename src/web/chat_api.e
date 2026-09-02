@@ -589,7 +589,9 @@ feature -- Answers: account and administration
 		end
 
 	admin_backup (a_token: separate READABLE_STRING_8): CHAT_REPLY
-			-- {"path": ...} once the SQLite task lands; the service's honest 501 until then.
+			-- {"path": ...}: the service writes the copy through the store
+			-- (VACUUM INTO on SQLite) and answers where it landed; a store with
+			-- no database file answers 503, never a half-written path.
 		local
 			l_result: CHAT_RESULT [STRING_32]
 			l_json: SIMPLE_JSON_OBJECT

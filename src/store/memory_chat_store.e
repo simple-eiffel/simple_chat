@@ -135,6 +135,19 @@ feature -- Lifecycle
 				and sessions_model |=| old sessions_model
 		end
 
+	backup_to (a_path: READABLE_STRING_32): BOOLEAN
+			-- False, always, and nothing is written: the oracle keeps its rows in
+			-- memory, so there is no database file to copy and no honest way to
+			-- pretend otherwise. Writing a hand-rolled dump here would make the
+			-- oracle claim a backup a restart could not read back.
+		do
+		ensure then
+			never: not Result
+			nothing_written: not is_file_at (a_path)
+			models_untouched: events_model |=| old events_model and users_model |=| old users_model
+				and sessions_model |=| old sessions_model
+		end
+
 	schema_version: INTEGER
 		do
 			Result := {CHAT_SCHEMA}.Current_version

@@ -57,6 +57,10 @@ feature {NONE} -- Initialization
 			run_test (agent (create {CLIENT_ASSAULT}).test_wait_zero_seconds_uses_five_second_timeout, "wait_zero_seconds_uses_five_second_timeout")
 			run_test (agent (create {CLIENT_ASSAULT}).test_login_never_raises_on_hostile_replies, "login_never_raises_on_hostile_replies")
 			run_test (agent (create {CLIENT_ASSAULT}).test_post_message_echo_for_another_room_is_refused, "post_message_echo_for_another_room_is_refused")
+			run_test (agent (create {CLIENT_ASSAULT}).test_post_image_puts_the_bytes_on_the_wire_and_the_rest_in_headers, "post_image_puts_the_bytes_on_the_wire_and_the_rest_in_headers")
+			run_test (agent (create {CLIENT_ASSAULT}).test_post_image_refuses_an_echo_that_is_not_this_rooms_image, "post_image_refuses_an_echo_that_is_not_this_rooms_image")
+			run_test (agent (create {CLIENT_ASSAULT}).test_post_image_carries_hebrew_and_an_emoji_through_ascii_headers, "post_image_carries_hebrew_and_an_emoji_through_ascii_headers")
+			run_test (agent (create {CLIENT_ASSAULT}).test_header_text_round_trips_and_tolerates_a_hand_made_value, "header_text_round_trips_and_tolerates_a_hand_made_value")
 			run_test (agent (create {CLIENT_ASSAULT}).test_session_handed_to_the_pollers_client, "session_handed_to_the_pollers_client")
 			run_test (agent (create {CLIENT_ASSAULT}).test_logout_on_transport_failure_logs_out, "logout_on_transport_failure_logs_out")
 			run_test (agent (create {CLIENT_ASSAULT}).test_page_result_refuses_foreign_room_non_ascending_and_hostile_fields, "page_result_refuses_foreign_room_non_ascending_and_hostile_fields")
@@ -131,6 +135,9 @@ feature {NONE} -- Initialization
 			run_test (agent (create {SERVICE_ASSAULT}).test_upload_signature_size_and_pinning, "upload_signature_size_and_pinning")
 			run_test (agent (create {SERVICE_ASSAULT}).test_reset_password_revokes_sessions, "reset_password_revokes_sessions")
 			run_test (agent (create {SERVICE_ASSAULT}).test_change_password_needs_the_old_one, "change_password_needs_the_old_one")
+			run_test (agent (create {SERVICE_ASSAULT}).test_backup_writes_a_copy_that_opens_as_a_database, "backup_writes_a_copy_that_opens_as_a_database")
+			run_test (agent (create {SERVICE_ASSAULT}).test_two_backups_in_the_same_second_are_two_files, "two_backups_in_the_same_second_are_two_files")
+			run_test (agent (create {SERVICE_ASSAULT}).test_backup_over_the_memory_store_is_an_error_never_a_raise, "backup_over_the_memory_store_is_an_error_never_a_raise")
 
 			print ("=== API (Phase 4) ===%N")
 			run_test (agent (create {API_ASSAULT}).test_api_login_carries_token_once, "api_login_carries_token_once")
@@ -151,6 +158,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_survives_close_and_reopen, "sqlite_survives_close_and_reopen")
 			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_refuses_ahead_schema, "sqlite_refuses_ahead_schema")
 			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_sqlite_backs_up_a_behind_file, "sqlite_backs_up_a_behind_file")
+			run_test (agent (create {EQUIVALENCE_ASSAULT}).test_backup_to_is_where_the_two_stores_lawfully_differ, "backup_to_is_where_the_two_stores_lawfully_differ")
 
 			print ("=== CONFIG LOADING (Phase 4) ===%N")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_missing_file_is_one_named_error, "config_missing_file_is_one_named_error")

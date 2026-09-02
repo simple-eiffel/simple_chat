@@ -461,7 +461,9 @@ feature {NONE} -- Handlers
 		end
 
 	handle_post_image (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
-			-- The raw body is the image; X-File-Name and X-Caption carry the rest (Phase 4 may add multipart).
+			-- The raw body is the image; X-File-Name and X-Caption carry the rest,
+			-- percent-encoded UTF-8 as CHAT_HEADER_TEXT writes them (Phase 4 Task 9b;
+			-- a later phase may add multipart).
 		local
 			l_name, l_caption: STRING_32
 		do
@@ -471,14 +473,24 @@ feature {NONE} -- Handlers
 						-- configuration's exact `upload_bytes' behind this coarse gate.
 					reply (a_response, too_large_reply)
 				else
-					l_name := header_32 (a_request, "X-File-Name")
-					l_caption := header_32 (a_request, "X-Caption")
+					l_name := header_32 (a_request, Meta_file_name)
+					l_caption := header_32 (a_request, Meta_caption)
 					reply (a_response, api_post_image (shared_api, t, room_id_of (a_request), a_request.body, l_name, l_caption))
 				end
 			else
 				reply (a_response, unauthorized_reply)
 			end
 		end
+
+	Meta_file_name: STRING_8 = "X_File_Name"
+	Meta_caption: STRING_8 = "X_Caption"
+			-- The CGI meta spelling of the wire headers "X-File-Name" and "X-Caption"
+			-- (RFC 3875 4.1.18: HTTP_ followed by the field name upper-cased, hyphens
+			-- turned into underscores). simple_web's `header' builds the meta name by
+			-- upper-casing and prefixing what it is handed and does NOT convert hyphens,
+			-- so a hyphenated header is reachable only when it is asked for this way -
+			-- "Authorization" has no hyphen, which is why nothing here needed it before.
+			-- What CHAT_CLIENT puts on the wire is X-File-Name and X-Caption.
 
 	Max_image_body_bytes: INTEGER = 16777216
 			-- 16 MiB: above any lawful configuration (default upload_bytes is 8 MiB), so the
@@ -756,10 +768,13 @@ feature {NONE} -- Replies
 		end
 
 	header_32 (a_request: SIMPLE_WEB_SERVER_REQUEST; a_name: READABLE_STRING_8): STRING_32
-			-- A header decoded from UTF-8, or empty.
+			-- A header read the one way CHAT_CLIENT writes one (CHAT_HEADER_TEXT):
+			-- percent-decoded, then UTF-8. A value carrying no percent sign is
+			-- plain UTF-8 and comes back unchanged, so a hand-made request with an
+			-- ASCII name still works; a header that is not there is empty.
 		do
 			if attached a_request.header (a_name) as h then
-				Result := {UTF_CONVERTER}.utf_8_string_8_to_string_32 (h)
+				Result := header_text.decoded (h)
 			else
 				create Result.make_empty
 			end
@@ -778,5 +793,13 @@ feature {NONE} -- Replies
 feature {NONE} -- Implementation
 
 	codec: CHAT_JSON
+
+	header_text: CHAT_HEADER_TEXT
+			-- The one rule for a file name or a caption on a header line; CHAT_CLIENT
+			-- writes them with the same class. Stateless, so a fresh one costs nothing
+			-- and no `once' is smuggled onto a request processor.
+		do
+			create Result
+		end
 
 end

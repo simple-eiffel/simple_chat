@@ -135,6 +135,48 @@ feature -- Store equivalence
 			wipe_database (l_path)
 		end
 
+	test_backup_to_is_where_the_two_stores_lawfully_differ
+			-- The additive Task 9b operation, on both heirs through the CHAT_STORE
+			-- interface: the SQLite store writes a copy and answers True, the memory
+			-- oracle writes nothing and answers False - and neither touches a row.
+		local
+			l_oracle: MEMORY_CHAT_STORE
+			l_subject: SQLITE_CHAT_STORE
+			l_path, l_copy_path: STRING_32
+			l_before_events, l_before_users: INTEGER_64
+			l_copy: SQLITE_CHAT_STORE
+		do
+			l_path := fresh_database_path ("backup")
+			l_copy_path := Scratch_directory.to_string_32 + {STRING_32} "/backup_copy.db"
+			delete_file (l_copy_path)
+			create l_oracle.make
+			create l_subject.make (l_path)
+			l_oracle.open
+			l_subject.open
+			assert ("both open", l_oracle.is_open and l_subject.is_open)
+			populate (l_oracle)
+			populate (l_subject)
+			l_before_events := l_subject.event_count
+			l_before_users := l_subject.user_count.to_integer_64
+
+			assert ("the oracle has nothing on disk to copy", not l_oracle.backup_to (l_copy_path))
+			assert ("and wrote nothing", not l_oracle.is_file_at (l_copy_path))
+			assert ("the sqlite store wrote the copy", l_subject.backup_to (l_copy_path))
+			assert ("the copy is where it was asked for", l_subject.is_file_at (l_copy_path))
+			assert ("no row moved", l_subject.event_count = l_before_events
+				and l_subject.user_count.to_integer_64 = l_before_users and l_subject.is_open)
+
+			create l_copy.make (l_copy_path)
+			l_copy.open
+			assert ("the copy is a database with the same rows - " + open_error_text (l_copy),
+				l_copy.is_open and l_copy.event_count = l_before_events
+				and l_copy.user_count.to_integer_64 = l_before_users)
+			l_copy.close
+			l_subject.close
+			delete_file (l_copy_path)
+			wipe_database (l_path)
+		end
+
 feature {NONE} -- The drive
 
 	drive (a_oracle, a_subject: CHAT_STORE)
