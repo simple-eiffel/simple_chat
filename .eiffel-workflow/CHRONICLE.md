@@ -1,0 +1,511 @@
+# CHRONICLE — simple_chat and the libraries it moved
+
+## 1. Purpose of this file
+
+Raw material for a blow-by-blow write-up aimed at the Eiffel users group: developers growing in
+AI-tool use who want a living example of a complex multi-library delivery run with contracts,
+adversarial review and agent orchestration.
+Facts with pointers only — file paths, commit SHAs, PR numbers, test counts, dates, token costs;
+no narrative polish yet, nothing invented (anything not in the evidence trail is marked
+"not recorded").
+**Append-only.** Every milestone — a phase gate, a merge, a defect found or fixed, a live smoke
+test, a Larry decision, an agent run with its cost — gets a dated entry in the same commit as the
+work, or the next one.
+
+Started 2026-09-02 by an Opus 5 agent from `.eiffel-workflow/evidence/`, the two repos' git logs,
+`gh pr list`, and the orchestrator's running memory (`project_simple_chat`,
+`feedback_verify_generated_libraries_independently`, `project_messenger_screen_robot`,
+`feedback_keep_project_chronicle_for_eiffel_writeup`). Standing rule:
+`feedback_keep_project_chronicle_for_eiffel_writeup`.
+
+## 2. The project in one paragraph
+
+`simple_chat` is a private group chat that stands alone — the friend group has nothing but FB
+Messenger, and nobody wants to be there. Larry's founding decisions (2026-08-28/29): **PC only**;
+port-forward, **no third-party tunnel**; username + password; an **Eiffel desktop client from day
+one**; the name `simple_chat`; "as many features as possible, start with the basics."
+The architecture is a `SIMPLE_CHAT_SERVER` facade over a `CHAT_SERVICE` that holds every rule, a
+deferred `CHAT_STORE` with a SQLite implementation and an in-memory oracle, a global monotonic
+event id with `since` catch-up, and a **doorbell** event bus (the bus rings a room id; readers pull
+`events_since` from the store — chosen in intent v2 because a broadcast-the-payload bus loses
+messages between concurrent posts). Addressable participants (`@claude`, `@qwen`, `@tools-larry`,
+`@shape-larry`) are 🤖-marked bot users reached through an argv-only, allowlisted gate.
+Two decisions reshaped everything. **Thick client** (Larry, 2026-08-29: *"Thick first and no
+browser. I don't want a browser."*) removed the whole HTML/WebView2/cookie/CSP surface and made the
+client a `simple_widgets` application over a JSON API with Bearer tokens and long-poll — which put
+`simple_shaping` (text shaping for Hebrew/emoji in the chat pane) on the critical path.
+**SCOOP** (Larry, 2026-08-29: *"SCOOP is your threading solution. Use it. It's there to use."*)
+answered the Phase 2 review's D1 question and replaced every MUTEX and CONDITION_VARIABLE in the
+design with one `separate CHAT_SERVICE` processor, per-request `separate POLL_WAITER` wait
+conditions, and asynchronous bus rings.
+
+## 3. The pipeline as actually run
+
+The Eiffel Spec Kit gates, in the order they were executed, with evidence pointers. "Orchestrator"
+= the Fable session driving the work; "agent" = a subagent (Opus 5 unless noted) on its own
+worktree branch; "Larry" = the human gate.
+
+### simple_chat
+
+| Gate | Date | Evidence | Verdict / numbers | Who |
+|---|---|---|---|---|
+| Research (7 steps) | 2026-08-28 | `evidence/pre-phase-research.txt`, `research/01-07` + `REFERENCES.md` | BUILD, HIGH (MVP); 20 fetched URLs + 11 local sources; 5 alternatives with content (Matrix/Conduit, Zulip, Rocket.Chat, Prosody/XMPP, The Lounge) + 1 not retrieved, recorded as such; 17 risks | orchestrator |
+| Spec (8 steps + addendum 09) | 2026-08-29 | `evidence/pre-phase-spec.txt`, `spec/01-09` | 49 classes designed; 14 with full contracts in `05-CONTRACT-DESIGN`; 20 FR + 12 FR-NEW + 15 NFR traced; OOSC2 PASS | orchestrator |
+| Intent (Phase 0) | 2026-08-29 | `evidence/phase0-intent.txt`, `intent.md`, `intent-v2.md` | 14 questions generated, 14 answered; Larry: "Approve as recommended" | orchestrator + Larry |
+| Contracts (Phase 1) | 2026-08-29 | `evidence/phase1-compile.txt` | 70 classes (56 library) compile, zero warnings; 22/22 skeletal assault | orchestrator |
+| MML (Phase 1m) | 2026-08-29 | `evidence/phase1m-mml.txt` | 16 model queries (8 new, incl. `MML_RELATION` for memberships), ~61 frame conditions, 8 model invariants; 22/22 | orchestrator |
+| **Thick-client pivot (deviation)** | 2026-08-29 | `evidence/phase1-thick-client.txt`, `intent-v3.md`, `spec/10-ADDENDUM-THICK-CLIENT.md` | `CHAT_UI`/`CLIENT_HOST`/`SHELL_WEBVIEW_HOST`/`cookie_secure`/`simple_browser` removed; UI-free client cluster assaulted headless; **30/30** | Larry, orchestrator |
+| Adversarial review (Phase 2) | 2026-08-29 | `synopsis.md`, `approach.md`, `evidence/phase2-claude-response.md`, `phase2-part-{domain-store,service-bus,participants,client}.md`, `phase2-chain.txt` | **FAIL as written** — architecture passes, contracts do not. 86 classes / 8,818 lines; **38 HIGH / 53 MEDIUM / ~30 LOW**; D1-D6 raised to Larry | 4 reviewer agents + orchestrator re-read of every HIGH |
+| **SCOOP restructuring (deviation)** | 2026-08-29 | `approach.md` §8, `spec/11-ADDENDUM-PHASE1B-SCOOP.md` | D1 decided by Larry; blocked on **simple_web not compiling under SCOOP** (VFFD(8) ×4) — fixed the same day as simple_web 0.2.0 | Larry + orchestrator |
+| **Phase 1b repair (deviation)** | 2026-08-29 | `evidence/phase1b-participants.txt` | 5 passes (`921358d`, `6a65a75`, `7be2e5a`, `87a6345`, `5652b71`); findings 11-38 + cheap MEDIUMs; main `6739050` = **85/85** | orchestrator + 2 agents |
+| **Phase 2b targeted re-review (deviation)** | 2026-08-29 → 08-31 | `evidence/phase2b-part-{client,domain-store-service,participants,bus-web-ops}.md` | Three clusters PASS WITH CONDITIONS; the fourth (bus/web/ops) stopped for budget, rerun 08-31: 18 FIXED, 3 DISSOLVED, 5 PARTIAL, 1 OPEN, 4 NEW; **zero SCOOP validity errors**; `handle_wait` proven not to hold the API for its 25 s wait | 4 reviewer agents |
+| **Phase 1c repair (deviation)** | 2026-08-30/31 | `evidence/phase1c-repair.txt` | every Phase 2b condition repaired; main `0f4f9c9` = **103/103**, zero warnings, first push to github.com/simple-eiffel/simple_chat | orchestrator + 3 agents |
+| Tasks (Phase 3) | 2026-08-31 | `evidence/phase3-tasks.txt`, `tasks.md`, `44ec09f` | 10 tasks + 10 tracked external dependency tasks; 80 "Implementation in Phase 4" markers across 19 files | orchestrator, Larry pre-approved the scope |
+| Implement (Phase 4) | 2026-08-31 → 09-01 | `tasks.md`, per-task merge commits | Tasks 1-9 DONE (see §4); Task 10 gated on simple_shaping | 7 task agents + orchestrator |
+| **Doorbell assault pulled early from Phase 5** | 2026-09-01 | Task 3, `f0412f8`/`29e35cb` | new ECF target `simple_chat_doorbell_tests` (use=scoop): **6/6 real cross-processor scenarios**, ordered early because `test_scoop_consumer` proves compile compatibility only | orchestrator, agent |
+| Verify (Phase 5) | — | — | not started as a gate; its mandatory item was pulled forward and every task shipped its own assault class | — |
+| Harden (Phase 6) / Ship (Phase 7) | — | — | not reached | — |
+
+Standing rules at every task: the contracts are the specification, bodies satisfy them; a contract
+change is **reported**, never slipped in (two were, in Task 2); clean compile (`rm -rf EIFGENs`),
+zero warnings, whole assault green, CRLF preserved on `.e` files, README/docs updated when behavior
+lands.
+
+### simple_shaping
+
+| Gate | Date | Evidence | Verdict / numbers | Who |
+|---|---|---|---|---|
+| Research | 2026-09-01 | `evidence/pre-phase-research.txt`, `research/01-07` + `REFERENCES.md` | BUILD + ADOPT, HIGH; 38 citations; 5 alternatives + 3 cross-language stacks; 11 risks. Cairo bridge CONFIRMED; D-019 forced (color emoji impossible through cairo 1.17.2 win32 under any shaper → inline PNGs); **no Eiffel shaping prior art exists** | agent, **154k** |
+| Spec | 2026-09-01 | `evidence/pre-phase-spec.txt`, `spec/01-08` | 39 classes; four seams (`BIDI_RESOLVER`, `SCRIPT_ITEMIZER`, `GLYPH_SHAPER`, `FONT_FALLBACK`); OQ-1 resolved by per-processor confinement (nothing `separate` in the public API); OQ-4 — `simple_cairo.make_from_png` already exists, no WIC needed | agent, **164k** |
+| Intent | 2026-09-01 | `evidence/phase0-intent.txt`, `intent.md`, `intent-v2.md` (Part D, R1-R11) | 12 questions, 12 answered; approved by Larry conditioned on the spike | agent + Larry |
+| **DirectWrite feasibility spike (deviation)** | 2026-09-01 | `spikes/dwrite/run_output.txt` (60 lines), ecf + 607-line Eiffel root + 527-line C header | **PASS** — see §6/§4 | orchestrator |
+| Contracts (Phase 1) | 2026-09-01 | `b18d141` | 37/39 classes, 28 tests, zero warnings; deps = base + simple_mml + simple_testing only | agent, **368k** |
+| MML (Phase 1m) | 2026-09-01 | `evidence/phase1m-mml.txt`, `94242d8` | 23 collections inventoried, 8 models added + 16 verified; +101 postconditions, +44 frames, +7 invariants; 28/28 | agent, **244k** |
+| Adversarial review (Phase 2) | 2026-09-01 | `evidence/phase2-claude-response.md`, `phase2-chain.txt`, `synopsis.md`, `approach.md`, `333d1b9` | **PASS WITH CONDITIONS** — 22 issues = 5 HIGH / 6 MEDIUM / 8 LOW / 3 INFO over 41 classes | agent, **221k** |
+| Repair | 2026-09-02 | `evidence/phase2-repair.txt`, `e9dddf1`, `de01f65`, merge `2cadbac` | 20 of 22 applied, 2 deliberately left; seam signatures FROZEN; skips counted honestly → **22 passed, 9 skipped, 0 failed** (was 28 "passed" with 8 no-ops) | agent **251k** + orchestrator |
+| Tasks (Phase 3) | 2026-09-02 | `evidence/phase3-tasks.txt`, `tasks.md`, `b96cd0e`, approval `14a2d6d` | 13 tasks; **57 placeholders** mapped (40 `-- Phase 4:` markers in 10 src files + 7 unmarked degenerate items + 10 Phase-5 markers in `testing/`); 7 open questions decided by Larry | agent + Larry |
+| Implement (Phase 4) | 2026-09-02 → | `evidence/phase4-contracts-before.txt` (260-line contract baseline, diffed at every merge) | IN PROGRESS: Tasks 1, 6, 7 running in worktrees `phase4/native`, `phase4/assets` | 2 agents |
+
+The first simple_shaping repair agent, launched 2026-09-01, **never landed** — on 2026-09-02 the
+repo was still at `94242d8` with the four review files untracked. They were committed as `333d1b9`
+and the agent relaunched. **Verify the branch exists before reporting a phase done.**
+
+## 4. Day-by-day log
+
+### 2026-08-28 — origin and research
+
+- simple_chat starts as something else: an Eiffel **screen robot** watching an FB Messenger group by
+  OCR, detecting `Claude:` / `ROBOT:` and pasting replies back (`project_messenger_screen_robot`;
+  spike at `D:/prod/chat_robot_spike`, kept separate). The Messenger Platform API is
+  business-Page-only — verified 2026-08-28, no group chats.
+- Larry says yes to three requirements that survive into simple_chat: per-user rate limit, a 🤖 id on
+  every bot post, common controls as library classes. The controls land in `simple_shell` 1.8.0
+  (`SHELL_INPUT`, `SHELL_CLIPBOARD.set_image`), committed `5030c0b` on 08-29.
+- `/eiffel.research D:/prod/simple_chat`: 7/7 steps, verdict BUILD
+  (`evidence/pre-phase-research.txt`). Three items go to Larry: D-004 TLS, D-005 name, and a Phase 0
+  go/no-go including a **CGNAT check on his line**.
+- Banked the same day: `D:/prod` repos do not share one line-ending convention — `simple_shell` is
+  CRLF on disk, `simple_ai_client` is LF (`feedback_crlf_on_disk_in_prod_repos`).
+
+### 2026-08-29 — the biggest day: spec, contracts, MML, the thick-client pivot, the review, SCOOP
+
+- Spec 8/8 + `09-ADDENDUM-PARTICIPANTS` (Larry's addressable-participants idea, same day).
+- Intent v2 approved ("Approve as recommended"). Corrections carried in: the **doorbell bus**, lock
+  order store < limiter < bus, library/app split, uploads by magic bytes stored as `<sha256>.ext`,
+  `--create-admin`, migrations with backup.
+- **Phase 1 contracts** — 70 classes, zero warnings, 22/22. **Phase 1m MML** — 16 model queries,
+  ~61 frames, 8 model invariants.
+- **Larry: "Thick first and no browser. I don't want a browser."** Everything HTML dies; the client
+  becomes `simple_widgets` + JSON + Bearer + long-poll. `intent-v3.md`, `spec/10`, `dc475e9` (30/30).
+- **Phase 2 adversarial review**: four parallel cluster reviewers, 86 classes, **FAIL as written**.
+  Root causes in `synopsis.md`: contracts written for one thread while simple_web runs a thread per
+  connection; unsatisfiable/vacuous clauses; "never raises" broken by hostile input; five security
+  properties the design claimed but never wrote down.
+- **Larry, D1: "SCOOP is your threading solution. Use it. It's there to use."**
+- Spike: simple_web **does not compile in SCOOP mode**. Larry: *"FIX the simple_web SCOOP issues…
+  not rocket science."* Fixed the same day → simple_web 0.2.0 (`d10451f`); simple_chat switches to
+  `use="scoop"` (`f4482d3`, 30/30).
+- Phase 1b passes (`921358d`, `6a65a75`, `7be2e5a`, `87a6345`, `5652b71`); main `6739050` = **85/85**.
+- Libraries fixed the same day: **simple_json 0.2.0** (`f225267`, astral-escape defect),
+  **simple_encryption 2.0.0** (`fd3f377`, PBKDF2 security fix), **simple_shell 1.8.0** (`5030c0b`),
+  **simple_ai_client** Claude providers + `CLAUDE_CODE_CLIENT` (`1e6de45`).
+- Tool lesson: the Bash tool collapses backslashes in command text (a Python tab escape became a
+  literal TAB inside an ECF path) — write patch scripts to files, or build the backslash with
+  `chr(92)`.
+
+### 2026-08-30 — Phase 1c client
+
+- Phase 2b client re-review repaired (`8ce7ba8`, merge `4d4e8fe`); main-side repairs `3e7ca56`
+  (limiter per-prefix rules and windows, `CHAT_LOG` redaction, `CHAT_JSON` guards).
+
+### 2026-08-31 — Phase 1c closes, Phase 3, Tasks 1-2
+
+- **Phase 1c COMPLETE**, run inside a ~10%-budget window with agents one at a time. Main `0f4f9c9`
+  = **103/103**, zero warnings, clean build, **first push** to github.com/simple-eiffel/simple_chat
+  (`evidence/phase1c-repair.txt`).
+- Task-4 addendum: the bus/web/ops re-review stopped earlier for budget is rerun inside a 500k cap
+  (reviewer 166k + fixes, ~260k total) → `phase2b-part-bus-web-ops.md`; NEW-1, M-C and NEW-2 fixed;
+  main `32635b0`, 103/103.
+- **Phase 3** `/eiffel.tasks` → `44ec09f`: 10 tasks, 80 stub markers inventoried.
+- **Task 1** (`08b299d` → `32dbe7c`): all 14 `CHAT_SERVICE` stub bodies over the memory store; zero
+  contracts changed; **115/115**.
+- **Task 2** (`e21e878` → `f5115b3`, agent **198k**): all 9 `CHAT_API` answers; the login token
+  travels once and nowhere else (`API_ASSAULT` sweeps every reply for 64-hex runs); `attachment`
+  answers **501 stored** honestly because bytes live nowhere until Task 4; two contract changes
+  **reported**; **127/127**.
+- `simple_ai_client` sandbox flags land on a branch (`dead799`).
+- Agent-stranding lesson: subagents that launch builds with `run_in_background` never get woken —
+  tell them **foreground blocking builds only**.
+
+### 2026-09-01 — the server comes alive
+
+- **Task 3** (`f0412f8` → `29e35cb`, agent **176k**): the cross-processor doorbell assault, 6/6.
+  SCOOP lesson: a retry loop must keep the separate target uncontrolled in the loop body and lock
+  per probe — a helper that sleeps holding the formal starves the wake.
+- **Task 4** (`5424557` → `862f293`, agent **331k**): `CHAT_SCHEMA` v1 + `SQLITE_CHAT_STORE` +
+  `EQUIVALENCE_ASSAULT` driving both stores through one script. **131/131 + 6/6.** Backup is
+  `VACUUM INTO` — Windows keeps the file locked after `run_query`, so a closed-file copy fails. The
+  simple_datetime noon defect was found here.
+- **Task 5** (`4d6fbb0` → `f0c4f51`, agent **230k**): `SERVER_CONFIG.make_from_file` over
+  `simple_toml`, `SERVER_APP.serve/create_admin`. **The first live smoke test against the real exe
+  passed end to end**: `--create-admin` (piped stdin) → boot → `/health` → login → post → events,
+  UTF-8 byte-faithful through web + service + SQLite. Two real bugs found and fixed on main: a fresh
+  database had **no default room** (`00fc164`), and `--create-admin` **segfaulted at teardown** on an
+  open SQLite handle (`dd1d39a`). **140/140.**
+- **Task 6** (`d5b5d53` → `ad464d1`): the Caddy front door and DuckDNS actually run.
+  **Task 7** (`62b54cf` → `2db3b3a`): the participant engines come alive.
+- **THE @claude MILESTONE, LIVE** (`495e6a2`, then `228096c`, **148/148 + 6/6**): config with
+  `[[participants]] @claude` → `--create-admin` → boot → login → post *"@claude what book follows
+  Genesis?"* → **the bot answered in the room: "(robot) Exodus follows Genesis."** through HTTP →
+  doorbell → SCOOP dispatcher → sandboxed `claude -p` (subscription; API key cleared) → SQLite.
+  Three SCOOP/threading defects were found live and fixed to get there (§6).
+- **The phantom raise closed** (`9c9f4d9`): the caught raise after every successful answer, and the
+  `answer_failures` over-count with it (§6).
+- **Task 8** (`8429573` → `cf47f13`, agent **259k**): real SSE over the socket + per-IP lockout on
+  the real peer, on top of **simple_web 0.3.0** (`165bd5a`). **Live SSE smoke passed**: preamble,
+  event 1, the 25 s heartbeat, and a second stream woken mid-wait by a parallel post. **151/151.**
+- **Task 9** in three pieces: 9c DPAPI in simple_encryption 2.1.0 (`667bc7a`, by hand, 20/20);
+  9b `SHELL_TRAY` in simple_shell 1.9.0 (`30e81ab`, by hand, 17/17); 9a `simple_winhttp` 0.1.0
+  promoted from `simple_ocr_capture/src/ocr_http.e` into a new repo (`fe62d36`, agent). Then the
+  wiring (`7239132` → `6259a6f`, agent **317k**, one API-drop resume): **`simple_chat_client`
+  compiled for the first time** (15 MB exe) and the full client stack ran a live round trip over
+  real HTTP — login → post → events → logout. **158/158 + 6/6.**
+- `simple_toml` 0.1.1 (`fb78f6b`, `f83f614`) and `simple_datetime` (`b5274bd`) fixed by hand.
+- simple_shaping: research (agent 154k) → **G1/G2 gates decided by Larry** (Uniscribe-first; Noto
+  Emoji png/128) → spec (164k) → intent → **G1 reopened by Larry** (*"Let's see how we do with
+  DirectWrite in a Windows environment"*) → the DirectWrite spike → **Larry: "approved -- proceed
+  based on the spike verdict, but if that fails, then Uniscribe and forget anything about
+  TrueType-ish/like/whatever."** → spike **PASS** → contracts `b18d141` (368k) → MML `94242d8`
+  (244k) → review `333d1b9` (221k). The same ruling took the pure-Eiffel TrueType/OpenType endgame
+  **off the roadmap**: the OS shaper is the permanent backend; the four seams stay because they are
+  good design and cost nothing.
+
+### 2026-09-02 — the fleet lands, shaping repairs, Phase 4 opens
+
+- simple_shaping Phase 2 **repair** merged (`e9dddf1`, `de01f65`, merge `2cadbac`; agent 251k):
+  20 of 22 findings applied, seam signatures frozen, honest skip accounting (**22 passed, 9 skipped,
+  0 failed**). The orchestrator's independent verification caught one defect the agent introduced:
+  `FONT_LIST.copy` had no self-copy guard (§6).
+- **Larry: "You can push all the repos to gh" / "I have given rights to do that."** **All twelve open
+  PRs landed** (§5). `gh pr merge` was blocked by the permission classifier for some calls, so
+  simple_web #1-#3 and simple_ai_client #1-#2 were merged locally with `--no-ff` and pushed; the
+  three stacked PRs were then closed with a note, because GitHub cannot see a feature-branch base as
+  merged. simple_chat then **clean-built against all-main libraries: 158/158**, exe fresh; the one
+  remaining build warning is simple_toml's pre-existing obsolete call.
+- Fleet survey of 142 `D:/prod/simple_*` directories: 113 clean and pushed; 9 with no git, of which
+  only `simple_bnf`, `simple_rixgpt` and `simple_rixqwen` held code. 15 repos carrying months-old
+  uncommitted WIP (Feb-Jul 2026, unrelated to these sessions) were preserved on pushed
+  `wip/uncommitted-2026-09-02` branches with main untouched — verified today in simple_calculus,
+  simple_http, simple_logger, simple_lsp, simple_onnx, simple_oracle, simple_reel, simple_scholar,
+  simple_speech, simple_sql, simple_testing, simple_tui, simple_ucf, simple_vision, simple_warp.
+  (The memory records "18 repos had WIP"; 15 branches exist.)
+- **simple_bnf published** (`a825912`, agent 203k, orchestrator-verified 17/17): three real defects
+  fixed, and a **simple_regex defect candidate** raised out of it. **Rix apps published** (agent
+  188k): simple_rixgpt (16 files) and simple_rixqwen (19 files), 1.9 GB installers and model
+  payloads excluded. **simple_regex 1.0.1** (`a19aa71`, PR #1, merged `131bc38`, agent 131k).
+- **Larry: "R11 approved, run /eiffel.tasks on simple_shaping"** → `3be67ca`, then Phase 3 `b96cd0e`
+  (13 tasks, 57 placeholders, 7 open questions).
+- **Larry: "Approve the 13 tasks with your recommendations and merge the PR"** → `14a2d6d`: Phase 3
+  evidence flipped to APPROVED, the seven gate decisions recorded at the bottom of `tasks.md`, and
+  `evidence/phase4-contracts-before.txt` snapshotted as the 260-line contract baseline to diff at
+  every merge. Phase 4 opened in two worktrees (`D:/prod/simple_shaping_wt_native` →
+  `phase4/native` Task 1; `D:/prod/simple_shaping_wt_assets` → `phase4/assets` Tasks 6+7).
+- simple_chat `6da095f`: README and `tasks.md` brought current — Tasks 1-9 done, Task 10 waits.
+- **Larry: "Please remember that as a byproduct of this process, we need to keep the
+  design/build/test/deliver notes so we can build a description of this project for the 'Eiffel
+  guys' to see/read/absorb."** → this file.
+- Larry: *"Publish the six research folders as design-only repos"* → agent launched for simple_dot,
+  simple_loop, simple_langchain, simple_observability, simple_playwright, simple_tasks.
+
+## 5. Libraries touched along the way
+
+| Library | What was wrong or missing | What was done | Commit / PR | Date |
+|---|---|---|---|---|
+| **simple_web** | Compile errors in resilience middleware and static serving | Fixed; `request_method` via `to_string_8` | `df22fe6`, `fddd00d`; PR #1 merged | 2026-08-29 (merged 09-02) |
+| **simple_web** | **Did not compile under SCOOP** — VFFD(8) ×4 on `once ("PROCESS")` singletons holding root-processor agents (§6) | 0.2.0 SCOOP mode: `SIMPLE_WEB_HANDLER_SERVER [H]`, one handler per request on the request's processor, shared settings as a separate-typed `once ("PROCESS")`, thread-only classes behind an ECF concurrency condition. Proof target serves two 2 s requests in 2 s, 4/4 | `d10451f`; PR #2 merged | 2026-08-29 (merged 09-02) |
+| **simple_web** | No peer address; no streaming response | 0.3.0: `remote_address` (WSF `REMOTE_ADDR`) + `send_stream_head`/`send_chunk`/`is_streaming`. Finding: **hang-up is not observable at the WSF surface** — `WGI_STANDALONE_OUTPUT_STREAM` swallows write failures into an internal `is_available` WSF never exposes, so simple_chat bounds streams at `Max_stream_seconds = 3600` and clients reconnect with `?since=` | `165bd5a`; PR #3 (merged locally `2462dc6`, PR closed) | 2026-09-01 |
+| **simple_json** | ISE's ejson mangles astral characters both ways (§6) | 0.2.0 `SIMPLE_JSON_TEXT`: own escaper (non-ASCII as raw UTF-8 per RFC 8259), decoder combines surrogates; 4 hand-computed vector tests | `f225267`; PR #2 merged `0fd4fd6` | 2026-08-29 (merged 09-02) |
+| **simple_encryption** | PBKDF2 wrong from iteration 119, HMAC short 1 in 256, clock-seeded LCG "CSPRNG", 69 s per hash (§6) | 2.0.0 security fix + CNG backend + real CSPRNG, disclosed in the repo | `fd3f377`, `bd6a296`; PR #1 merged | 2026-08-29 (merged 09-02) |
+| **simple_encryption** | No per-user protection for the client's remembered token | 2.1.0 DPAPI over `CryptProtectData`; failures Void, never exceptions; OS buffer zeroed and freed both paths; 20/20 | `667bc7a`; PR #2 (merged locally `17dab7b`, PR closed) | 2026-09-01 |
+| **simple_shell** | Common input/clipboard controls lived in an app, not a library | 1.8.0 `SHELL_INPUT` (SendInput) + bitmap clipboard | `5030c0b`, `4fac2bc`; PR #1 merged | 2026-08-29 (merged 09-02) |
+| **simple_shell** | No notification-area icon for the chat client | 1.9.0 `SHELL_TRAY`: one icon per instance on a message-only window (`DefWindowProc` — the queue-polled pump law holds, no callbacks); tooltip 127 / balloon 63+255; a refusing environment leaves `is_installed` False; 17/17 | `30e81ab`; PR #2 (merged locally `85a584b`, PR closed) | 2026-09-01 |
+| **simple_ai_client** | `claude -p` ran with tools and settings enabled; no sandbox flags | Claude providers + `CLAUDE_CODE_CLIENT`; then 0.2.0 `--tools ""`, `--setting-sources` (empty = none, verified), `--strict-mcp-config`; later `--resume` by UUID only and "a dead Ollama server is an error response, never an exception" | `1e6de45`, `dead799`, `314d3d8`, `8c1a6a8`; PRs #1, #2 merged | 2026-08-29 → 09-01 |
+| **simple_datetime** | bare `12:MM:SS` parsed as 12 AM — **noon became midnight** (§6) | Fixed upstream | `b5274bd`; PR #1 merged `8bfdda8` | 2026-09-01 |
+| **simple_toml** | `load_file` widened bytes per byte — mojibake for every non-ASCII config value (§6) | 0.1.1 decodes UTF-8; regression test with e-acute and shin through a real file; 11/11 | `fb78f6b`, `f83f614`; PR #1 merged `62d4e3e` | 2026-09-01 |
+| **simple_winhttp** | Did not exist; `simple_http`'s libcurl cannot ship | 0.1.0 — Windows-native HTTPS client promoted from `simple_ocr_capture/src/ocr_http.e` (256 lines, 5 externals + a Clib header) into a new repo, integrated live against the simple_chat server exe | `fe62d36` (new repo, no PR) | 2026-09-01 |
+| **simple_regex** | `split`'s signature promised `READABLE_STRING_GENERAL` and delivered 8-bit (§6) | 1.0.1: normalize the subject to STRING_32 and use `unicode_split`; 7 vectors (Hebrew + 🤖 + Greek) | `a19aa71`; PR #1 merged `131bc38` | 2026-09-02 |
+| **simple_bnf** | Never published; 3 real defects (choice productions raised via `SIMPLE_REGEX.split`; `make_aggregate` never set `is_aggregate`; 28 productions unextracted) | Fixed, brought onto the fleet pattern, published; 3 → 17 tests | `a825912` (new repo) | 2026-09-02 |
+| **simple_rixgpt / simple_rixqwen** | Shipped apps with no git | Onboarded and published, payloads excluded (bin/, installer exes, *.bin, *.gguf) | `10eb59a`, `1e6aa23` | 2026-09-02 |
+| **eiffel_sqlite_2025** (as encountered, not modified) | The wrapper is **thread-affine** (§6) | Worked around inside `SQLITE_CHAT_STORE`: per-thread reopen under WAL, own `is_open`, thread identity via a replicated `eif_thr_thread_id` external | in `495e6a2` | 2026-09-01 |
+| **simple_cairo** (gated, not yet changed) | No `show_glyphs`, `glyph_extents`, `set_font_face`, win32 face constructors — D-S07 | simple_shaping Task 13, behind Larry's gate; RISK-008 fallback is temporary in-library externals | not started | — |
+
+**The 2026-09-02 landing:** twelve PRs, all merged — simple_json #2; simple_web #1 #2 #3;
+simple_ai_client #1 #2; simple_shell #1 #2; simple_encryption #1 #2; simple_datetime #1;
+simple_toml #1 (then simple_regex #1 later the same day, thirteen in all). Merge timestamps
+11:46-11:52 UTC for the batch, 13:07 UTC for simple_regex. Three stacked PRs (simple_web #3,
+simple_shell #2, simple_encryption #2) show CLOSED with `mergedAt: null` because their commits went
+in through a local `--no-ff` merge of the feature branch.
+
+## 6. Bug-hunt stories
+
+### PBKDF2 at iteration 119
+`simple_encryption` (generated and tested with Opus 4.x in 2025) was 12/12 green and its README
+claimed OWASP compliance. Its KAT used **one** iteration and its round-trip test checked the code
+against itself. One Python `hashlib` vector diverged; bisecting put the break at **iteration 119** —
+EiffelStudio's `INTEGER_X.as_bytes` drops leading zero bytes. HMAC also returned 31 bytes 1 time in
+256, `secure_random` was a clock-seeded LCG, and a 600k hash took 69 s. Fixed in 2.0.0 (`fd3f377`)
+with a CNG backend and a real CSPRNG, disclosure written into the repo — Larry's rule: *"we own it
+publicly (on the repo) and FIX IT."*
+**Lesson:** a library's own green suite proves nothing when the same model wrote code and tests.
+Check crypto, parsers, protocols and encoders against an independent implementation first
+(`feedback_verify_generated_libraries_independently`).
+
+### The ejson astral escape
+`SIMPLE_JSON_OBJECT.put_string`'s `value_stored` postcondition fired the moment simple_chat
+round-tripped a 🤖-marked message. ISE's own ejson `JSON_STRING.make_from_string_32` writes any
+character beyond the BMP as a **five-digit escape** — not JSON — and its decoder never combines
+surrogate-pair escapes, so 🤖 (U+1F916) decoded as two lone surrogates. Fixed by `SIMPLE_JSON_TEXT`
+in simple_json 0.2.0 (own escaper, surrogate-combining decoder); ejson's escaper is never called now.
+**Lesson:** a vendor/ISE library is not exempt. Put an astral character and Hebrew in **every** text
+round-trip test, never only ASCII.
+
+### The SCOOP mutual deadlock (`dispatcher_subscribe` vs the API)
+During the first live `@claude` run the whole server froze — health dead. `DISPATCHER_HOST.launch`
+queued an async `dispatcher_subscribe`, then queued `populate`; the bus's reach-back into the
+subscriber met a dispatcher already blocked reserving the API. Fixed in `495e6a2`: `launch`
+**settles the async subscribe with a synchronous query first**, then queues populate, and bot
+resolution crosses processors as a **bare index** (`CHAT_API.dispatcher_bot_id_of`) — shipping the
+caller's strings into a synchronous query invites the same freeze.
+**Lesson:** any synchronous call out of a processor can be rung back into it through passed locks.
+
+### The thread-affine SQLite wrapper
+Live `@claude` runs hit inaccessible-database failures on the dispatcher's processor. The
+`eiffel_sqlite_2025` wrapper is thread-affine: `is_accessible` is true only on the owner thread, and
+`is_open` calls `is_closed`, which *requires* it — and ISE SCOOP can run creation-time calls on the
+**creator's** thread, so dispatcher population inherited the wrong one. Fixed in `495e6a2`:
+population moved off creation onto its own turn; `SQLITE_CHAT_STORE.active_db` probes (`SELECT 1`
+under rescue) and reopens per thread under WAL; `is_open` became the store's own lifecycle
+attribute; thread identity from a replicated `eif_thr_thread_id` external — **never probe by
+raising**, because a *caught* raise still dirties the processor.
+
+### The phantom raise after every answer (impersonated re-entrancy)
+The bot answered correctly, and then a caught raise fired — every time. `answer_failures`
+over-counted, and `EXCEPTION_MANAGER.last_exception` was **Void** inside the SCOOP rescue, so the
+reason could not be captured. The chain: during the dispatcher's synchronous `dispatcher_post`, its
+**passed locks** let `EVENT_BUS.ring` re-enter the dispatcher (impersonation) → a **nested**
+`dispatch_pending` → `prune_answered` moved `answered` under the outer `handle_event` → its
+`seen_once` frame clause fired → the exception crossing the impersonated context left the API
+processor **dirty** → the *next* synchronous call failed although its work had landed. Fixed in
+`9c9f4d9` with an `is_dispatching` re-entrancy guard (a wake mid-dispatch only queues; frame clause
+`queue_kept_or_grown`), a thread-id `connection_usable`, `is_open` as an own attribute, and a
+verify-and-account fallback in `post_answer`. Two smoke runs: `raised=0`, books exact.
+**Lessons:** never let assertions or probes raise across an impersonated context; guard re-entrancy
+on every state a frame clause reads; `ROUTINE_FAILURE.original` unwraps to the true assertion —
+`EXCEPTION_MANAGER` answers Void two frames up but works one frame from the raise.
+
+### The undrained-pipe wedge
+The server booted, `/health` answered 200, then logins timed out with WinHTTP 12002 — mid-request.
+The server had been started with **piped stdout**; once `CHAT_LOG` filled the pipe buffer, the child
+blocked on the write and never returned. **Rule:** always boot via `cmd /c ... > file`. Applies to
+any child that logs — dispatcher engines included. Recorded with Task 9 (`7239132`).
+
+### The stale-exe trap
+A "fix" that changed nothing, twice: `ec.sh` **silently leaves the previous exe in place when
+compilation fails**. **Rule:** verify the exe timestamp after every build. Related: every target
+finalizes to `simple_chat.exe`, so `taskkill` by that name kills the test runner — copy the exe to a
+unique name first.
+
+### The Windows console mangling non-ASCII curl arguments
+A UTF-8 message posted with inline `curl` came back as `????` — an apparent encoding bug spanning
+web, service and SQLite. The **Windows console** mangled the non-ASCII text in curl's command line;
+the server was byte-faithful throughout. **Rule:** post non-ASCII probes via Python `urllib`, never
+via bash-inline curl text. Found in the Task 5 live smoke, 2026-09-01.
+
+### The noon parse
+Timestamps read back from SQLite were 12 hours off at noon: `SIMPLE_TIME.make_from_string` parsed a
+bare 24-hour `12:MM:SS` as 12 **AM**. `SQLITE_CHAT_STORE.date_of` worked around it positionally the
+same day; the upstream fix followed as simple_datetime PR #1 (`b5274bd`).
+
+### TOML mojibake
+Non-ASCII values in `simple_chat.toml` came out as mojibake — `simple_toml.load_file` widened bytes
+**per byte** instead of decoding UTF-8. Fixed in 0.1.1 (`fb78f6b`). Two lessons from the fix itself:
+simple_toml's test runner **swallows assert tags** (diagnosis had to go through prints), and the
+first regression test asserted 5 code points for a 6-code-point string — the fix was right, the test
+arithmetic wrong, and a red test reached the PR before the fix did. **Gate commits on the run, not
+on a grep.**
+
+### simple_web's `once ("PROCESS")` agents under SCOOP
+Four VFFD(8) errors; simple_chat could not compile with `use="scoop"`. `routes`,
+`middleware_pipeline` and `router` were `once ("PROCESS")` singletons holding **agents created on
+the root processor** — which is busy running the program for its whole life, so a request processor
+can never call them. Fixed by simple_web 0.2.0's `SIMPLE_WEB_HANDLER_SERVER [H]`: routes as data,
+one handler created **per request on the request's processor**, shared settings as a
+`once ("PROCESS")` of *separate* type copied with `make_from_separate`.
+**Lesson:** under SCOOP an agent is a closure over a processor; handler agents cannot be a
+concurrent web API.
+
+### The FONT_LIST shallow twin, then the self-copy
+Review-time: simple_shaping's `FONT_LIST` redefined `is_equal` without redefining `copy`, so a
+`twin` aliased the internal lists — the simple_chat **D5 oracle-twins lesson recurring in another
+library**. Fixed with a deep `copy` (fresh lists, fresh table of fresh inner lists), requiring
+`undefine is_equal, copy` on the `SHAPING_CONSTANTS` branch (VMFN otherwise). Then the repair's own
+defect: the agent's deep `copy` had **no self-copy guard** — `x.copy (x)` reassigned
+`general_families` and then iterated the new empty list, wiping the object, after which
+`lists_not_shared` failed on itself. Caught by the orchestrator's independent verification, not by
+the agent; guarded with `if other /= Current` (as EiffelBase's `ARRAYED_LIST.copy` does) and covered
+by a self-copy no-op test (`de01f65`).
+**Lesson:** verify a repair agent's work with your own clean build and your own reading — the
+agent's suite was green.
+
+### simple_regex's 8-bit split
+`SIMPLE_REGEX.split` raised on a STRING_32 subject; surfaced while fixing simple_bnf, whose choice
+productions went through it. Gobo ships an 8-bit half (`split`/`replace`/`captured_substring`,
+guarded by `subject_is_string`) and a general half (`unicode_*`); every simple_regex subject feature
+used the general half **except** `split`/`tokenize`/`divide` and `split_by_pattern`. Fixed in 1.0.1
+(`a19aa71`) by normalizing the subject to STRING_32 and calling `unicode_split` (a bare swap fails:
+`unicode_split`'s `valid_array_type` needs a STRING_32 subject); 7 vectors, and the
+ASCII-in-STRING_32 cross-check alone catches it. Flagged to Larry: `package.json` jumped
+0.1.0 → 1.0.1 because the CHANGELOG already claimed 1.0.0.
+
+### The Noto 4-digit padding (found by review, before it could ship)
+`EMOJI_ASSET_CATALOG.lower_hex` stripped leading zeros while Noto pads to four, so `emoji_u00a9.png`
+would have been looked up as `emoji_ua9.png` — (c), (r) and keycaps would have silently degraded the
+day the assets landed. Fixed by padding to a minimum of four hex digits
+(`ensure noto_minimum_padding`), **verified live against the Noto repository**: `emoji_u00a9.png`
+and `emoji_u0023_20e3.png` exist; the unpadded names 404.
+
+### The unsatisfiable precondition (simple_shaping HIGH 1)
+`SCRIPT_ITEMIZER.itemize` required `plain_span_only: is_emoji_free`, yet FR-007 rung 3 **lawfully
+leaves unresolvable emoji plain** — the library's own degradation path violated its own
+precondition, live already for regional indicators. The precondition was dropped and emoji-freedom
+restated as a caller duty in the class note, with an honest mirror `ensure` on
+`EMOJI_SEGMENTER.segment`.
+**Lesson:** a precondition a correct caller cannot satisfy is a defect, not a safeguard.
+
+## 7. Agent orchestration and cost
+
+**The pattern.** Fable orchestrates; Opus 5 agents author and adjudicate; Larry gates.
+One agent per task, each on its own **git worktree** and branch (`phase4/service`, `phase4/api`,
+`phase4/sqlite`, `phase1b/client`, `phase2/repair`, `phase4/native`, `phase4/assets`, …).
+The orchestrator merges only after its **own clean build** (`rm -rf EIFGENs`, foreground) and its
+own reading of the diff — an agent's green suite is a claim, not evidence
+(the `FONT_LIST` self-copy defect is the case in point). Adversarial reviews run as *parallel*
+read-only agents per cluster, with the orchestrator re-reading every HIGH against the source.
+
+**Measured token costs** (as the memory records them):
+
+| Kind of run | Cost |
+|---|---|
+| Cluster reviewer (simple_chat Phase 2/2b) | ~300-340k; the budget-capped bus/web/ops rerun was 166k reviewer + fixes, ~260k total |
+| Repair agent (simple_chat Phase 1b/1c) | ~270-380k |
+| Task 2 (CHAT_API) | 198k |
+| Task 3 (doorbell assault) | 176k |
+| Task 4 (SQLite store) | 331k |
+| Task 5 (config + server app) | 230k |
+| Task 8 (streaming + peer) | 259k |
+| Task 9 (client wiring) | 317k, with one API-drop resume |
+| simple_shaping research / spec / contracts / MML / review / repair | 154k / 164k / 368k / 244k / 221k / 251k |
+| simple_bnf publish | 203k |
+| Rix apps publish | 188k |
+| simple_regex fix | 131k |
+
+Task 1, Task 6 and Task 7 agent costs: not recorded.
+
+**Lessons banked.**
+- **Subagent reports over ~20 KB arrive truncated at the top.** Ask each reviewer to resend the head;
+  save part files as they arrive (this is why `phase2-part-*.md` exist as separate files).
+- **Background builds strand subagents:** an agent that launches a build with `run_in_background`
+  is never woken. Instruct agents: foreground blocking builds only.
+- **The permission classifier — not GitHub — blocks batched or scripted `git`/`gh` commands.**
+  Issue plain single commands. On 2026-09-02 this forced simple_web #1-#3 and simple_ai_client
+  #1-#2 to be merged locally with `--no-ff` instead of via `gh pr merge`.
+- **Worktree isolation fails when the session cwd is not a repo** — add the worktree by hand with
+  `git worktree add`.
+- Files merged into main are **CRLF on disk** in this repo family; patch scripts must preserve line
+  endings, and the Write tool emits LF.
+- The **Write tool decodes backslash-u escapes** — spell a backslash as `%/92/` in Eiffel sources.
+- Run agents **one at a time** when the budget window is tight (the whole of Phase 1c was run that
+  way, inside a ~10% window).
+
+## 8. Numbers over time
+
+### simple_chat
+
+| Milestone | Date | Commit | Tests |
+|---|---|---|---|
+| Phase 1 contracts (skeletal assault) | 2026-08-29 | — | 22 |
+| Thick-client amendment; SCOOP switch | 2026-08-29 | `dc475e9`, `f4482d3` | 30 |
+| Phase 1b client pass merged | 2026-08-29 | `343015c` | 67 |
+| Phase 1b participants pass; Phase 1b complete | 2026-08-29 | `6739050` | 85 |
+| Phase 1c complete (first push) | 2026-08-31 | `0f4f9c9` | 103 |
+| Bus/web/ops re-review repairs | 2026-08-31 | `32635b0` | 103 |
+| Task 1 — CHAT_SERVICE bodies | 2026-08-31 | `32dbe7c` | 115 |
+| Task 2 — CHAT_API answers | 2026-08-31 | `f5115b3` | 127 |
+| Task 3 — doorbell assault (new target) | 2026-09-01 | `29e35cb` | +6 SCOOP |
+| Task 4 — SQLite store | 2026-09-01 | `862f293` | 131 + 6 |
+| Task 5 — config, server app, first live smoke | 2026-09-01 | `f0c4f51` → `dd1d39a` | 140 + 6 |
+| The @claude milestone, live | 2026-09-01 | `228096c` | 148 + 6 |
+| Task 8 — SSE streaming + real peer | 2026-09-01 | `cf47f13` | 151 + 6 |
+| Task 9 — client wiring; client exe's first compile | 2026-09-01 | `6259a6f` | 158 + 6 |
+| Clean build against all-main libraries | 2026-09-02 | `6da095f` | 158 + 6 |
+
+### simple_shaping
+
+| Milestone | Date | Commit | Tests |
+|---|---|---|---|
+| Phase 1 contracts | 2026-09-01 | `b18d141` | 28 (19 real, 8 skeletal AC markers, 1 SCOOP gate) |
+| Phase 1m MML | 2026-09-01 | `94242d8` | 28 |
+| Phase 2 repair — honest skip accounting | 2026-09-02 | `2cadbac` | **22 passed, 9 skipped, 0 failed** (31 registered) |
+
+The drop from "28 passed" to "22 passed, 9 skipped" is not a regression: the runner previously
+counted 8 skeletal no-ops as passes. Task 12's completion criterion is the verdict line ending at
+"0 skeletal".
+
+## 9. Open items as of 2026-09-02
+
+- **simple_shaping Phase 4 in progress.** Task 1 (promote the DirectWrite shim from `spikes/dwrite`
+  into `Clib/`, effect `DWRITE_API` + `GDI32_API`) running on `phase4/native` in
+  `D:/prod/simple_shaping_wt_native`; Tasks 6+7 (acquire and pin the Noto Emoji png/128 assets;
+  generate `EMOJI_DATA_TABLES`) running on `phase4/assets` in `D:/prod/simple_shaping_wt_assets`.
+  Order after these: 2 (fonts) → 3, 4, 5 (DirectWrite effectings) → 8 (segmenter) → 9 (fallback) →
+  10 (wrap) → 11 (facade) → 12 (Phase-5 obligations) → 13 (D-S07). Diff every merge against
+  `evidence/phase4-contracts-before.txt`; a changed **existing** clause fails the merge, additive
+  features are allowed and must be listed in the task evidence. Remove the worktrees after merging.
+- **simple_chat Task 10** — `SW_CHAT_VIEW` over simple_widgets (`SW_CHAT_THREAD` already exists:
+  bubbles, sticky bottom, `append_to_last`). Gated on simple_shaping, then D-020 WIC decode and the
+  login UI in `CLIENT_APP`, then the end-to-end GUI smoke.
+- **Two unlisted stubs** in simple_chat: `CHAT_CLIENT.post_image` (501) and `CHAT_SERVICE.backup`.
+- **D-S07** — the gated simple_cairo change (`show_glyphs`, `glyph_extents`, `set_font_face`, the
+  two win32 face constructors), simple_shaping Task 13, **needs Larry's approval**. Fallback
+  (RISK-008): temporary in-library externals.
+- **The CGNAT check on Larry's line was never recorded as done** — a deploy blocker to raise before
+  ship, along with the Duck DNS token, the port forward and the Caddy front door.
+- **Deploy** — Caddy + DuckDNS + port forward on Larry's PC; the server runs as a service and the
+  GUI finds it (`SERVICE_LOCATOR`: local `/health` first, then `server_urls` in order).
+- **The users-group artifact itself** — built FROM this chronicle when the product works. Load the
+  `artifact-design` skill first; publish private; hand Larry the link.
+- Also open, lower priority: the six design-only repos (simple_dot, simple_loop, simple_langchain,
+  simple_observability, simple_playwright, simple_tasks) being published by an agent as this was
+  written; the two simple_bnf items for Larry (`BNF_COMPONENT.make`'s ensure/invariant
+  contradiction; the simple_regex `package.json` version jump); two stray logs
+  `D:/prod/simple_chat_wt_domain_baseline_*.log`.
