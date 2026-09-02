@@ -90,6 +90,23 @@ account and no default password; you create the only one there will ever be, onc
 echo&#8209;hiding on the console. It is never stored: what is kept is a PBKDF2 hash at
 600,000 iterations.</p>
 
+<div class="warn">
+<strong>If the server will not start, it is nearly always the port.</strong> The chat
+server ships on <strong>8090</strong> rather than 8080 because Apache, XAMPP, Tomcat and
+many development tools sit on 8080. If 8090 is taken too, <strong>the port is the one
+line to change</strong> &mdash; and it has to be changed in <em>two</em> files, to the
+same free number (anything from 1024 to 65535):
+
+<ol style="margin-bottom:0">
+  <li><span class="path">C:\ProgramData\SimpleChat\server.toml</span> &rarr;
+      <code>port = 8091</code> &nbsp;(&ldquo;Edit server config&rdquo;)</li>
+  <li><span class="path">%APPDATA%\simple_chat\client.toml</span> &rarr;
+      <code>local_port = 8091</code></li>
+</ol>
+<p style="margin-bottom:0">&ldquo;Start server&rdquo; checks first and, if the port is
+busy, names the program holding it instead of failing quietly into the log.</p>
+</div>
+
 <p>Then Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr; <strong>Start server</strong>.
 It will tell you whether it came up. At this point the room works
 <em>on this PC only</em> &mdash; open <strong>SimpleChat</strong> and log in to prove it.</p>
@@ -159,7 +176,7 @@ the <strong>IPv4 Address</strong> line, usually starting <code>192.168.</code> o
 
 <div class="warn">
 <strong>Note that 443 is not 8080.</strong> The number in <span class="path">server.toml</span>
-(<code>port = 8080</code>) is the door the chat server itself listens on, <em>inside</em> this
+(<code>port = 8090</code>) is the door the chat server itself listens on, <em>inside</em> this
 PC. Caddy is what listens on 443 to the outside world and passes traffic inwards. You forward
 <strong>443</strong>, not 8080. Leave 8080 alone.
 </div>

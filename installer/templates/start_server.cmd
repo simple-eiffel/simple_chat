@@ -4,12 +4,18 @@ REM start_server.cmd - "Start server" in the Start Menu.
 REM
 REM Starts the server hidden, waits for it to come up, and tells you whether
 REM it is answering. Closing this window does NOT stop the server.
+REM
+REM PORT COLLISION IS CHECKED FIRST. Apache, XAMPP, Tomcat and a dozen dev
+REM tools sit on 8080, and a collision is the commonest reason the server does
+REM not come up. Left to itself the server fails into server.log and the only
+REM symptom is a chat window that cannot connect - so this names the program
+REM holding the port and the two lines to change, before launching anything.
 REM ===========================================================================
 setlocal
 set "ROOT=%ProgramData%\SimpleChat"
-set "PORT=8080"
+set "PORT=8090"
 
-REM Read the port out of server.toml so the check below asks the right door.
+REM Read the port out of server.toml so every check below asks the right door.
 if exist "%ROOT%\server.toml" (
     for /f "tokens=2 delims==" %%P in ('findstr /r /c:"^ *port *=" "%ROOT%\server.toml"') do (
         for /f "tokens=1" %%Q in ("%%P") do set "PORT=%%Q"
@@ -31,6 +37,32 @@ if not errorlevel 1 (
     echo.
     pause
     exit /b 0
+)
+
+REM --- is anything else already holding our port? -------------------------
+set "HOLDER="
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$c = Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $p = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; if ($p) { '{0} (PID {1})' -f $p.ProcessName, $c.OwningProcess } else { 'PID {0}' -f $c.OwningProcess } }"`) do set "HOLDER=%%H"
+
+if defined HOLDER (
+    echo   PORT %PORT% IS ALREADY IN USE by %HOLDER%
+    echo.
+    echo   The server was NOT started. Two programs cannot share one port, so
+    echo   it would only have failed into the log.
+    echo.
+    echo   Pick a free port instead - change these TWO lines, then try again:
+    echo.
+    echo     1. %ROOT%\server.toml
+    echo          port = 8091
+    echo        ^("Edit server config" in the Start Menu^)
+    echo.
+    echo     2. %%APPDATA%%\simple_chat\client.toml
+    echo          local_port = 8091
+    echo.
+    echo   Any free number between 1024 and 65535 will do; they must MATCH.
+    echo.
+    pause
+    exit /b 1
 )
 
 wscript.exe "%~dp0start_server_hidden.vbs"

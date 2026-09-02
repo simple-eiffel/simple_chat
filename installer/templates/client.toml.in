@@ -42,8 +42,11 @@ server_urls = ["https://REPLACE-ME.duckdns.org", "https://REPLACE-ME-standby.duc
 # Look for a server running on THIS PC before going out to the network.
 # The host's own window wants this. A friend's window does no harm leaving it
 # on - the probe is one request with a two-second timeout.
+#
+# local_port must MATCH `port' in the host's server.toml (8090 by default -
+# not 8080, which Apache and XAMPP commonly hold).
 prefers_local = true
-local_port = 8080
+local_port = 8090
 
 # Where the window comes up, and how big. The client rewrites these when it
 # closes, so it reopens where you left it.
