@@ -518,6 +518,272 @@ feature {NONE} -- Transcript support
 			Result := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_text.substring (1, a_text.count.min (a_maximum)))
 		end
 
+feature -- The freeze hunt: what holds the GUI's own thread (phase4/freeze)
+
+	test_live_gui_latency_through_a_quiet_poll
+			-- THE FREEZE, measured. The finalized server booted on the scratch
+			-- port, CLIENT_APP taken down the path its window takes, and then the
+			-- two things the GUI thread ever does timed to the millisecond:
+			-- `send_text' (what the composer's Return does) and `tick' (what
+			-- SW_WINDOW fires every 250 ms).
+			--
+			-- Twenty lines go out as fast as a member could type them - the room
+			-- is busy, so every long poll returns at once - and then the room
+			-- goes QUIET and the poller settles into a full 25 s wait. If any
+			-- call on the GUI's own processor waits on the poller's, the
+			-- heartbeat stops here for as long as that poll lasts, and the
+			-- window would be frozen for exactly that long.
+			--
+			-- Skips, and passes, when the exe is not built. Teardown runs before
+			-- the verdict so a failure never strands a server.
+		local
+			l_exe: RAW_FILE
+			l_process: SIMPLE_PROCESS
+			l_server: SIMPLE_ASYNC_PROCESS
+			l_transport: WINHTTP_TRANSPORT
+			l_locator: SERVICE_LOCATOR
+			l_endpoint: CHAT_ENDPOINT
+			l_environment: EXECUTION_ENVIRONMENT
+			l_config: CLIENT_CONFIG
+			l_app: detachable CLIENT_APP
+			l_why: detachable STRING_32
+			l_transcript: STRING_8
+			l_line: STRING_32
+			l_tries, l_i, l_k, l_slow_ticks, l_traced: INTEGER
+			l_hits, l_at, l_last_at: INTEGER
+			l_alive, l_logged_in, l_opened, l_each_once, l_in_order, l_all_intact: BOOLEAN
+			t0, l_span: INTEGER_64
+			l_send_worst, l_busy_tick_worst, l_quiet_tick_worst: INTEGER_64
+			l_send_worst_at, l_quiet_worst_at, l_alloc_worst_at: INTEGER
+			l_alloc_worst: INTEGER_64
+			l_junk: ARRAYED_LIST [STRING_8]
+		do
+			create l_exe.make_with_name (Server_exe_path)
+			if not l_exe.exists then
+				print ("  SKIP: the freeze hunt needs " + Server_exe_path + ", which is not built%N")
+				assert ("skipped cleanly without a server exe", True)
+			else
+				create l_transcript.make (2048)
+				create l_process.make
+				l_process.command_output ("taskkill /F /IM " + Scratch_server_name).do_nothing
+				prepare_scratch
+				delete_file (client_scratch_toml)
+				create l_server.make
+				l_server.start ("cmd /c " + Scratch_root + backslash + Scratch_server_name + " " + Scratch_root + backslash + "server.toml > " + Scratch_root + backslash + "freeze_boot.log 2>&1")
+				assert ("server process started", l_server.was_started_successfully)
+				create l_transport.make
+				create l_endpoint.make (Base_url)
+				create l_locator.make (l_transport)
+				create l_environment
+				from
+					l_tries := 0
+				until
+					l_alive or l_tries >= 40
+				loop
+					l_locator.probe (l_endpoint)
+					l_alive := l_locator.last_probe_alive
+					if not l_alive then
+						l_environment.sleep (500_000_000)
+					end
+					l_tries := l_tries + 1
+				variant
+					41 - l_tries
+				end
+				if l_alive then
+					create l_config.make_defaults
+					l_config.set_storage_path (client_scratch_toml)
+					l_config.set_prefers_local (False)
+					l_config.set_only_server_url (Base_url)
+					create l_app.make_for_test (l_transport, l_config)
+					l_why := l_app.attempt_login (Base_url, Admin_username, Admin_password)
+					l_logged_in := l_app.client.is_logged_in
+					if attached l_why as w then
+						l_transcript.append ("    the door was refused: " + utf8_head (w, 80) + "%N")
+					end
+					if l_logged_in then
+						l_app.open_room
+						l_opened := l_app.presenter.is_room_open
+						l_transcript.append ("    open_room -> room " + l_app.room_id.out + ", poller running: " + l_opened.out + "%N")
+						if l_opened then
+								-- BUSY: twenty lines out, a heartbeat after each.
+							from
+								l_i := 1
+							until
+								l_i > Freeze_posts
+							loop
+								l_line := freeze_line (l_i)
+								t0 := freeze_now_ms
+								l_app.send_text (l_line)
+								l_span := freeze_now_ms - t0
+								if l_span > l_send_worst then
+									l_send_worst := l_span
+									l_send_worst_at := l_i
+								end
+								t0 := freeze_now_ms
+								l_app.tick
+								l_span := freeze_now_ms - t0
+								l_busy_tick_worst := l_busy_tick_worst.max (l_span)
+								l_i := l_i + 1
+							variant
+								Freeze_posts + 1 - l_i
+							end
+							l_transcript.append ("    BUSY  " + Freeze_posts.out + " posts: worst send_text " + l_send_worst.out
+								+ " ms (post " + l_send_worst_at.out + "), worst tick " + l_busy_tick_worst.out + " ms%N")
+								-- QUIET: nobody speaks, so the poller settles into a full 25 s wait.
+							from
+								l_i := 1
+							until
+								l_i > Freeze_quiet_ticks
+							loop
+									-- A pure allocation burst, touching nothing of the client's:
+									-- if THIS stops for as long as a long poll, nothing the
+									-- presenter does is to blame.
+								t0 := freeze_now_ms
+								create l_junk.make (200)
+								from
+									l_k := 1
+								until
+									l_k > 200
+								loop
+									l_junk.extend (create {STRING_8}.make_filled ('x', 1024))
+									l_k := l_k + 1
+								variant
+									201 - l_k
+								end
+								l_span := freeze_now_ms - t0
+								if l_span > l_alloc_worst then
+									l_alloc_worst := l_span
+									l_alloc_worst_at := l_i
+								end
+								t0 := freeze_now_ms
+								l_app.tick
+								l_span := freeze_now_ms - t0
+								if l_span > Slow_tick_ms then
+									l_slow_ticks := l_slow_ticks + 1
+									if l_traced < 12 then
+										l_traced := l_traced + 1
+										l_transcript.append ("      tick " + l_i.out + " held the GUI thread " + l_span.out + " ms%N")
+									end
+								end
+								if l_span > l_quiet_tick_worst then
+									l_quiet_tick_worst := l_span
+									l_quiet_worst_at := l_i
+								end
+								l_environment.sleep (250_000_000)
+								l_i := l_i + 1
+							variant
+								Freeze_quiet_ticks + 1 - l_i
+							end
+							l_transcript.append ("    QUIET " + Freeze_quiet_ticks.out + " ticks: worst tick " + l_quiet_tick_worst.out
+								+ " ms (tick " + l_quiet_worst_at.out + "), " + l_slow_ticks.out + " over " + Slow_tick_ms.out + " ms%N")
+								-- WHAT ARRIVED. A window Windows has ghosted throws keystrokes away,
+								-- so a stall is not a delay: it is lost and doubled input. Every
+								-- line must be in the pane exactly once, whole, and in the order
+								-- it was typed.
+							l_each_once := True
+							l_in_order := True
+							l_last_at := 0
+							from
+								l_i := 1
+							until
+								l_i > Freeze_posts
+							loop
+								l_hits := 0
+								l_at := 0
+								l_k := 0
+								across l_app.view.thread.messages as m loop
+									l_k := l_k + 1
+									if m.text.has_substring (freeze_line (l_i)) then
+										l_hits := l_hits + 1
+										l_at := l_k
+									end
+								end
+								if l_hits /= 1 then
+									l_each_once := False
+									l_transcript.append ("      line " + l_i.out + " is in the pane " + l_hits.out + " time(s)%N")
+								end
+								if l_at <= l_last_at then
+									l_in_order := False
+								end
+								l_last_at := l_at
+								l_i := l_i + 1
+							variant
+								Freeze_posts + 1 - l_i
+							end
+							l_all_intact := l_each_once and l_in_order and l_app.view.shown_count = Freeze_posts
+							l_transcript.append ("    INPUT " + Freeze_posts.out + " distinct lines: "
+								+ l_app.view.shown_count.out + " shown, each exactly once: " + l_each_once.out
+								+ ", in the order typed: " + l_in_order.out + "%N")
+							l_transcript.append ("    ALLOC worst allocation burst " + l_alloc_worst.out
+								+ " ms (tick " + l_alloc_worst_at.out + ")%N")
+							l_transcript.append ("    the pane took " + l_app.presenter.pages_pumped.out + " page(s) and showed "
+								+ l_app.view.shown_count.out + " event(s)%N")
+							if l_app.presenter.is_room_open then
+								l_app.presenter.close_room
+							end
+						end
+					end
+				else
+					l_transcript.append ("    /health never alive after " + l_tries.out + " probes%N")
+				end
+					-- Teardown first: no assert may strand the scratch server.
+				if l_server.is_running then
+					l_server.kill.do_nothing
+				end
+				l_server.close
+				l_process.command_output ("taskkill /F /IM " + Scratch_server_name).do_nothing
+				delete_file (client_scratch_toml)
+				print (l_transcript)
+				assert ("the server answered /health with the health shape", l_alive)
+				assert ("the door agent opened a live session", l_logged_in)
+				assert ("the room opened and the poller started", l_opened)
+				assert ("no post ever held the GUI thread past the send budget", l_send_worst <= Slow_send_ms)
+				assert ("no heartbeat held the GUI thread past the tick budget while the room was busy", l_busy_tick_worst <= Slow_tick_ms)
+				assert ("no heartbeat held the GUI thread past the tick budget through a quiet long poll", l_quiet_tick_worst <= Slow_tick_ms)
+				assert ("no allocation on the GUI's own processor waited out a poll", l_alloc_worst <= Slow_tick_ms)
+				assert ("every line typed came back whole, exactly once, in the order it was typed", l_all_intact)
+			end
+		end
+
+	freeze_line (a_index: INTEGER): STRING_32
+			-- One of the rapid-fire lines: two digits, so no line's mark is a prefix of
+			-- another's, and long enough that a truncation could not hide.
+		require
+			in_range: a_index >= 1 and a_index <= Freeze_posts
+		do
+			create Result.make (72)
+			Result.append ({STRING_32} "freeze line ")
+			if a_index < 10 then
+				Result.append_character ('0')
+			end
+			Result.append_string_general (a_index.out)
+			Result.append ({STRING_32} " of 20 - the quick brown fox jumps over the lazy dog")
+		ensure
+			marked: Result.has_substring ({STRING_32} "freeze line ")
+		end
+
+	Freeze_posts: INTEGER = 20
+			-- Lines sent as fast as the composer could ever send them.
+
+	Freeze_quiet_ticks: INTEGER = 140
+			-- 250 ms apart: 35 s, longer than a whole 25 s long poll, with nobody speaking.
+
+	Slow_tick_ms: INTEGER_64 = 250
+			-- A heartbeat that takes longer than the heartbeat's own period has stopped the window.
+
+	Slow_send_ms: INTEGER_64 = 1000
+			-- One loopback POST; a second is already a stutter a member would see.
+
+	freeze_now_ms: INTEGER_64
+			-- Milliseconds off the machine's high-resolution counter: the clock the
+			-- GUI thread is measured against, since a 250 ms budget is below the
+			-- resolution of a wall clock in seconds.
+		external
+			"C inline use <windows.h>"
+		alias
+			"LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (EIF_INTEGER_64) ((c.QuadPart * 1000) / f.QuadPart);"
+		end
+
 feature {NONE} -- Non-ASCII fixtures (Phase 4 Task 9b)
 
 	hebrew_file_name: STRING_32

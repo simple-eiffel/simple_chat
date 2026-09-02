@@ -183,6 +183,12 @@ feature {NONE} -- Initialization
 			run_test (agent (create {WIRING_ASSAULT}).test_tray_notifier_counts_with_or_without_a_shell, "tray_notifier_counts_with_or_without_a_shell")
 			run_test (agent (create {WIRING_ASSAULT}).test_live_client_stack_round_trip, "live_client_stack_round_trip")
 			run_test (agent (create {WIRING_ASSAULT}).test_live_client_app_shows_an_event_in_the_real_pane, "live_client_app_shows_an_event_in_the_real_pane")
+			run_test (agent (create {WIRING_ASSAULT}).test_live_gui_latency_through_a_quiet_poll, "live_gui_latency_through_a_quiet_poll")
+
+			print ("=== THE FREEZE (phase4/freeze) ===%N")
+			run_test (agent (create {FREEZE_ASSAULT}).test_an_eiffel_sleep_on_another_processor_never_stops_the_allocator, "an_eiffel_sleep_on_another_processor_never_stops_the_allocator")
+			run_test (agent (create {FREEZE_ASSAULT}).test_a_blocking_c_call_on_another_processor_stops_the_allocator, "a_blocking_c_call_on_another_processor_stops_the_allocator")
+			run_test (agent (create {FREEZE_ASSAULT}).test_the_gui_keeps_its_frame_while_the_poller_polls, "the_gui_keeps_its_frame_while_the_poller_polls")
 
 			print ("=== THE VISIBLE CLIENT (Phase 4 Task 10) ===%N")
 			run_test (agent (create {WINDOW_ASSAULT}).test_view_shows_events_in_order_and_never_twice, "view_shows_events_in_order_and_never_twice")
