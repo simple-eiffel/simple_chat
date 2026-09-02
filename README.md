@@ -20,8 +20,11 @@ screen; bubble height is the layout's own `total_height`, never a line count tim
 `LOGIN_WINDOW` is the door (server, name, masked password, remember-me, and one line that says why
 the last attempt was refused). `CLIENT_APP` assembles it: locate the server, try the session this PC
 remembers (`GET /me` proves it), else the door; open the first room; run the pane whose 250 ms
-heartbeat is one `CHAT_PRESENTER.pump` on the GUI processor while the poller blocks on its own.
-A live test drives that whole path — the real poller, the real pane — against the booted server exe.
+heartbeat is one `CHAT_PRESENTER.pump` on the GUI processor while the poller polls on its own.
+A live test drives that whole path — the real poller, the real pane — against the booted server exe,
+and times every frame: **no exchange this client makes is held open**, because ISE's collector stops
+every thread in the system and a thread inside an unmarked `external "C inline"` call cannot be
+stopped, so a held connection freezes the window at its next allocation (`EVENT_POLLER.Poll_slice_seconds`).
 
 What no headless assault can prove is that the **pixels** are right; that is `RUNBOOK.md`, and it is
 the one thing still owed. Two limits are stated rather than hidden: an image event is shown as a
@@ -32,7 +35,7 @@ bar (simple_shell publishes no `SetWindowText`).
 ## What it will be
 
 - **Server** (`simple_chat_server.exe`): runs as a background service on the host's PC, bound to `127.0.0.1`, reached from the internet through a swappable *front door* (Caddy today, an Eiffel TLS door later) and a dynamic-DNS name. SQLite store, append-only event log with global monotonic ids, sessions as hashed random tokens, PBKDF2 passwords (600,000 iterations, `simple_encryption` 2.0.0).
-- **Client** (`simple_chat.exe`): a thick `simple_widgets` application — no browser, no WebView, no HTML anywhere. It *finds* its server: the local service first, then the configured primary, then any standby host. Live updates arrive by long-poll on the server's doorbell; Hebrew, Greek and emoji render natively once `simple_shaping` lands.
+- **Client** (`simple_chat.exe`): a thick `simple_widgets` application — no browser, no WebView, no HTML anywhere. It *finds* its server: the local service first, then the configured primary, then any standby host. Live updates arrive on the server's doorbell, polled a slice at a time so the window never waits on a held connection; Hebrew, Greek and emoji render natively once `simple_shaping` lands.
 - **Participants**: `Claude:` / `ROBOT:` (Claude Code on the host's subscription), `@tools-larry` (Bible tools, no AI, argv-allowlisted), `@shape-larry`, `@qwen` (Ollama). Every one is an ordinary member with a 🤖 identity marker enforced as a class invariant, its own rate limit, and its own engine. Chat text never reaches a shell string.
 - **Bot API**: JSON over HTTP with Bearer tokens, so a friend's PC can run its own participant.
 

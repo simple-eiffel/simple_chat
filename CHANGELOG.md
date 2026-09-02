@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The window froze for up to twenty-five seconds at a time after a few posts**
+  (`src/client/event_poller.e`). Thirteen stalls in one twenty-minute session,
+  211.6 s frozen in all, every one of them just under `Max_wait_seconds` — and
+  the stored messages showed the cost was not delay but *lost input*: lines cut
+  off mid-sentence, lines missing their first characters, doubled letters and
+  words. Windows ghosts a window that stops pumping for about five seconds and
+  discards the keystrokes aimed at the ghost, so no amount of catching up
+  afterwards can recover them.
+
+  It was not this project's concurrency. Every separate call the GUI makes on
+  the inbox came back inside 2 ms while it was happening. **ISE's garbage
+  collector stops every thread in the system before it collects, and a thread
+  inside a plain `external "C inline"` call is where the runtime cannot see it
+  or stop it** — so a collection waits for that call to return, and the GUI
+  freezes at its very next allocation. `SIMPLE_WINHTTP.c_send` carries no
+  `blocking` marker, and one exchange was a whole 25-second long poll. Measured
+  on the live stack: a pure allocation burst on the GUI's processor took
+  **21,058 ms**, while the heartbeat itself took 3 ms. The same wait spent in
+  `EXECUTION_ENVIRONMENT.sleep` instead costs the GUI **1 ms**.
+
+  `EVENT_POLLER.run` now polls in slices of `Poll_slice_seconds` (added, 0)
+  rather than `{CHAT_CLIENT}.Max_wait_seconds`. `CHAT_REQUEST_HANDLER.handle_wait`
+  holds the doorbell only while `seconds` > 0, so an exchange is now one round
+  trip and one round trip is the most the window can ever be stopped for: the
+  worst allocation through a quiet poll fell from 21,058 ms to **1 ms**. No
+  contract was touched — `poll_once`'s `seconds_in_range` admits 0, and
+  `pause_seconds` keeps its `Quiet_floor_seconds` of 1, which is now what paces
+  a quiet room. The price is the doorbell: the *first* message into a room that
+  has gone silent can arrive up to a second late; everything after it is
+  immediate again, because a page resets `quiet_polls`.
+
+  The one-line change that would give the long poll back lives in another
+  repository — mark `SIMPLE_WINHTTP.c_send` `blocking` — and
+  `EVENT_POLLER.Poll_slice_seconds` says so where the next reader will look.
+
+### Added
+
+- **`testing/freeze_assault.e`, `testing/gc_probe.e`,
+  `testing/slow_http_transport.e`, `testing/slow_poll_host.e`** — the regression
+  and the two probes that name the cause. A real `EVENT_POLLER` on its own SCOOP
+  processor over a transport that waits the way the real one waits — inside C —
+  while the root allocates, pumps and posts: every call must return inside a
+  frame (red 892 ms, green 1 ms). Beside it, the same wait spent two ways on a
+  bare processor: an Eiffel sleep costs the root 1 ms, an unmarked C call
+  7,931 ms.
+- **`WIRING_ASSAULT.test_live_gui_latency_through_a_quiet_poll`** — the live
+  bar, against the booted server exe: twenty distinct lines posted as fast as a
+  composer could send them, then 140 heartbeats through a whole quiet poll, with
+  every frame, every post and every allocation timed, and the pane's own bubbles
+  walked to prove each line arrived whole, exactly once, in the order it was
+  typed.
+
 ## [0.1.0] — 2026-09-02
 
 The first installable release: a Windows installer that lays down both halves

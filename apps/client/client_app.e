@@ -19,9 +19,12 @@ note
 		THE HEARTBEAT IS THE PUMP. `SW_WINDOW' fires `on_tick' every 250
 		ms on the ROOT processor - the GUI thread - and `tick' does one
 		`CHAT_PRESENTER.pump' there. That is the whole live path: the
-		poller blocks on its own processor for up to 25 seconds at a time
-		and the window never waits for it, because the inbox is a
-		processor that never blocks.
+		poller never blocks on its own processor for longer than one
+		exchange (EVENT_POLLER.Poll_slice_seconds) and the window never
+		waits for it: the inbox is a processor that never blocks, and no
+		exchange is held open long enough for ISE's collector - which
+		stops every thread of the system - to strand the GUI's allocator
+		behind it.
 
 		THE SESSION CAN DIE UNDER THE WINDOW. When the poller meets a 401
 		the presenter closes the room, drops the token with no exchange

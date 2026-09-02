@@ -1,0 +1,315 @@
+================================================================================
+PHASE 4 - THE FREEZE
+branch phase4/freeze, from main 1c6a52d
+2026-09-02
+================================================================================
+
+The window stopped for twenty seconds at a time after a few posts. Everything
+below was run in the worktree D:/prod/simple_chat_wt_freeze, against a scratch
+server on port 18213 under C:\Users\Public\sc_wiring_test. Larry's own checkout,
+C:\ProgramData\SimpleChat and %APPDATA%\simple_chat were never touched.
+
+
+--------------------------------------------------------------------------------
+1. THE SYMPTOM, AS REPORTED
+--------------------------------------------------------------------------------
+
+From Larry's live sw_session.log (one ~20 minute session): 13 stalls,
+211.6 s frozen in total - 8.3 8.9 9.1 9.9 13.4 14.5 14.7 16.2 21.5 21.9 23.7
+24.7 24.8 s. Every one of them sits just under 25 s, which is
+{CHAT_CLIENT}.Max_wait_seconds, the long poll's own timeout.
+
+The stored messages prove the stalls COST INPUT, not just time: one message cut
+off mid-sentence, the next missing its first characters, others with doubled
+letters and words ("secondss", "wellwell", "yayyay"), and four posts landing in
+the server log inside the same second. That is what Windows does to a window
+that stops pumping for about five seconds: it ghosts it, discards the keystrokes
+aimed at the ghost, and lets held keys auto-repeat into a burst when the real
+window wakes. Nothing an application can buffer gets that back. A fix that
+merely SHORTENS the stall is therefore a failing fix.
+
+
+--------------------------------------------------------------------------------
+2. WHAT IT WAS NOT (measured, not reasoned)
+--------------------------------------------------------------------------------
+
+The four hypotheses the cycle opened with all say the GUI waits on the poller's
+processor or on the inbox's. Every one of them is REFUTED by measurement.
+
+Instrumentation (temporary, since removed): millisecond stamps from
+QueryPerformanceCounter around each of the three separate calls CHAT_PRESENTER.pump
+makes on the inbox (`take_from', `outage_from', `session_lost_from'), around
+CLIENT_APP.tick's two halves (`presenter.pump' and `view.set_unread'), and around
+EVENT_POLLER's `poll_once' and `should_stop', each processor writing its own file.
+
+Live run, 20 posts then 140 heartbeats through a quiet room:
+
+  POLLER  poll_once  25020 ms   quiet=True  quiet_polls=1   (the long poll)
+  POLLER  should_stop    0 ms                                (every iteration)
+  PUMP    take_from        - never once over 20 ms, so never logged
+  PUMP    outage_from      - never once over 20 ms
+  PUMP    session_lost_from- never once over 20 ms
+  TICK    pump + set_unread- never once over 200 ms
+  tick    worst            3 ms
+  send_text worst         24 ms
+
+  H1 (the GUI posts through the poller's client, or reads the poller)  REFUTED
+  H2 (the poller holds the inbox's lock across the poll)               REFUTED
+  H3 (a separate-formal routine held longer than intended)             REFUTED
+  H4 (the poll returns at once and the loop spins)                     REFUTED
+     - the trace shows 25 020 / 25 024 / 25 034 ms polls, honoured exactly,
+       and `pause_seconds' = 1 from the second quiet poll, as contracted.
+
+The GUI's own wiring is clean. Not one call this project makes on another
+processor ever took longer than 3 ms.
+
+
+--------------------------------------------------------------------------------
+3. WHAT IT WAS: THE ROOT PROCESSOR'S ALLOCATOR
+--------------------------------------------------------------------------------
+
+The same live run, with one addition: a pure allocation burst on the root
+(200 x 1 KiB strings into a fresh list), touching nothing of the client's,
+timed beside the heartbeat.
+
+  tick   worst          3 ms
+  ALLOC  worst     21 060 ms      <-- the freeze
+
+The stall is not in the presenter, the inbox, the view or the transport. It is
+in ALLOCATING MEMORY.
+
+ISE's garbage collector stops every thread in the system before it collects. A
+thread that is inside a plain `external "C inline"' call is where the runtime
+cannot see it and cannot stop it, so the collection waits for that call to
+return - and every other processor waits with it, at its next allocation.
+
+SIMPLE_WINHTTP.c_send (D:/prod/simple_winhttp/src/simple_winhttp.e:521) is
+declared
+
+    external "C inline use %"simple_winhttp.h%""
+
+with NO `blocking' marker (grep -c blocking simple_winhttp.e = 0). One exchange
+- the whole of a 25 second long poll - is spent inside it. So while the poller
+holds the connection open, the GUI thread freezes at its very next allocation:
+a string, an MML sequence built by a postcondition, a shaped line.
+
+Two probes separate the two ways a processor can wait (FREEZE_ASSAULT, GC_PROBE).
+Same processor, same duration, nothing else running:
+
+  a processor asleep 9 000 ms through EXECUTION_ENVIRONMENT.sleep
+      worst allocation on the root:        1 ms
+  a processor inside a blocking C call, 3 000 ms at a time
+      worst allocation on the root:    7 931 ms
+
+EXECUTION_ENVIRONMENT.sleep is marked for the runtime and costs the GUI nothing.
+An unmarked C call costs it the whole wait. That is the entire defect.
+
+COROLLARY, and it matters: moving blocking work OFF the GUI processor does not
+help, because the collector stops the GUI wherever the blocking call is issued.
+Only shortening the call helps. The floor for this client is therefore ONE HTTP
+exchange, wherever that exchange is made.
+
+
+--------------------------------------------------------------------------------
+4. THE FIX
+--------------------------------------------------------------------------------
+
+src/client/event_poller.e - ONE body change and ONE added constant. No `require',
+`ensure', `invariant' or signature was touched anywhere in src/.
+
+  ADDED  EVENT_POLLER.Poll_slice_seconds: INTEGER = 0
+         How long ONE exchange may keep the poller inside the transport. The
+         constant carries the whole explanation above in its comment, including
+         the one-line upstream change that would give the long poll back.
+
+  BODY   EVENT_POLLER.run:  poll_once ({CHAT_CLIENT}.Max_wait_seconds)
+                        ->  poll_once (Poll_slice_seconds)
+
+         `poll_once's precondition `seconds_in_range: a_wait_seconds >= 0 and
+         a_wait_seconds <= {CHAT_CLIENT}.Max_wait_seconds' is satisfied by 0, so
+         the contract stands unchanged and is not weakened.
+
+  NOTES  EVENT_POLLER's and CLIENT_APP's class notes no longer promise a 25 s
+         block; both now say what one exchange costs and why.
+
+WHY ZERO AND NOT A SHORTER SLICE. CHAT_REQUEST_HANDLER.handle_wait holds the
+doorbell only while `seconds' > 0 (`if l_reply.is_empty_page and l_seconds > 0'),
+so `seconds=0' is answered at once and the exchange lasts one round trip. Any
+positive slice leaves the poller inside C for that slice: measured on the
+scripted wire, a 2 s slice still stops the root's allocator for 892 ms, and 1 s
+would still be ~500 ms - over the frame budget, and over the ~5 s ghosting
+threshold only at 25. Zero is the only value that bounds the stall by a round
+trip rather than by a held connection.
+
+WHAT IT COSTS. The doorbell, for the first message into a room that has gone
+quiet: `pause_seconds' is `Quiet_floor_seconds' (1 s) from the second quiet poll
+in a row, so that first line can arrive up to a second late. Everything after it
+is immediate again - a page resets `quiet_polls' and `pause_seconds' is 0 once
+more, so a conversation runs at the round trip. The quiet-room poll rate is one
+request per second per member; CHAT_WEB_APP.Max_connections is 64.
+
+THE PROPER FIX, WHICH IS NOT IN THIS REPOSITORY (reported, not done):
+mark SIMPLE_WINHTTP.c_send `blocking' so the runtime releases the collector
+across it. Then `Poll_slice_seconds' can go back to
+{CHAT_CLIENT}.Max_wait_seconds and the long poll returns with no stall at all.
+That is a change to D:/prod/simple_winhttp, outside this cycle's scope.
+
+
+--------------------------------------------------------------------------------
+5. THE ASSAULT - RED, THEN GREEN
+--------------------------------------------------------------------------------
+
+ADDED, all in the tests cluster (no new target; simple_chat_tests is already a
+SCOOP build, which is why TEST_SCOOP_CONSUMER lives there):
+
+  testing/gc_probe.e            GC_PROBE - a processor that waits two ways:
+                                EXECUTION_ENVIRONMENT.sleep, and a plain
+                                `external "C inline"' Sleep. Contracts:
+                                `positive', `done', `non_negative'.
+  testing/slow_http_transport.e SLOW_HTTP_TRANSPORT - HTTP_TRANSPORT that reads
+                                `seconds=' out of the long poll's own URL and
+                                waits that long INSIDE C (capped), then answers
+                                an empty page; a /login answered at once.
+                                Contracts: `positive', `set', `nothing_sent',
+                                `nothing_waited', `non_negative',
+                                `positive_cap', `non_negative_wait'.
+  testing/slow_poll_host.e      SLOW_POLL_HOST - POLLER_HOST's shape over that
+                                transport, running the REAL EVENT_POLLER.run on
+                                its own processor. Contracts: `positive',
+                                `logged_in', `no_inbox', `set', `has_inbox',
+                                `positive_room', `since_non_negative', `ran'.
+  testing/freeze_assault.e      FREEZE_ASSAULT - three tests (below).
+  testing/wiring_assault.e      + test_live_gui_latency_through_a_quiet_poll and
+                                `freeze_line', with contracts `in_range',
+                                `marked'.
+  testing/test_app.e            + 4 run_test lines.
+
+THE HEADLESS ASSAULT (FREEZE_ASSAULT.test_the_gui_keeps_its_frame_while_the_poller_polls)
+A real EVENT_POLLER on its own SCOOP processor over SLOW_HTTP_TRANSPORT, while
+the root does what the heartbeat does - allocate, CHAT_PRESENTER.pump, and
+CHAT_PRESENTER.send - 60 frames 100 ms apart. Budget 50 ms.
+
+  poll_once ({CHAT_CLIENT}.Max_wait_seconds), scripted wire capped at 2 s   RED
+      worst allocation  892 ms   worst pump 1 ms   worst send 2 ms   FAIL
+  poll_once (Poll_slice_seconds = 0)                                      GREEN
+      worst allocation    1 ms   worst pump 1 ms   worst send 2 ms   PASS
+
+THE LIVE ASSAULT (WIRING_ASSAULT.test_live_gui_latency_through_a_quiet_poll)
+The finalized server booted on 18213, CLIENT_APP taken down the path its window
+takes, 20 distinct lines posted as fast as a composer could send them, then 140
+heartbeats 250 ms apart through a whole quiet 25 s poll. Budget 250 ms a frame,
+1000 ms a post.
+
+  poll_once ({CHAT_CLIENT}.Max_wait_seconds)                               RED
+      BUSY  worst send_text  22 ms   worst tick   8 ms
+      QUIET worst tick        3 ms   0 over 250 ms
+      INPUT 20 lines: 20 shown, each exactly once: True, in order: True
+      ALLOC worst allocation burst 21 056 ms (tick 95)                    FAIL
+  poll_once (Poll_slice_seconds = 0)                                     GREEN
+      BUSY  worst send_text  24 ms   worst tick   5 ms
+      QUIET worst tick        2 ms   0 over 250 ms
+      INPUT 20 lines: 20 shown, each exactly once: True, in order: True
+      ALLOC worst allocation burst      1 ms (tick 10)                    PASS
+      the pane took 20 page(s) and showed 20 event(s)
+
+THE TWO PROBES (FREEZE_ASSAULT) hold the law itself and pass either way; they
+are the evidence for WHY, not the regression:
+      an Eiffel sleep of 9000 ms on another processor: worst allocation 1 ms
+      a blocking C call of 3000 ms on another processor: worst allocation 7929 ms
+
+MESSAGE INTEGRITY, the hardened bar: the live assault posts 20 lines that are
+distinct, two-digit marked (so no line's mark is a prefix of another's) and long
+enough that a truncation could not hide, then walks the REAL SW_CHAT_THREAD's
+bubbles and proves each is there EXACTLY ONCE and in the order it was typed,
+with `shown_count' equal to the number posted. Nothing truncated, nothing
+doubled, nothing out of order - red run and green run alike, because the
+headless harness has no Windows window for the shell to ghost. The bound that
+protects the real window is the frame bound above.
+
+
+--------------------------------------------------------------------------------
+6. BUILDS - FOREGROUND, ONE AT A TIME, F_code
+--------------------------------------------------------------------------------
+
+/d/prod/ec.sh test -config simple_chat.ecf -target <t>   (finalize -keep -c_compile)
+
+  simple_chat_server          Built: EIFGENs/simple_chat_server/F_code/simple_chat.exe
+  simple_chat_tests           Built: EIFGENs/simple_chat_tests/F_code/simple_chat.exe
+  simple_chat_doorbell_tests  Built: EIFGENs/simple_chat_doorbell_tests/F_code/simple_chat.exe
+  simple_chat_client          Built: EIFGENs/simple_chat_client/F_code/simple_chat.exe
+
+EXE TIMESTAMPS after the final build of each (stale-exe check: ec.sh's own
+verify_binary refuses anything older than 60 s, and each line below was written
+by that check):
+
+  simple_chat_server           2026-09-02 17:18:37
+  simple_chat_tests            2026-09-02 18:11:28
+  simple_chat_doorbell_tests   2026-09-02 18:16:09
+  simple_chat_client           2026-09-02 18:17:06
+
+WARNINGS
+
+  simple_chat_tests            grep -ic warning: 0
+  simple_chat_doorbell_tests   grep -ic warning: 3
+  simple_chat_client           grep -ic warning: 3
+
+  The 3 are ONE pre-existing note, not a per-class warning: "Obsolete feature
+  calls are detected, but not reported due to project configuration settings"
+  (simple_toml's own `as_string_8', which the ECF already suppresses). PROVED
+  PRE-EXISTING: `git stash push -u`, `rm -rf EIFGENs/simple_chat_doorbell_tests`,
+  clean build of the base tree -> the same 3 lines. Incremental builds do not
+  emit it at all, which is why the tests target shows 0. ZERO NEW WARNINGS.
+
+  cairo.dll (D:/prod/simple_cairo/cairo.dll) was copied beside the tests exe
+  before every run: the tests target links the chat window through simple_cairo's
+  IMPORT library, so a missing DLL is a launch failure, not a degraded run.
+  ec.sh wipes F_code on every build, so the copy is per build, not once.
+
+
+--------------------------------------------------------------------------------
+7. TOTALS
+--------------------------------------------------------------------------------
+
+  simple_chat_tests           188 passed, 0 failed   (184 before + 4)
+  simple_chat_doorbell_tests    6 passed, 0 failed   (unchanged)
+
+  The 4 added:
+    live_gui_latency_through_a_quiet_poll
+    an_eiffel_sleep_on_another_processor_never_stops_the_allocator
+    a_blocking_c_call_on_another_processor_stops_the_allocator
+    the_gui_keeps_its_frame_while_the_poller_polls
+
+
+--------------------------------------------------------------------------------
+8. STOPPED / REPORTED
+--------------------------------------------------------------------------------
+
+ [!] NO CONTRACT WAS CHANGED. In particular `pause_seconds's
+     `eager_when_busy: (consecutive_failures = 0 and quiet_polls <= 1) implies
+     Result = 0' and EVENT_POLLER.make's `quiet: backoff_seconds = 0 and
+     pause_seconds = 0' were read before the fix was chosen and left alone: the
+     fix needed neither. `Quiet_floor_seconds' keeps its value of 1.
+
+ [!] THE UPSTREAM FIX IS NOT IN THIS REPOSITORY. SIMPLE_WINHTTP.c_send must be
+     marked `blocking' for the long poll to be safe at any length. That is
+     D:/prod/simple_winhttp, and this cycle was scoped to
+     D:/prod/simple_chat_wt_freeze, so it was NOT done. Everything needed to do
+     it is in section 3, and EVENT_POLLER.Poll_slice_seconds's comment says what
+     to change back afterwards.
+
+ [!] THE GUI STILL POSTS SYNCHRONOUSLY, on its own processor
+     (CHAT_PRESENTER.send -> CHAT_CLIENT.post_message). Measured on loopback:
+     22-27 ms. That is the same blocking C call, so over a slow link the window
+     stops for the length of one POST. Moving it to another processor would NOT
+     help - see the corollary in section 3 - so the only cures are the upstream
+     `blocking' marker or an asynchronous send, and neither is this cycle's.
+     REPORTED, not done.
+
+ [!] The resize re-wrap path was not touched, as instructed.
+
+ [!] .eiffel-workflow/spec/10-ADDENDUM-THICK-CLIENT.md and
+     11-ADDENDUM-PHASE1B-SCOOP.md still say the poller blocks for up to 25 s.
+     The specs are the orchestrator's; they are NOT edited here. The law they
+     need is: NO PROCESSOR MAY SIT INSIDE AN UNMARKED BLOCKING EXTERNAL FOR
+     LONGER THAN THE GUI CAN AFFORD TO WAIT FOR A COLLECTION - because ISE's
+     collector stops every thread, the GUI's included, wherever the call is made.
