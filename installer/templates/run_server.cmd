@@ -18,6 +18,7 @@ REM check writes its finding to server.log, which is the only place anyone will
 REM look after a silent failure at boot.
 REM ===========================================================================
 setlocal
+set "SYS=%SystemRoot%\System32"
 set "ROOT=%ProgramData%\SimpleChat"
 set "PORT=8090"
 
@@ -27,7 +28,7 @@ if not exist "%ROOT%\data" mkdir "%ROOT%\data"
 cd /d "%ROOT%" || exit /b 1
 
 if exist "%ROOT%\server.toml" (
-    for /f "tokens=2 delims==" %%P in ('findstr /r /c:"^ *port *=" "%ROOT%\server.toml"') do (
+    for /f "tokens=2 delims==" %%P in ('"%SYS%\findstr.exe" /r /c:"^ *port *=" "%ROOT%\server.toml"') do (
         for /f "tokens=1" %%Q in ("%%P") do set "PORT=%%Q"
     )
 )
@@ -37,7 +38,7 @@ echo ===== started %DATE% %TIME% ===== >> "%ROOT%\server.log"
 
 REM --- port collision, named in the log rather than left as a mystery -------
 set "HOLDER="
-for /f "usebackq delims=" %%H in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+for /f "usebackq delims=" %%H in (`"%SYS%\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command ^
   "$c = Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $p = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; if ($p) { '{0} (PID {1})' -f $p.ProcessName, $c.OwningProcess } else { 'PID {0}' -f $c.OwningProcess } }"`) do set "HOLDER=%%H"
 
 if defined HOLDER (

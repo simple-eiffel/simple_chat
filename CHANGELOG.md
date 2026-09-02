@@ -111,6 +111,22 @@ of the system, so hosting the room no longer means building from source.
   admin-only so a standard user cannot rewrite the executable an elevated
   `/rl highest` logon task launches.
 
+- **Every Windows tool is now called by full path.** `C:\Windows\System32` is
+  not on the PATH on Larry's PC, so every launcher failed with *'chcp' is not
+  recognized as an internal or external command* - and `tasklist`, `taskkill`,
+  `findstr`, `find`, `powershell`, `wscript` and `notepad` would all have failed
+  the same way, silently changing what each script did. All eight `.cmd` files
+  now resolve through `%SystemRoot%\System32`, the VBS launches `%ComSpec%`
+  rather than a bare `cmd`, and the Start Menu config shortcut uses
+  `{sys}
+otepad.exe`.
+- **A capitalised username is converted, not refused.** Usernames are a-z only,
+  and typing `Larry` got the bare refusal *the username must be 1..32 characters
+  of a-z, 0-9 and underscore* with no hint of what to do. Both wrappers now
+  lowercase it in pure batch (no external tool - see above) and echo the name
+  being used. Capitals belong in the display name, which is prompted separately
+  and accepts any language.
+
 ### Changed
 
 - `RUNBOOK.md` §1 — the `--create-admin` invocation is corrected. It showed the
