@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The sign-in door's refusal line is an ordinary UI label again**
+  (`apps/client/login_window.e`). It carried a nominal size of 9.0 as a
+  workaround for a simple_widgets defect - a wrapped `SW_LABEL` stepped its
+  lines by `size + 9.0` while painting at `size * text_scale`. simple_widgets
+  0.4.0 derives the step from the measured font metrics at the painted size,
+  so the workaround and its constant are gone; the line is drawn at the form's
+  size like every other label on it. The same release gives every window built
+  on the library Vision2's spacing model - a border between the window edge and
+  its content, padding between siblings, an inner inset in every control, and
+  control minimum sizes that follow the font - which this client inherits
+  without a change, because it never set spacing of its own.
+
 ### Added
 
 - **`--reset-password <username> [config.toml]`** on the server executable
