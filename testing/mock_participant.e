@@ -34,6 +34,11 @@ feature {NONE} -- Initialization
 feature -- Access
 
 	scripted_text: STRING_32
+
+	last_request: detachable PARTICIPANT_REQUEST
+			-- What `answer' was asked last - the assault reads its `text' and
+			-- its `context_lines' to see what the dispatcher handed over.
+
 	should_fail: BOOLEAN
 	should_raise: BOOLEAN
 			-- Raise inside `answer' (an engine that breaks its "never raises"
@@ -65,6 +70,7 @@ feature -- Basic operations
 				create l_boom
 				l_boom.raise
 			end
+			last_request := a_request
 			calls := calls + 1
 			if should_fail then
 				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, "scripted failure", 503))

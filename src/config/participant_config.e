@@ -6,6 +6,10 @@ note
 		model or the working directory - is given at creation and every
 		change keeps it, so an entry that cannot be built cannot exist. The
 		limits are positive (a zero hourly limit cannot reach the limiter).
+		`context_messages' - how many recent room messages come with a
+		request, so the participant can follow a conversation - is the one
+		setting allowed to be zero: zero is a participant with no memory of
+		the turn before, which is exactly what some entries want.
 		Aliases and `via' choices are sets, lowercase and shaped as
 		PARTICIPANT_RULES demands. The bot's display name is given without
 		the marker and read with it (`marked_display_name'): the member the
@@ -43,6 +47,7 @@ feature {NONE} -- Initialization
 			requests_per_hour := 5
 			max_characters := 1200
 			timeout_seconds := 120
+			context_messages := {PARTICIPANT_RULES}.Default_context_messages
 			create executable.make_empty
 			create database.make_empty
 			create model.make_empty
@@ -101,6 +106,8 @@ feature -- Access
 	requests_per_hour: INTEGER
 	max_characters: INTEGER
 	timeout_seconds: INTEGER
+	context_messages: INTEGER
+			-- Recent room messages given with a request; 0 for no memory.
 	executable: STRING_32
 	database: STRING_32
 	model: STRING_32
@@ -212,6 +219,19 @@ feature -- Element change
 			still_complete: is_complete_for_kind
 		end
 
+	set_context_messages (a_count: INTEGER)
+			-- How many recent room messages this participant is given with a
+			-- request; 0 takes the window away.
+		require
+			in_range: a_count >= 0 and a_count <= {PARTICIPANT_RULES}.Context_maximum
+		do
+			context_messages := a_count
+		ensure
+			set: context_messages = a_count
+			lists_unchanged: aliases_model |=| old aliases_model and allow_via_model |=| old allow_via_model
+			still_complete: is_complete_for_kind
+		end
+
 	set_shapers (a_query_shaper, a_response_shaper: READABLE_STRING_GENERAL)
 		require
 			known: is_known_shaper_name (a_query_shaper) and is_known_shaper_name (a_response_shaper)
@@ -307,6 +327,7 @@ invariant
 	known_kind: is_known_kind (kind)
 	complete: is_complete_for_kind
 	limits_positive: requests_per_hour > 0 and max_characters > 0 and timeout_seconds > 0
+	context_in_range: context_messages >= 0 and context_messages <= {PARTICIPANT_RULES}.Context_maximum
 	shapers_known: is_known_shaper_name (query_shaper) and is_known_shaper_name (response_shaper)
 	aliases_shaped: across aliases as ic all (create {PARTICIPANT_RULES}).is_valid_alias (ic) and ic.same_string (ic.as_lower) and not ic.same_string (handle) end
 	via_shaped: across allow_via as ic all (create {PARTICIPANT_RULES}).is_via_choice (ic) end

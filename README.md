@@ -9,7 +9,9 @@ design with its contracts (preconditions, postconditions, invariants, MML model 
 conditions) is implemented and exercised by an assault suite, and Phase 4 implementation Tasks 1–10
 are complete. The server runs — accounts, rooms, messages, images, history, SQLite persistence, SSE
 streams for bots and curl, a per-IP lockout keyed by the real peer, the Caddy front door and DuckDNS
-updater, and a live `@claude` participant that answers in the room through a sandboxed `claude -p`
+updater, and a live `@claude` participant that answers in the room through a sandboxed `claude -p` -
+addressed by its handle **anywhere in a message** (`hello @Claude what is 2+2`), carrying the room's
+last `context_messages` messages into every turn
 (proven end to end over HTTP). The client stack has run a live round trip over WinHTTP (login, post,
 **images**, events, logout) with the session remembered as a DPAPI blob and a tray notifier.
 

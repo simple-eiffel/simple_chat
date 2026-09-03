@@ -204,6 +204,66 @@ engine runs. Then a bubble from `Claude:` carrying the 🤖 marker its class inv
 requires. It runs on the host's own Claude Code subscription, sandboxed; expect a few
 seconds.
 
+### Where the handle may stand — the addressing rule
+
+The handle does **not** have to start the line. A message addresses a participant when,
+**anywhere in its text**, an `@` stands that is *not itself preceded by a handle
+character* (`a-z`, `0-9`, `_`, `-`), the unbroken run of handle characters after it
+**equals** that participant's handle or one of its `@`-shaped aliases, and that run
+**ends the text or is followed by a character that is not a handle character**. Case
+never matters.
+
+| Message | Addresses `@claude`? |
+| --- | --- |
+| `@Claude what is 2+2` | yes — at the start |
+| `hello @Claude what is 2+2` | yes — in the middle |
+| `and times 3 @claude` | yes — at the end |
+| `@claude:` / `@Claude,` / `so what @claude?` / `(@CLAUDE)` | yes — the mark after it is not a handle character |
+| `hi @claudette` | **no** — the run is `claudette`, a different word |
+| `hi @claude_bot` | **no** — `_` is a handle character, so the run is `claude_bot` |
+| `write to bob@claude` | **no** — the `@` follows a handle character |
+| a bot's own message naming `@claude` | **no** — bot-authored events are never requests, so nothing can loop |
+
+Name **two** bots in one message and **both** answer, each exactly once, in the order
+they are named. The same message delivered twice still answers once per bot.
+
+A colon alias (`Claude:`, `ROBOT:`) keeps the older rule: it addresses only at the very
+**start** of the message, because anywhere else it is an ordinary word.
+
+The handle is taken **out of the question**: `hello @Claude what is 2+2` reaches the
+engine as `hello what is 2+2`, and `so what @claude?` as `so what?`.
+
+### Memory — `context_messages`
+
+Each `[[participants]]` entry may say how many of the room's **most recent messages**
+come with every request:
+
+```toml
+context_messages = 12    # optional, 0..50; 12 when not given
+```
+
+The dispatcher reads them from the room itself, oldest first, each prefixed by its
+sender's display name — the bot's own replies included — and puts them in front of the
+question, so a follow-up (`and its cube root?`) is answerable. It is read from the
+store, not from anything the dispatcher remembers, so it survives a restart and holds
+the room's last N messages whether or not the bot was there when they were posted.
+`context_messages = 0` takes the window away and the prompt is exactly what it was
+before. Tool participants (`bible_tool`, `shape_tool`) ignore the window: they answer a
+lookup, not a conversation.
+
+Under that, `@claude` also continues the room's **CLI session** with
+`claude -p --resume <session id>`, kept per room, so one room never continues another's.
+A turn that answered nothing drops the kept session and the next turn starts fresh on
+the context window alone.
+
+> **Known, on `main` as well as here:** the dispatcher answers the **first** `claude -p`
+> of a server run and then freezes on the **second** — no child process is started, no
+> error is logged, and the rest of the server keeps serving. Reproduced with two leading
+> `@claude` turns on `main`'s own binary, and with a *second participant's first* call,
+> so it is neither `--resume` nor the context window nor the addressing rule. Until it is
+> fixed (it is below simple_chat, in the process/engine path), an on-going conversation
+> cannot be demonstrated end to end — restarting the server restores one answer.
+
 ---
 
 ## 5. THE ACCEPTANCE LINE — the reason this task waited a month
