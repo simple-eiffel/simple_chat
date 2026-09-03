@@ -6,10 +6,29 @@ note
 		is lost, and nothing it blocks on is shared with the GUI.
 
 		`poll_once' is the unit of work: one wait_for_events from `cursor',
-		and `run' asks for `Poll_slice_seconds' of it - never more, because
-		the whole of an exchange is spent inside a C call the garbage
-		collector cannot interrupt, and every processor in the system,
-		the GUI's included, stops at its next allocation until it returns.
+		and `run' asks for the whole of {CHAT_CLIENT}.Max_wait_seconds of
+		it - the doorbell, held open, so a line typed in another window
+		reaches this one on the round trip that carries it rather than a
+		heartbeat later.
+
+		HOLDING THE EXCHANGE IS SAFE BECAUSE THE TRANSPORT SAYS SO.
+		SIMPLE_WINHTTP.c_send is marked `external "C blocking inline"'
+		(simple_winhttp 0.1.1): the marker tells the runtime this thread
+		has left Eiffel, so ISE's collector - which stops every thread of
+		the system before it collects - runs without waiting for the
+		exchange to come back, and no other processor waits either. The
+		real 25 s poll costs the GUI's allocator 1 ms.
+
+		HISTORY, not a live constraint. Before that marker the same poll
+		froze the window at its very next allocation for the REST of the
+		poll - 21,058 ms measured on the live stack, 2026-09-02 - and this
+		class answered it with a `Poll_slice_seconds' of 0, buying the frame
+		back at the price of the doorbell. The slice is gone. The law it was
+		written for is not: NO PROCESSOR MAY SIT INSIDE AN UNMARKED C
+		EXTERNAL LONGER THAN THE GUI CAN AFFORD TO WAIT FOR A COLLECTION, so
+		a transport swapped in under HTTP_TRANSPORT must have its externals
+		read before this loop is trusted with it.
+
 		A page with news is handed to the EVENT_INBOX as the raw bytes it
 		came in (`deliver' - the inbox copies them; nothing but bytes
 		crosses), and the cursor moves to the page's last id only when
@@ -29,10 +48,9 @@ note
 		Successes have a floor too: from the second quiet poll in a row
 		(nothing came) `run' waits `Quiet_floor_seconds' (`pause_seconds'),
 		so a server that answers an empty page at once is not polled in a
-		tight loop. Since `Poll_slice_seconds' is 0 - see the constant for
-		why the GUI's allocator cannot afford a held connection - that
-		floor is what paces a quiet room, and what a first message into
-		one may cost.
+		tight loop. A server that honors `seconds' never answers quiet in
+		under `Max_wait_seconds', so that floor is a guard against a server
+		that does not, and a healthy room never pays it.
 
 		The inbox is held only for the moment of a call that names it
 		(`should_stop', `wait_for_room', `deliver', `report',
@@ -207,9 +225,11 @@ feature -- Basic operations
 
 	run
 			-- The loop: until the inbox says stop or the session is lost, poll for
-			-- `Poll_slice_seconds', then wait out `pause_seconds'. Blocks the caller's processor
-			-- for as long as it runs - the poller's own, by design - but never blocks it INSIDE
-			-- THE TRANSPORT for longer than one slice, which is what the GUI's allocator pays for.
+			-- {CHAT_CLIENT}.Max_wait_seconds, then wait out `pause_seconds'. Blocks the caller's
+			-- processor for as long as it runs - the poller's own, by design - and blocks it
+			-- INSIDE THE TRANSPORT for the whole of each exchange, which costs no other
+			-- processor anything: `c_send' is marked `blocking', so a collection may run while
+			-- this thread waits. See the class note for the 2026-09-02 defect that was not so.
 		local
 			l_env: EXECUTION_ENVIRONMENT
 		do
@@ -218,7 +238,7 @@ feature -- Basic operations
 			until
 				session_lost or else should_stop (inbox)
 			loop
-				poll_once (Poll_slice_seconds)
+				poll_once ({CHAT_CLIENT}.Max_wait_seconds)
 				if pause_seconds > 0 and then not session_lost and then not should_stop (inbox) then
 					l_env.sleep (pause_seconds.to_integer_64 * Nanoseconds_per_second)
 				end
@@ -237,32 +257,6 @@ feature -- Constants
 
 	Quiet_floor_seconds: INTEGER = 1
 			-- What a quiet poll costs after the first in a row: enough to end a tight loop, too little to notice.
-
-	Poll_slice_seconds: INTEGER = 0
-			-- How long ONE exchange may keep this processor INSIDE THE TRANSPORT.
-			--
-			-- ISE's collector stops every thread in the system before it collects, and a
-			-- thread inside a plain `external "C inline"' call - which is what
-			-- SIMPLE_WINHTTP.c_send is for the whole of an exchange - is where the runtime
-			-- cannot see it and cannot stop it. So a collection anywhere in the system waits
-			-- for this processor's exchange to come back, and the GUI's very next allocation
-			-- - a string, an MML sequence in a postcondition, a shaped line - waits with it.
-			-- A 25 s long poll therefore froze the window for up to 25 s at a time (measured
-			-- on the live stack: 21,058 ms, while every call this class makes on the inbox
-			-- came back inside 2 ms). That is the defect phase4/freeze was opened for, and
-			-- nothing about it is this project's own concurrency: an Eiffel sleep of the same
-			-- length on the same processor costs the root 1 ms.
-			--
-			-- Zero asks the server to answer NOW - CHAT_REQUEST_HANDLER.handle_wait holds the
-			-- doorbell only while `seconds' > 0 - so an exchange lasts one round trip, and one
-			-- round trip is the most the window can ever be stopped for. What it costs is the
-			-- doorbell: the FIRST message into a room that has gone quiet arrives up to
-			-- `Quiet_floor_seconds' late instead of at once. Everything after it is immediate
-			-- again, because a page resets `quiet_polls' and `pause_seconds' is 0 once more.
-			--
-			-- The one-line change that would give both back lives in another repository: mark
-			-- SIMPLE_WINHTTP.c_send `blocking', so the runtime releases the collector across
-			-- it. Then, and only then, this may go back to {CHAT_CLIENT}.Max_wait_seconds.
 
 	Nanoseconds_per_second: INTEGER_64 = 1000000000
 

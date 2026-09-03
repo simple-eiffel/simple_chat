@@ -313,3 +313,281 @@ WARNINGS
      need is: NO PROCESSOR MAY SIT INSIDE AN UNMARKED BLOCKING EXTERNAL FOR
      LONGER THAN THE GUI CAN AFFORD TO WAIT FOR A COLLECTION - because ISE's
      collector stops every thread, the GUI's included, wherever the call is made.
+
+
+================================================================================
+PART 2 - THE LONG POLL RESTORED
+branch phase4/long-poll, from main c8d0619
+2026-09-02
+================================================================================
+
+Part 1 ended with a workaround and a note saying what would retire it: mark
+SIMPLE_WINHTTP.c_send `blocking'. That landed upstream as simple_winhttp 0.1.1
+(main @ 22c8435):
+
+    external
+        "C blocking inline use %"simple_winhttp.h%""
+
+This part puts the long poll back, repairs the two places where the harness had
+stopped telling the truth, and measures the whole thing against BOTH library
+versions. Everything below was run in D:/prod/simple_chat_wt_longpoll against a
+scratch server on port 18213 under C:\Users\Public\sc_wiring_test. Larry's own
+checkout, C:\ProgramData\SimpleChat and %APPDATA%\simple_chat were never
+touched, and neither was D:/prod/simple_winhttp - the 0.1.0 comparison was built
+from `git show fe62d36:src/simple_winhttp.e' into a scratch copy outside both
+repositories, and the ECF was pointed back before anything was committed.
+
+
+--------------------------------------------------------------------------------
+1. THE POLLER - THE FORM IT TOOK, AND WHY
+--------------------------------------------------------------------------------
+
+  BODY   EVENT_POLLER.run:  poll_once (Poll_slice_seconds)
+                        ->  poll_once ({CHAT_CLIENT}.Max_wait_seconds)
+
+  GONE   EVENT_POLLER.Poll_slice_seconds. RETIRED, not re-pointed at the
+         maximum. A constant whose name says "slice" and whose only honest value
+         is the whole is not a knob, it is a lie with a number attached. The knob
+         that survives is the one the class already had and never lost:
+         `poll_once's own `a_wait_seconds' argument, still bound by
+         `seconds_in_range: a_wait_seconds >= 0 and a_wait_seconds <=
+         {CHAT_CLIENT}.Max_wait_seconds'. Every caller that wants a shorter
+         exchange - the tests do - asks for one there. If a future transport
+         ever needs pacing again, the pacing belongs to that transport, not to a
+         constant in the poller that no longer knows why it exists.
+
+  NOTES  EVENT_POLLER's class note, `run's header, and CLIENT_APP's class note
+         now say the current truth in this order: the exchange is held open; it
+         is SAFE to hold because the transport's external is marked `blocking';
+         and the 2026-09-02 freeze is named as HISTORY, with its measurement,
+         so the next reader knows what the marker is protecting them from. The
+         law is restated where it still binds: NO PROCESSOR MAY SIT INSIDE AN
+         UNMARKED C EXTERNAL LONGER THAN THE GUI CAN AFFORD TO WAIT FOR A
+         COLLECTION - so a transport swapped in under HTTP_TRANSPORT must have
+         its externals read before this loop is trusted with it.
+
+  WHAT COMES BACK. The doorbell. A message into a quiet room arrives on the
+  round trip that carries it instead of up to `Quiet_floor_seconds' (1 s) later,
+  and a quiet room costs one request per member per 25 s instead of one per
+  second - a 25x drop in idle load on CHAT_WEB_APP's 64 connections.
+
+  NO CONTRACT CHANGED. Snapshot before and after, line numbers stripped:
+      grep -h "require|ensure|invariant" src/*/*.e apps/*/*.e   ->  1093 lines
+      diff before after                                          ->  EMPTY
+      git diff main -- src apps | grep -E '^-\s+[a-z_][a-z_0-9]*:\s'  ->  none
+
+
+--------------------------------------------------------------------------------
+2. THE FIXTURE - IT WAS FAKING A DEFECT THAT NO LONGER EXISTS
+--------------------------------------------------------------------------------
+
+SLOW_HTTP_TRANSPORT.c_sleep waited inside its OWN plain `external "C inline"'
+Sleep, because in Part 1 the transport it doubled was one too. With the long
+poll restored that fixture failed the frame assault at 1,481 ms - a real stall,
+for a reason that was the FIXTURE'S and not the product's: a double telling the
+truth about code that has been deleted.
+
+  external "C inline use <windows.h>"   ->   external "C blocking inline use <windows.h>"
+
+mirroring c_send's exact form. Its header comment now says why the marker is
+there and why it had to go on. The unmarked shape is NOT thrown away: GC_PROBE
+still holds it beside an Eiffel sleep, and
+`test_an_unmarked_c_call_on_another_processor_stops_the_allocator' still
+measures it at ~8.6-9.0 s against a 3 s wait, every run. That test was renamed
+from `test_a_blocking_c_call_...': now that `blocking' is the name of the SAFE
+shape, the old name pointed at the wrong one.
+
+GC_PROBE itself does not share the allocation flaw - it only waits, and never
+allocates - so it was left alone apart from that rename's call site in
+testing/test_app.e.
+
+
+--------------------------------------------------------------------------------
+3. THE PROBE - A GROWING LIVE SET, AND WHAT THAT DID AND DID NOT FIX
+--------------------------------------------------------------------------------
+
+Three bursts allocated 200 x 1 KiB and kept NONE of it:
+FREEZE_ASSAULT.worst_allocation_burst, FREEZE_ASSAULT.burn_a_frames_worth_of_memory,
+and WIRING_ASSAULT's inline burst in the live assault. An allocator that is never
+made to collect cannot be caught waiting for a collection.
+
+All three now do what simple_winhttp's own testing/scoop/blocking_probe.e does
+(read for the shape): 2,000 x 1 KiB a burst - 2 MiB - of which the first 200
+(200 KiB) are extended into a live set that GROWS for the whole test and is
+checked at the end (`check kept_them_alive'), so the heap really rises and the
+collector really runs.
+
+WHAT THAT FIXED: margin and repeatability. The stall the live assault reports
+against the unfixed library rose from 21,639 ms to 25,144 ms - the full length of
+the poll rather than whatever part of it happened to coincide with incidental
+heap pressure.
+
+WHAT IT DID NOT FIX, AND THIS CORRECTS THE CYCLE'S OWN PREMISE. The probe was
+NOT reporting a false green because of the missing live set. It was reported to
+have answered "1 ms even against the unfixed library"; that reproduces exactly,
+and the cause is the RUN LOCATION, not the retention:
+
+  SAME EXE, built against simple_winhttp 0.1.0, unhardened burst, 25 s poll
+
+    run from the PROJECT ROOT
+        ALLOC worst allocation burst  21,639 ms (tick 52)
+        FAIL: live_gui_latency_through_a_quiet_poll
+        Results: 187 passed, 1 failed              TESTS FAILED
+
+    run from inside EIFGENs/simple_chat_tests/F_code
+        SKIP: the freeze hunt needs EIFGENs\simple_chat_server\F_code\simple_chat.exe,
+              which is not built
+        PASS: live_gui_latency_through_a_quiet_poll     <-- vacuous
+        Results: 188 passed, 0 failed              ALL TESTS PASSED
+
+WIRING_ASSAULT resolves the server exe by a path RELATIVE to the project root.
+From anywhere else the whole live assault skips and passes on the skip, and the
+suite reports a full green against the library that froze Larry's window. That
+is the false green, and no amount of probe hardening removes it. THE GUARD IS
+THE RUN LOCATION: this suite must be run as
+`./EIFGENs/simple_chat_tests/F_code/simple_chat.exe' FROM THE PROJECT ROOT.
+The hardening was still worth doing - it is what makes the RED below the whole
+poll rather than a fraction of it - but it was not the difference between red
+and green here, and this file should not be read as saying it was.
+
+
+--------------------------------------------------------------------------------
+4. RED, THEN GREEN - THE 25 s POLL AGAINST BOTH LIBRARY VERSIONS
+--------------------------------------------------------------------------------
+
+Same worktree, same source, same hardened probe, same 25 s poll. The ONLY
+difference is which simple_winhttp the ECF names. 0.1.0 is a scratch copy of
+D:/prod/simple_winhttp with src/simple_winhttp.e replaced by fe62d36's - one
+keyword different - built into the scratchpad; D:/prod/simple_winhttp was never
+checked out or modified.
+
+  RED   simple_winhttp 0.1.0    grep -c "C blocking" src/simple_winhttp.e = 0
+
+    WIRING_ASSAULT.test_live_gui_latency_through_a_quiet_poll
+      BUSY  20 posts: worst send_text 43 ms (post 17), worst tick  8 ms
+      QUIET 140 ticks: worst tick 4 ms (tick 2), 0 over 250 ms
+      INPUT 20 distinct lines: 20 shown, each exactly once: True, in order: True
+      ALLOC worst allocation burst      25,144 ms (tick 46)          <-- FAIL
+      the pane took 20 page(s) and showed 20 event(s)
+      FAILED: no allocation on the GUI's own processor waited out a poll
+    Results: 187 passed, 1 failed          TESTS FAILED
+
+  GREEN simple_winhttp 0.1.1    grep -c "C blocking" src/simple_winhttp.e = 1
+                                (clean build: EIFGENs/simple_chat_tests deleted)
+
+    WIRING_ASSAULT.test_live_gui_latency_through_a_quiet_poll
+      BUSY  20 posts: worst send_text 17 ms (post 1), worst tick  3 ms
+      QUIET 140 ticks: worst tick 2 ms (tick 2), 0 over 250 ms
+      INPUT 20 distinct lines: 20 shown, each exactly once: True, in order: True
+      ALLOC worst allocation burst           4 ms (tick 43)          <-- PASS
+      the pane took 20 page(s) and showed 20 event(s)
+    Results: 188 passed, 0 failed           ALL TESTS PASSED
+
+  25,144 ms -> 4 ms. Six thousand times, off one keyword in another repository.
+
+  That GREEN is the CLEAN build of the exact tree this branch commits. Four
+  earlier GREEN runs of the same assault, for the spread: 3, 7, 6, 4 ms. One of
+  them saw a single 85 ms tick - a poll returning with a page and a collection
+  landing in the same heartbeat - well inside the 250 ms budget and nowhere near
+  the ~5 s at which Windows ghosts a window.
+
+  THE HEADLESS ASSAULT is INDEPENDENT of the library on purpose - it runs the
+  real EVENT_POLLER over SLOW_HTTP_TRANSPORT, not over the wire - so it passes
+  against both, and its numbers say the fixture change worked:
+
+      0.1.0   60 frames beside a live poller: worst allocation  9 ms, pump 14 ms, send 2 ms
+      0.1.1   60 frames beside a live poller: worst allocation  5 ms, pump  1 ms, send 3 ms
+
+  Before the fixture was marked, this same test failed at 1,481 ms with the
+  restored poll.
+
+  THE TWO PROBES, which hold the law rather than the regression, pass either way
+  and are unchanged in meaning:
+
+      an Eiffel sleep of 9,000 ms on another processor:   worst allocation     3 ms
+      an unmarked C call of 3,000 ms on another processor: worst allocation 8,812 ms
+
+
+--------------------------------------------------------------------------------
+5. BUILDS - FOREGROUND, ONE AT A TIME, F_code
+--------------------------------------------------------------------------------
+
+/d/prod/ec.sh test    -config simple_chat.ecf -target <t>   (finalize -keep -c_compile)
+/d/prod/ec.sh release -config simple_chat.ecf -target simple_chat_client
+
+Each target's EIFGENs directory was DELETED first - clean compiles, not
+incremental - and ec.sh's own verify_binary refused anything older than 60 s, so
+no stale exe can have survived a failed compile.
+
+  simple_chat_server          EIFGENs/simple_chat_server/F_code/simple_chat.exe
+  simple_chat_tests           EIFGENs/simple_chat_tests/F_code/simple_chat.exe
+  simple_chat_doorbell_tests  EIFGENs/simple_chat_doorbell_tests/F_code/simple_chat.exe
+  simple_chat_client          EIFGENs/simple_chat_client/F_code/simple_chat_lean.exe (4.7 MB)
+                              EIFGENs/simple_chat_client/F_code/simple_chat_dbc.exe (16.9 MB)
+
+  grep -cE "^Error|Error code [1-9]"   0 on every build.
+
+WARNINGS: 3 on every CLEAN build, and they are ONE pre-existing note, not three
+per-class warnings - "Obsolete feature calls are detected, but not reported due
+to project configuration settings" (simple_toml's own `as_string_8', which the
+ECF already suppresses). Part 1 proved it pre-existing by clean-building the
+base tree. Incremental builds do not emit it, which is why an incremental tests
+build shows 0. ZERO NEW WARNINGS.
+
+cairo.dll (D:/prod/simple_cairo/cairo.dll) was copied beside the tests exe after
+every build: the tests target links the chat window through simple_cairo's
+IMPORT library, and ec.sh wipes F_code on every build.
+
+
+--------------------------------------------------------------------------------
+6. TOTALS
+--------------------------------------------------------------------------------
+
+  simple_chat_tests           188 passed, 0 failed   (unchanged count; one renamed)
+  simple_chat_doorbell_tests    6 passed, 0 failed   (unchanged)
+  simple_chat_client            finalizes clean, lean + DBC binaries produced
+
+  RENAMED, not added:
+    a_blocking_c_call_on_another_processor_stops_the_allocator
+    -> an_unmarked_c_call_on_another_processor_stops_the_allocator
+
+
+--------------------------------------------------------------------------------
+7. STOPPED / REPORTED
+--------------------------------------------------------------------------------
+
+ [!] NO CONTRACT WAS CHANGED IN src/ OR apps/. Section 1 has the snapshot. Two
+     assertions were ADDED, both in the tests cluster and both on routines this
+     cycle changed: `kept_a_share' on FREEZE_ASSAULT.burn_a_frames_worth_of_memory
+     (which now takes the live set as an argument), and two `check
+     kept_them_alive' instructions. Nothing existing was weakened or removed.
+
+ [!] THE FALSE GREEN'S REAL CAUSE IS THE RUN LOCATION, not the probe's retention.
+     Section 3 has the controlled pair. The cycle was opened on the other premise;
+     the measurement corrected it. The probe hardening was kept anyway, on its own
+     merits, and the guard that actually matters - run from the project root - is
+     now stated here and nowhere enforced in code. THAT IS A GAP: WIRING_ASSAULT
+     SKIPS AND PASSES when it cannot find the server exe, so a suite run from the
+     wrong directory reports a full green it has not earned. Making the skip fail,
+     or resolving the exe against the executable's own location, is a change to
+     the harness's contract and was NOT made here. REPORTED.
+
+ [!] THE GUI STILL POSTS SYNCHRONOUSLY, on its own processor
+     (CHAT_PRESENTER.send -> CHAT_CLIENT.post_message). Measured on loopback:
+     18-43 ms. Part 1 reported this and it is still true - but it is no longer a
+     freeze risk, because that POST is now inside a `blocking' external too. Over
+     a slow link the window waits for the POST it issued, which is a stutter the
+     member causes, not a stop-the-world. An asynchronous send remains the only
+     cure and remains out of scope.
+
+ [!] .eiffel-workflow/spec/10-ADDENDUM-THICK-CLIENT.md and
+     11-ADDENDUM-PHASE1B-SCOOP.md say the poller blocks for up to 25 s. As of
+     this branch THAT IS TRUE AGAIN and they need no correction - but they are
+     true for a reason they do not state. The specs are the orchestrator's and
+     were not edited here. The sentence they want is: the poller may hold one
+     exchange for the whole of Max_wait_seconds BECAUSE the transport's external
+     is marked `blocking'.
+
+ [!] The scratch 0.1.0 copy lived outside both repositories, under the session
+     scratchpad, and the ECF that pointed at it was restored before the first
+     commit. `git diff main -- simple_chat.ecf' is empty.

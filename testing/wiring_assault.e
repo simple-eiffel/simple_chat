@@ -557,7 +557,9 @@ feature -- The freeze hunt: what holds the GUI's own thread (phase4/freeze)
 			l_send_worst_at, l_quiet_worst_at, l_alloc_worst_at: INTEGER
 			l_alloc_worst: INTEGER_64
 			l_junk: ARRAYED_LIST [STRING_8]
+			l_live: ARRAYED_LIST [STRING_8]
 		do
+			create l_live.make (Freeze_quiet_ticks * Freeze_burst_kept)
 			create l_exe.make_with_name (Server_exe_path)
 			if not l_exe.exists then
 				print ("  SKIP: the freeze hunt needs " + Server_exe_path + ", which is not built%N")
@@ -637,18 +639,29 @@ feature -- The freeze hunt: what holds the GUI's own thread (phase4/freeze)
 							loop
 									-- A pure allocation burst, touching nothing of the client's:
 									-- if THIS stops for as long as a long poll, nothing the
-									-- presenter does is to blame.
+									-- presenter does is to blame. `Freeze_burst_kept' of every
+									-- burst is KEPT in `l_live', so the heap grows and the
+									-- collector really runs - a burst that drops everything it
+									-- makes can be served out of a free list the runtime already
+									-- owns, and an allocator never asked to collect is caught
+									-- waiting for one only by luck. Measured against the unfixed
+									-- library: 21,639 ms unhardened, 25,144 ms hardened - the
+									-- whole poll instead of the part of it that coincided with a
+									-- collection.
 								t0 := freeze_now_ms
-								create l_junk.make (200)
+								create l_junk.make (Freeze_burst_strings)
 								from
 									l_k := 1
 								until
-									l_k > 200
+									l_k > Freeze_burst_strings
 								loop
-									l_junk.extend (create {STRING_8}.make_filled ('x', 1024))
+									l_junk.extend (create {STRING_8}.make_filled ('x', Freeze_burst_string_bytes))
+									if l_k <= Freeze_burst_kept then
+										l_live.extend (l_junk.last)
+									end
 									l_k := l_k + 1
 								variant
-									201 - l_k
+									Freeze_burst_strings + 1 - l_k
 								end
 								l_span := freeze_now_ms - t0
 								if l_span > l_alloc_worst then
@@ -767,6 +780,19 @@ feature -- The freeze hunt: what holds the GUI's own thread (phase4/freeze)
 
 	Freeze_quiet_ticks: INTEGER = 140
 			-- 250 ms apart: 35 s, longer than a whole 25 s long poll, with nobody speaking.
+
+	Freeze_burst_strings: INTEGER = 2_000
+
+	Freeze_burst_string_bytes: INTEGER = 1_024
+			-- 2 MiB a burst: enough that the collector runs many times over.
+
+	Freeze_burst_kept: INTEGER = 200
+			-- 200 KiB of every burst is kept alive for the length of the run, so the heap
+			-- grows and the collector really runs rather than answering every burst out of
+			-- a free list it already owns. What makes THIS test honest is not only that,
+			-- though: it is that it was run FROM THE PROJECT ROOT. `Server_exe_path' is
+			-- relative, and from anywhere else this whole assault SKIPs and passes on the
+			-- skip - a full green against a library that freezes the window.
 
 	Slow_tick_ms: INTEGER_64 = 250
 			-- A heartbeat that takes longer than the heartbeat's own period has stopped the window.

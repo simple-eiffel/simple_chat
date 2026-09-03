@@ -19,12 +19,19 @@ note
 		THE HEARTBEAT IS THE PUMP. `SW_WINDOW' fires `on_tick' every 250
 		ms on the ROOT processor - the GUI thread - and `tick' does one
 		`CHAT_PRESENTER.pump' there. That is the whole live path: the
-		poller never blocks on its own processor for longer than one
-		exchange (EVENT_POLLER.Poll_slice_seconds) and the window never
-		waits for it: the inbox is a processor that never blocks, and no
-		exchange is held open long enough for ISE's collector - which
-		stops every thread of the system - to strand the GUI's allocator
-		behind it.
+		poller holds the server's doorbell open on its own processor for
+		up to {CHAT_CLIENT}.Max_wait_seconds and the window never waits
+		for it. Two separate reasons, and both are needed. The inbox is a
+		processor that never blocks, so no call the GUI makes on it can
+		queue behind the poll. And the exchange itself is spent inside an
+		external the runtime has been TOLD about - SIMPLE_WINHTTP.c_send
+		is `external "C blocking inline"' since 0.1.1 - so ISE's
+		collector, which stops every thread of the system before it
+		collects, runs without waiting for the poll to come back. Before
+		that marker (2026-09-02) it did wait, and the GUI froze at its
+		very next allocation for the rest of the poll: 21,058 ms measured,
+		against 1 ms now. If a transport is ever swapped in under
+		HTTP_TRANSPORT, read its externals before trusting this window.
 
 		THE SESSION CAN DIE UNDER THE WINDOW. When the poller meets a 401
 		the presenter closes the room, drops the token with no exchange
