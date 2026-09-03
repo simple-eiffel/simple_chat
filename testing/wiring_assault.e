@@ -11,8 +11,10 @@ note
 		over real HTTP: the finalized server exe booted on a scratch
 		configuration under C:\Users\Public\sc_wiring_test, then
 		WINHTTP_TRANSPORT + CHAT_CLIENT: health, login (a real minted
-		token), post, events - skipped, and passed, when the server exe
-		is not built. The server exe is copied to a distinct name
+		token), post, events. The server exe is FOUND by SERVER_EXE, which
+		asks the working directory and then this running executable's own
+		ancestors, and when it is not built the live rounds FAIL - they do
+		not skip. The server exe is copied to a distinct name
 		(sc_wiring_server.exe) before it is booted, because every target
 		of this system finalizes to simple_chat.exe - a taskkill by that
 		image name would kill this very test runner. The child's stdout
@@ -208,11 +210,11 @@ feature -- The live round trip
 			-- booted on a scratch configuration, answered through WINHTTP_TRANSPORT
 			-- + SERVICE_LOCATOR + CHAT_CLIENT: health, login with a real minted
 			-- token, post, an image whose Hebrew file name and emoji caption ride
-			-- percent-encoded header lines (Task 9b), events. Skips, and passes,
-			-- when the exe is not built - the SKIP line says so out loud.
+			-- percent-encoded header lines (Task 9b), events. FAILS when the exe
+			-- is not built (see `report_unbuilt_server').
 			-- Teardown runs before the verdict so a failure never strands a server.
 		local
-			l_exe: RAW_FILE
+			l_exe: SERVER_EXE
 			l_process: SIMPLE_PROCESS
 			l_server: SIMPLE_ASYNC_PROCESS
 			l_transport: WINHTTP_TRANSPORT
@@ -231,10 +233,9 @@ feature -- The live round trip
 			l_stamp: SIMPLE_DATE_TIME
 			l_started_at: INTEGER_64
 		do
-			create l_exe.make_with_name (Server_exe_path)
-			if not l_exe.exists then
-				print ("  SKIP: the live round trip needs " + Server_exe_path + ", which is not built%N")
-				assert ("skipped cleanly without a server exe", True)
+			create l_exe
+			if not l_exe.is_built then
+				report_unbuilt_server ("the live round trip")
 			else
 				create l_transcript.make (512)
 				create l_process.make
@@ -348,10 +349,10 @@ feature -- The live round trip, through CLIENT_APP and the real pane
 			-- CLIENT_APP built over the same file, and no password asked - proven
 			-- against a live server that really does honour the token at GET /me.
 			--
-			-- Skips, and passes, when the exe is not built. Teardown runs before the
-			-- verdict so a failure never strands a server.
+			-- FAILS when the exe is not built (see `report_unbuilt_server'). Teardown
+			-- runs before the verdict so a failure never strands a server.
 		local
-			l_exe: RAW_FILE
+			l_exe: SERVER_EXE
 			l_process: SIMPLE_PROCESS
 			l_server: SIMPLE_ASYNC_PROCESS
 			l_transport: WINHTTP_TRANSPORT
@@ -365,10 +366,9 @@ feature -- The live round trip, through CLIENT_APP and the real pane
 			l_tries: INTEGER
 			l_alive, l_logged_in, l_opened, l_shown, l_sealed, l_resumed: BOOLEAN
 		do
-			create l_exe.make_with_name (Server_exe_path)
-			if not l_exe.exists then
-				print ("  SKIP: the live pane round trip needs " + Server_exe_path + ", which is not built%N")
-				assert ("skipped cleanly without a server exe", True)
+			create l_exe
+			if not l_exe.is_built then
+				report_unbuilt_server ("the live pane round trip")
 			else
 				create l_transcript.make (512)
 				create l_process.make
@@ -534,10 +534,10 @@ feature -- The freeze hunt: what holds the GUI's own thread (phase4/freeze)
 			-- heartbeat stops here for as long as that poll lasts, and the
 			-- window would be frozen for exactly that long.
 			--
-			-- Skips, and passes, when the exe is not built. Teardown runs before
-			-- the verdict so a failure never strands a server.
+			-- FAILS when the exe is not built (see `report_unbuilt_server'). Teardown
+			-- runs before the verdict so a failure never strands a server.
 		local
-			l_exe: RAW_FILE
+			l_exe: SERVER_EXE
 			l_process: SIMPLE_PROCESS
 			l_server: SIMPLE_ASYNC_PROCESS
 			l_transport: WINHTTP_TRANSPORT
@@ -560,10 +560,9 @@ feature -- The freeze hunt: what holds the GUI's own thread (phase4/freeze)
 			l_live: ARRAYED_LIST [STRING_8]
 		do
 			create l_live.make (Freeze_quiet_ticks * Freeze_burst_kept)
-			create l_exe.make_with_name (Server_exe_path)
-			if not l_exe.exists then
-				print ("  SKIP: the freeze hunt needs " + Server_exe_path + ", which is not built%N")
-				assert ("skipped cleanly without a server exe", True)
+			create l_exe
+			if not l_exe.is_built then
+				report_unbuilt_server ("the freeze hunt")
 			else
 				create l_transcript.make (2048)
 				create l_process.make
@@ -790,9 +789,11 @@ feature -- The freeze hunt: what holds the GUI's own thread (phase4/freeze)
 			-- 200 KiB of every burst is kept alive for the length of the run, so the heap
 			-- grows and the collector really runs rather than answering every burst out of
 			-- a free list it already owns. What makes THIS test honest is not only that,
-			-- though: it is that it was run FROM THE PROJECT ROOT. `Server_exe_path' is
-			-- relative, and from anywhere else this whole assault SKIPs and passes on the
-			-- skip - a full green against a library that freezes the window.
+			-- though: it is that it really ran. It used to be looked for at a path
+			-- relative to the working directory, so from anywhere but the project root
+			-- this whole assault SKIPped and passed on the skip - a full green against a
+			-- library that freezes the window. SERVER_EXE now finds the executable from
+			-- either place, and a genuinely missing one FAILS.
 
 	Slow_tick_ms: INTEGER_64 = 250
 			-- A heartbeat that takes longer than the heartbeat's own period has stopped the window.
@@ -856,6 +857,25 @@ feature {NONE} -- Non-ASCII fixtures (Phase 4 Task 9b)
 			sized: Result.count = a_count
 		end
 
+feature {NONE} -- The build this assault needs
+
+	report_unbuilt_server (a_what: STRING_8)
+			-- FAIL, never skip: `a_what' needs the finalized server executable
+			-- and SERVER_EXE cannot find it.
+			--
+			-- A skip that counts as a pass is a lie told in green. This one hid
+			-- a real failure three times on 2026-09-02 and 2026-09-03: the live
+			-- rounds never ran, `Results:' said every test passed, and the thing
+			-- they exist to prove was never proved. The one command that fixes
+			-- it is printed here, and TEST_APP prints it again in the summary.
+		local
+			l_exe: SERVER_EXE
+		do
+			create l_exe
+			l_exe.explain_missing
+			assert (a_what + " needs " + l_exe.Relative_path + ", which is not built", False)
+		end
+
 feature {NONE} -- Live-server fixtures
 
 	prepare_scratch
@@ -867,6 +887,7 @@ feature {NONE} -- Live-server fixtures
 			l_directory: DIRECTORY
 			l_db: RAW_FILE
 			l_process: SIMPLE_PROCESS
+			l_exe: SERVER_EXE
 			l_file: PLAIN_TEXT_FILE
 			l_copied: RAW_FILE
 			l_store: SQLITE_CHAT_STORE
@@ -889,7 +910,14 @@ feature {NONE} -- Live-server fixtures
 			end
 			delete_file (Scratch_root + "\server_boot.log")
 			create l_process.make
-			l_process.command_output ("cmd /c copy /Y %"" + Server_exe_path + "%" %"" + Scratch_root + "\" + Scratch_server_name + "%"").do_nothing
+			create l_exe
+				-- Every caller has already asked `is_built'; this is the same answer,
+				-- and the copy is made from WHEREVER the executable really is, not
+				-- from a path that only resolves when the runner was started at the
+				-- project root.
+			check built: attached l_exe.path as l_exe_path then
+				l_process.command_output ("cmd /c copy /Y %"" + l_exe_path.name + "%" %"" + Scratch_root + "\" + Scratch_server_name + "%"").do_nothing
+			end
 			create l_copied.make_with_name (Scratch_root + "\" + Scratch_server_name)
 			check server_exe_copied: l_copied.exists end
 			create l_file.make_create_read_write (Scratch_root + "\server.toml")
@@ -925,8 +953,6 @@ feature {NONE} -- Live-server fixtures
 			-- Every target of this system finalizes to simple_chat.exe, this test
 			-- runner included: killing by that image name would kill the runner.
 
-	Server_exe_path: STRING_8 = "EIFGENs\simple_chat_server\F_code\simple_chat.exe"
-			-- Relative to the project root, where the assault runs.
 
 	Scratch_db_path: STRING_32 = "C:\Users\Public\sc_wiring_test\data\simple_chat.db"
 			-- <data_dir>/simple_chat.db, exactly where the server will open it.

@@ -24,6 +24,24 @@ note
 		Any other `--flag'
 		prints usage instead of being mistaken for a configuration path.
 
+		NO PASSWORD EVER ECHOES. All three flags read every password - and
+		the %"Again:%" confirmation - through SIMPLE_CONSOLE.read_hidden_line
+		(simple_console 1.1.0), which clears ENABLE_ECHO_INPUT for the read
+		and restores the console mode on every exit path. Backspace still
+		edits and Enter still ends the line. When standard input is
+		REDIRECTED from a file or a pipe - which is how the installer's
+		verification script and the shipped .cmd wrappers feed one in - the
+		line is read the ordinary way and no console mode is touched: there
+		is no terminal to hide it from. The display name is NOT hidden; it
+		is read the ordinary echoing way, because a person has to see the
+		name they are giving themselves.
+
+		END OF INPUT BEFORE A PASSWORD is refused, changing nothing, with
+		EXIT STATUS 1 - so a wrapper whose here-document ran short is told
+		so instead of being handed a silent success. A line the person
+		ended by pressing Enter alone is the EMPTY password, not end of
+		input, and it is refused by `password_minimum' as it always was.
+
 		Only the username travels in argv, and the rules confine it to
 		a-z, 0-9 and underscore - so nothing non-ASCII is ever put on a
 		Windows command line. The display name is typed at the console and
@@ -156,9 +174,11 @@ feature -- Commands
 	create_admin (a_username: READABLE_STRING_8; a_config_path: READABLE_STRING_GENERAL)
 			-- Prompt for a display name and the password twice, then create
 			-- the first admin through CHAT_SERVICE.create_first_admin,
-			-- against the same store `serve' would open. The password
-			-- echoes: plain Eiffel console input has no echo suppression -
-			-- acceptable for v1.
+			-- against the same store `serve' would open.
+			--
+			-- The password does NOT echo: both entries are read with
+			-- `hidden_line'. End of input before either one is refused,
+			-- creating nothing, with exit status 1 (`exit_with_failure').
 			--
 			-- The display name is read as UTF-8 (`line_read_text') and
 			-- defaults to the username, so the old behaviour is what an
@@ -168,15 +188,16 @@ feature -- Commands
 			path_given: not a_config_path.is_empty
 		local
 			l_config: SERVER_CONFIG
-			l_display, l_first, l_second: STRING_32
+			l_display: STRING_32
+			l_first, l_second: detachable STRING_32
 			l_result: CHAT_RESULT [CHAT_USER]
+			l_no_input: BOOLEAN
 		do
 			create l_config.make_from_file (a_config_path)
 			if not l_config.is_valid then
 				print ("--create-admin: the configuration is refused; fix it first:%N")
 				print_errors (l_config)
 			else
-				print ("WARNING: the password will echo on this console (no echo suppression in v1).%N")
 				print ("Display name (press Enter to use %"" + a_username + "%"): ")
 				io.read_line
 				l_display := line_read_text
@@ -186,38 +207,52 @@ feature -- Commands
 				if not is_acceptable_display_name (l_display) then
 					print ("--create-admin: that display name is refused (1..64 characters, no control or bidi-override characters, and it may not carry the bot marker); nothing was created.%N")
 				else
-					print ("Password (at least " + l_config.password_minimum.out + " characters): ")
-					io.read_line
-					l_first := line_read
-					print ("Again: ")
-					io.read_line
-					l_second := line_read
-					if not passwords_acceptable (l_first, l_second, l_config.password_minimum) then
-						if not l_first.same_string (l_second) then
-							print ("--create-admin: the two entries do not match; nothing was created.%N")
+					print ("Password (at least " + l_config.password_minimum.out + " characters, and it will not echo): ")
+					l_first := hidden_line
+					if l_first /= Void then
+						print ("Again: ")
+						l_second := hidden_line
+					end
+					if attached l_first as l_typed and then attached l_second as l_again then
+						if not passwords_acceptable (l_typed, l_again, l_config.password_minimum) then
+							if not l_typed.same_string (l_again) then
+								print ("--create-admin: the two entries do not match; nothing was created.%N")
+							else
+								print ("--create-admin: the password must be at least " + l_config.password_minimum.out + " characters; nothing was created.%N")
+							end
+						elseif attached new_service (l_config) as l_service then
+							l_result := l_service.create_first_admin (a_username, l_display, l_typed)
+							if l_result.is_success then
+								print ("--create-admin: administrator %"" + a_username + "%" created.%N")
+							elseif attached l_result.error as l_error then
+								print ("--create-admin: refused - ")
+								print_line_32 (l_error.message)
+							end
+							if l_service.store.is_open then
+									-- Close before teardown: an open SQLite handle disposed during
+									-- run-time shutdown segfaulted after every successful run.
+								l_service.store.close
+							end
 						else
-							print ("--create-admin: the password must be at least " + l_config.password_minimum.out + " characters; nothing was created.%N")
-						end
-					elseif attached new_service (l_config) as l_service then
-						l_result := l_service.create_first_admin (a_username, l_display, l_first)
-						if l_result.is_success then
-							print ("--create-admin: administrator %"" + a_username + "%" created.%N")
-						elseif attached l_result.error as l_error then
-							print ("--create-admin: refused - ")
-							print_line_32 (l_error.message)
-						end
-						if l_service.store.is_open then
-								-- Close before teardown: an open SQLite handle disposed during
-								-- run-time shutdown segfaulted after every successful run.
-							l_service.store.close
+								-- No memory fallback here: an admin created in a memory
+								-- store would vanish with this process (unlike the serving
+								-- path, which must stay up and logs its fallback).
+							print ("--create-admin: the store cannot be opened; nothing was created.%N")
 						end
 					else
-							-- No memory fallback here: an admin created in a memory
-							-- store would vanish with this process (unlike the serving
-							-- path, which must stay up and logs its fallback).
-						print ("--create-admin: the store cannot be opened; nothing was created.%N")
+							-- End of input, never a partial line (read_hidden_line's own
+							-- rule): a wrapper whose here-document ran short is told so,
+							-- not handed a silent success.
+						print ("--create-admin: no password was given (standard input ended before one arrived); nothing was created.%N")
+						l_no_input := True
 					end
 				end
+			end
+			if l_no_input then
+					-- No store was ever opened on this path, so there is nothing to
+					-- close before leaving; `reset_member_password' dies after its
+					-- close for exactly the reason there is none to make here.
+				exit_with_failure
 			end
 		end
 
@@ -229,7 +264,11 @@ feature -- Commands
 			--
 			-- Refused until an administrator exists, so the first account on a
 			-- fresh database is always the admin's own (`--create-admin').
-			-- The password echoes, exactly as `create_admin' says it does.
+			-- The password does NOT echo, exactly as `create_admin' says: both
+			-- entries come through `hidden_line'. End of input before either
+			-- one is refused, creating nothing, with exit status 1 - taken
+			-- AFTER the store is closed, which is the discipline
+			-- `reset_member_password' set.
 			--
 			-- The display name is read as UTF-8 (see `line_read_text'), so a
 			-- Hebrew or Greek name survives when the console is at code page
@@ -241,8 +280,10 @@ feature -- Commands
 			path_given: not a_config_path.is_empty
 		local
 			l_config: SERVER_CONFIG
-			l_display, l_first, l_second: STRING_32
+			l_display: STRING_32
+			l_first, l_second: detachable STRING_32
 			l_result: CHAT_RESULT [CHAT_USER]
+			l_no_input: BOOLEAN
 		do
 			create l_config.make_from_file (a_config_path)
 			if not l_config.is_valid then
@@ -257,7 +298,6 @@ feature -- Commands
 					print ("Create the first admin first:%N")
 					print ("  simple_chat_server --create-admin <username> [simple_chat_server.toml]%N")
 				else
-					print ("WARNING: the password will echo on this console (no echo suppression in v1).%N")
 					print ("Display name (press Enter to use %"" + a_username + "%"): ")
 					io.read_line
 					l_display := line_read_text
@@ -267,26 +307,33 @@ feature -- Commands
 					if not is_acceptable_display_name (l_display) then
 						print ("--create-user: that display name is refused (1..64 characters, no control or bidi-override characters, and it may not carry the bot marker); nothing was created.%N")
 					else
-						print ("Password (at least " + l_config.password_minimum.out + " characters): ")
-						io.read_line
-						l_first := line_read
-						print ("Again: ")
-						io.read_line
-						l_second := line_read
-						if not passwords_acceptable (l_first, l_second, l_config.password_minimum) then
-							if not l_first.same_string (l_second) then
-								print ("--create-user: the two entries do not match; nothing was created.%N")
+						print ("Password (at least " + l_config.password_minimum.out + " characters, and it will not echo): ")
+						l_first := hidden_line
+						if l_first /= Void then
+							print ("Again: ")
+							l_second := hidden_line
+						end
+						if attached l_first as l_typed and then attached l_second as l_again then
+							if not passwords_acceptable (l_typed, l_again, l_config.password_minimum) then
+								if not l_typed.same_string (l_again) then
+									print ("--create-user: the two entries do not match; nothing was created.%N")
+								else
+									print ("--create-user: the password must be at least " + l_config.password_minimum.out + " characters; nothing was created.%N")
+								end
 							else
-								print ("--create-user: the password must be at least " + l_config.password_minimum.out + " characters; nothing was created.%N")
+								l_result := l_service.create_user (a_username, l_display, l_typed, False)
+								if l_result.is_success then
+									print ("--create-user: member %"" + a_username + "%" created.%N")
+								elseif attached l_result.error as l_error then
+									print ("--create-user: refused - ")
+									print_line_32 (l_error.message)
+								end
 							end
 						else
-							l_result := l_service.create_user (a_username, l_display, l_first, False)
-							if l_result.is_success then
-								print ("--create-user: member %"" + a_username + "%" created.%N")
-							elseif attached l_result.error as l_error then
-								print ("--create-user: refused - ")
-								print_line_32 (l_error.message)
-							end
+								-- End of input, never a partial line. The store is OPEN on
+								-- this path, so the exit waits until it is closed below.
+							print ("--create-user: no password was given (standard input ended before one arrived); nothing was created.%N")
+							l_no_input := True
 						end
 					end
 				end
@@ -298,6 +345,12 @@ feature -- Commands
 				end
 			else
 				print ("--create-user: the store cannot be opened; nothing was created.%N")
+			end
+			if l_no_input then
+					-- AFTER the store is closed, exactly as `reset_member_password'
+					-- dies: `exit_with_failure' leaves at once and would strand an
+					-- open SQLite handle for the run-time shutdown to dispose.
+				exit_with_failure
 			end
 		end
 
@@ -312,16 +365,17 @@ feature -- Commands
 			-- `data/simple_chat.db*' and lose the room with it.
 			--
 			-- No display name is asked for: the account already has one, and
-			-- nothing here may quietly rename a person. The password echoes,
-			-- exactly as `create_admin' says it does - there is no echo
-			-- suppression in v1 and none is invented here.
+			-- nothing here may quietly rename a person. The password does NOT
+			-- echo, exactly as `create_admin' says: both entries come through
+			-- `hidden_line'.
 			--
 			-- Refused, each time with a non-zero exit status and nothing
 			-- changed: a configuration that will not load, a store that will
 			-- not open, a username this room does not know, a username that
 			-- names a BOT (a bot has no password to reset - revoke and
-			-- reissue its token instead), two entries that differ, and an
-			-- entry shorter than `password_minimum'.
+			-- reissue its token instead), END OF INPUT before a password
+			-- arrived, two entries that differ, and an entry shorter than
+			-- `password_minimum'.
 			--
 			-- The username arrives from argv, so the rules confine it to
 			-- a-z, 0-9 and underscore and nothing non-ASCII is ever put on a
@@ -340,7 +394,7 @@ feature -- Commands
 			path_given: not a_config_path.is_empty
 		local
 			l_config: SERVER_CONFIG
-			l_first, l_second: STRING_32
+			l_first, l_second: detachable STRING_32
 			l_result: CHAT_RESULT [CHAT_USER]
 			l_user: detachable CHAT_USER
 			l_reset: BOOLEAN
@@ -358,28 +412,34 @@ feature -- Commands
 							-- is no password here to reset.
 						print ("--reset-password: %"" + a_username + "%" is a bot; a bot has no password, only a token. Revoke and reissue that token instead; nothing was changed.%N")
 					else
-						print ("WARNING: the password will echo on this console (no echo suppression in v1).%N")
-						print ("New password for %"" + a_username + "%" (at least " + l_config.password_minimum.out + " characters): ")
-						io.read_line
-						l_first := line_read
-						print ("Again: ")
-						io.read_line
-						l_second := line_read
-						if not passwords_acceptable (l_first, l_second, l_config.password_minimum) then
-							if not l_first.same_string (l_second) then
-								print ("--reset-password: the two entries do not match; nothing was changed.%N")
+						print ("New password for %"" + a_username + "%" (at least " + l_config.password_minimum.out + " characters, and it will not echo): ")
+						l_first := hidden_line
+						if l_first /= Void then
+							print ("Again: ")
+							l_second := hidden_line
+						end
+						if attached l_first as l_typed and then attached l_second as l_again then
+							if not passwords_acceptable (l_typed, l_again, l_config.password_minimum) then
+								if not l_typed.same_string (l_again) then
+									print ("--reset-password: the two entries do not match; nothing was changed.%N")
+								else
+									print ("--reset-password: the password must be at least " + l_config.password_minimum.out + " characters; nothing was changed.%N")
+								end
 							else
-								print ("--reset-password: the password must be at least " + l_config.password_minimum.out + " characters; nothing was changed.%N")
+								l_result := l_service.reset_password (u, l_typed)
+								if l_result.is_success then
+									l_reset := True
+									print ("--reset-password: the password for %"" + a_username + "%" was reset, and every live session that member had was signed out.%N")
+								elseif attached l_result.error as l_error then
+									print ("--reset-password: refused - ")
+									print_line_32 (l_error.message)
+								end
 							end
 						else
-							l_result := l_service.reset_password (u, l_first)
-							if l_result.is_success then
-								l_reset := True
-								print ("--reset-password: the password for %"" + a_username + "%" was reset, and every live session that member had was signed out.%N")
-							elseif attached l_result.error as l_error then
-								print ("--reset-password: refused - ")
-								print_line_32 (l_error.message)
-							end
+								-- End of input, never a partial line. `l_reset' stays False,
+								-- so the store is closed and then this leaves with status 1 -
+								-- the wrapper hears "nothing was changed", which is true.
+							print ("--reset-password: no password was given (standard input ended before one arrived); nothing was changed.%N")
 						end
 					end
 				else
@@ -407,6 +467,14 @@ feature -- Commands
 			print ("simple_chat_server --create-admin <username> [simple_chat_server.toml]%N")
 			print ("simple_chat_server --create-user <username> [simple_chat_server.toml]%N")
 			print ("simple_chat_server --reset-password <username> [simple_chat_server.toml]%N")
+			print ("%N")
+			print ("The two create flags ask for a display name, then for the password twice;%N")
+			print ("--reset-password asks for the password twice and for no display name.%N")
+			print ("NO PASSWORD ECHOES: it is read with simple_console.read_hidden_line, which%N")
+			print ("leaves Backspace and Enter working and puts the console mode back. Standard%N")
+			print ("input redirected from a file or a pipe is read the ordinary way, so the%N")
+			print ("shipped scripts still work. The display name is not hidden.%N")
+			print ("End of input before a password changes nothing and leaves with status 1.%N")
 		end
 
 feature -- Status report
@@ -621,29 +689,50 @@ feature {NONE} -- Implementation
 			print ("%N")
 		end
 
-	line_read: STRING_32
-			-- What the last `io.read_line' read.
+	hidden_line: detachable STRING_32
+			-- One line of standard input, read WITHOUT echoing it when standard
+			-- input is a real console, and read the ORDINARY way - console modes
+			-- untouched - when it is redirected from a file or a pipe, which is
+			-- how the shipped .cmd wrappers and the installer's verification
+			-- script feed a password in. SIMPLE_CONSOLE decides which; nothing
+			-- here has to know.
+			--
+			-- Void on END OF INPUT or on failure, NEVER a partial line. A line
+			-- the person ended by pressing Enter alone is the EMPTY string, not
+			-- Void, so a blank password and a missing one stay distinguishable:
+			-- the first is refused by `password_minimum', the second by the
+			-- callers' own "nothing was created/changed" line and exit status 1.
+			--
+			-- Read as UTF-8 on both paths, so a Hebrew or Greek password arrives
+			-- as the code points it was typed as. PASSWORD_HASHER encodes those
+			-- back to UTF-8 before hashing, so an ASCII password hashes exactly
+			-- as it did under the old byte-for-byte `line_read', and a non-ASCII
+			-- one now hashes the bytes that were actually typed rather than a
+			-- double encoding of them.
+			--
+			-- WHY IT MATTERS: a `--create-admin' that reads a password with
+			-- `io.read_line' leaves it in the console's scrollback and in any
+			-- transcript of that session.
+		local
+			l_console: SIMPLE_CONSOLE
 		do
-			if attached io.last_string as l_line then
-				Result := l_line.to_string_32
-			else
-				create Result.make_empty
-			end
+			create l_console.make
+			Result := l_console.read_hidden_line
 		end
 
 	line_read_text: STRING_32
 			-- What the last `io.read_line' read, DECODED AS UTF-8 when the
 			-- bytes are valid UTF-8, and byte-for-byte otherwise.
 			--
-			-- `line_read' widens each byte to a character, which is right for
-			-- a password (an opaque byte sequence, hashed as given) and wrong
-			-- for a name a person reads: at code page 65001 the console hands
-			-- over UTF-8, so a three-letter Hebrew name (U+05DE U+05E9 U+05D4)
-			-- arrives as six bytes that `line_read' would
-			-- turn into six mojibake characters. The shipped console wrapper
-			-- sets 65001; the fallback covers a console left at its default,
-			-- where the bytes will not be valid UTF-8 and the old behaviour is
-			-- exactly what is wanted.
+			-- Widening each byte to a character instead - which is what this
+			-- feature did before `decoded_text' was pulled out of it, and what
+			-- the now-deleted `line_read' did for the password - is wrong for a
+			-- name a person reads: at code page 65001 the console hands over
+			-- UTF-8, so a three-letter Hebrew name (U+05DE U+05E9 U+05D4)
+			-- arrives as six bytes that widening would turn into six mojibake
+			-- characters. The shipped console wrapper sets 65001; the fallback
+			-- covers a console left at its default, where the bytes will not be
+			-- valid UTF-8 and the old behaviour is exactly what is wanted.
 			--
 			-- A trailing carriage return is dropped: `io.read_line' strips the
 			-- newline but a CRLF stream can leave the CR behind, and a display

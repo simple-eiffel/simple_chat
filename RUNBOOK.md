@@ -82,8 +82,18 @@ The flag comes **first**: `SERVER_APP.make` matches `--create-admin` on argument
 takes the config path as argument 3. Written the other way round, argument 1 is a path
 that does not start with `--`, so the server would quietly *serve* instead of creating
 anything. There is no password argument either — it prompts for a display name (press
-Enter for the username) and then for the password twice, and it echoes: plain Eiffel
-console input has no echo suppression in v1.
+Enter for the username) and then for the password twice.
+
+**The password does not echo.** It is read with `SIMPLE_CONSOLE.read_hidden_line`
+(simple_console 1.1.0), which clears `ENABLE_ECHO_INPUT` for the read and puts the
+console mode back on every exit path; Backspace still edits and Enter still ends the
+line. The display name is **not** hidden — you have to be able to see the name you are
+giving yourself. When standard input is **redirected** from a file or a pipe (which is
+how the shipped `.cmd` wrappers and the installer's verification script feed one in)
+the line is read the ordinary way and no console mode is touched: there is no terminal
+to hide it from. If standard input **ends** before a password arrives, the command
+changes nothing and leaves with **exit status 1**, so a wrapper whose here-document ran
+short is told so instead of being handed a silent success.
 
 To add anyone else afterwards, same shape — there is no self-registration:
 
@@ -98,7 +108,8 @@ shape again, and no display name is asked for; the account already has one:
 dist/simple_chat_server.exe --reset-password nick C:/Users/Public/simple_chat/server.toml
 ```
 
-It prompts for the new password twice and **signs out every live session that
+It prompts for the new password twice — not echoing either entry, exactly as the two
+create flags do — and **signs out every live session that
 member holds** — which is the point: a password somebody else has learned is
 taken away, not merely replaced. A username the room does not know, a username
 that names a bot (bots have a token, not a password), two entries that differ,

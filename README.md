@@ -88,7 +88,11 @@ provider's CGNAT makes that impossible, backups, and the cold-standby procedure.
 
 Accounts are minted by the host (`--create-admin` once, then `--create-user` per person);
 there is no self-registration. Both prompt for a display name and read the console as
-UTF-8, so a Hebrew or Greek name survives. A forgotten password is not the end of the
+UTF-8, so a Hebrew or Greek name survives. **Passwords do not echo** — all three account
+flags read them with `SIMPLE_CONSOLE.read_hidden_line`, which suppresses echo on a real
+console and reads the ordinary way when standard input is redirected from a file or a
+pipe, so the shipped scripts keep working; end of input before a password changes
+nothing and leaves with exit status 1. A forgotten password is not the end of the
 room: `--reset-password <username>` gives an existing member a new one and signs out
 every session they hold.
 
