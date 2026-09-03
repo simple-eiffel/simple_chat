@@ -302,6 +302,46 @@ feature -- Account and administration through the API
 			end
 		end
 
+	test_host_console_reset_kills_a_live_token
+			-- The path `--reset-password' takes, seen from the HTTP surface.
+			-- The host is at a console with no session and no token at all:
+			-- the store is opened directly and CHAT_SERVICE.reset_password is
+			-- called. A token issued before that must be 401 afterwards, the
+			-- old password must be refused at /login and the new one taken.
+			--
+			-- Distinct from `test_api_admin_reset_password_kills_sessions',
+			-- which goes through the admin endpoint and therefore needs a
+			-- live admin session. The console command has none - which is
+			-- exactly why it exists: the admin may be the one locked out.
+		local
+			l_api: CHAT_API
+			l_codec: CHAT_JSON
+			l_admin_token, l_nick_token: STRING_8
+		do
+			l_api := fresh_api
+			make_admin (l_api)
+			create l_codec.make
+			l_admin_token := login_token (l_api)
+			assert ("nick created", l_api.admin_create_user (l_admin_token, "nick", {STRING_32} "Nick", {STRING_32} "fresh pass nine 9", False).status = 201)
+			if attached l_codec.login_from_bytes (l_api.login ({STRING_32} "nick", {STRING_32} "fresh pass nine 9", "127.0.0.1").body) as l_login then
+				l_nick_token := l_login.token
+				assert ("nick's session lives", l_api.me (l_nick_token).status = 200)
+				if attached l_api.service.store.user_by_username ("nick") as u then
+						-- Exactly what the console command does: found by
+						-- username, reset, no token anywhere in the call.
+					assert ("the host's reset succeeds", l_api.service.reset_password (u, {STRING_32} "console set pass").is_success)
+				else
+					assert ("nick is in the store", False)
+				end
+				assert ("the token issued before the reset is 401", l_api.me (l_nick_token).status = 401)
+				assert ("the old password is refused at /login", l_api.login ({STRING_32} "nick", {STRING_32} "fresh pass nine 9", "127.0.0.1").status /= 200)
+				assert ("the new password is accepted at /login", l_api.login ({STRING_32} "nick", {STRING_32} "console set pass", "127.0.0.1").status = 200)
+				assert ("the admin's own session is untouched", l_api.me (l_admin_token).status = 200)
+			else
+				assert ("nick logs in", False)
+			end
+		end
+
 	test_api_admin_bot_token_once_and_revoke
 		local
 			l_api: CHAT_API

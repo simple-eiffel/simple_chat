@@ -76,7 +76,7 @@ including `schtasks`.
 | Component | Default | Contents |
 |---|---|---|
 | `client` | always (`fixed`) | `SimpleChat.exe`, `cairo.dll`, 3,768 emoji PNGs, licences, `README.txt`, `client.toml` template |
-| `server` | **off** | `SimpleChatServer.exe`, eight launchers, `HOSTING-GUIDE.html`, `caddy.exe`, `server.toml` template |
+| `server` | **off** | `SimpleChatServer.exe`, nine launchers, `HOSTING-GUIDE.html`, `caddy.exe`, `server.toml` template |
 
 The server is unticked by default: most installs are a friend who only wants to
 use the chat. `[Types]` lists the client-only type **first**, so it is the
@@ -147,6 +147,6 @@ the re-fetch commands.
 |---|---|
 | `SimpleChat.iss` | the script |
 | `stage_payload.sh` | assembles `src/` (gitignored) |
-| `templates/` | config templates, the eight launchers, the hosting guide, `README.txt` |
+| `templates/` | config templates, the nine launchers, the hosting guide, `README.txt` |
 | `THIRD-PARTY.md` | the pins and their licences |
 | `VERIFICATION-2026-09-02.md` | verification record, and the incident that shaped the verify identity |

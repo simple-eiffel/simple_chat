@@ -58,6 +58,27 @@ To add anyone else afterwards, same shape — there is no self-registration:
 dist/simple_chat_server.exe --create-user nick C:/Users/Public/simple_chat/server.toml
 ```
 
+If anyone forgets their password — including the only admin — reset it. Same
+shape again, and no display name is asked for; the account already has one:
+
+```bash
+dist/simple_chat_server.exe --reset-password nick C:/Users/Public/simple_chat/server.toml
+```
+
+It prompts for the new password twice and **signs out every live session that
+member holds** — which is the point: a password somebody else has learned is
+taken away, not merely replaced. A username the room does not know, a username
+that names a bot (bots have a token, not a password), two entries that differ,
+or an entry below `password_minimum` is refused with a line saying so and a
+**non-zero exit status**, so a wrapper can tell a refusal from a reset. Nothing
+is changed on any of those paths.
+
+**Stop the server first**, for all three flags. They open the SQLite store
+directly and nothing sets a busy timeout, so a write racing the running
+server's comes back `SQLITE_BUSY`; for a reset that means the new password
+never lands, the old one still works, and the sessions the running server holds
+are never revoked. The shipped launchers check for a running server and refuse.
+
 Then run it. **Redirect its stdout to a file, never into a pipe** — a console write into
 an undrained pipe wedges the server mid-request: `/health` keeps answering 200 and every
 login times out. This was found the hard way.
