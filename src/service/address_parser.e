@@ -13,6 +13,24 @@ note
 		after it is addressed but asks nothing: `parse' gives Void. A
 		trailing "via" is honoured only when its choice is one a tool could
 		honour ("plain" or "@name"); "via train" stays in the text.
+
+		MENTION ANYWHERE (Phase 4). `mentioned_handles' widens M2 from the
+		start of the text to the whole of it, and states the boundary as one
+		rule: a message mentions a participant when, anywhere in its text, an
+		"@" stands that is NOT itself preceded by a handle character
+		([a-z0-9_-], case folded), the unbroken run of handle characters after
+		it equals that participant's handle or one of its "@"-shaped aliases,
+		and that run ends the text or is followed by a character that is not a
+		handle character. So "@Claude", "@claude:", "... @claude ...",
+		"@claude?" and "(@claude)" all mention "@claude"; "@claudette" and
+		"@claude_bot" do not (their run is longer - "_" is a handle
+		character); "bob@claude" does not (the "@" follows a handle
+		character); case never matters. Colon aliases ("Claude:") keep the
+		older start-of-text rule - they are ordinary words anywhere else -
+		and `address_of' / `is_addressed' / `parse' are untouched, so every
+		message that was addressed before is addressed exactly as before.
+		`addressed_body' rewrites a middle mention into the leading form, so
+		one addressed-request path serves both.
 	]"
 	author: "Larry Rix"
 
@@ -149,7 +167,222 @@ feature -- Basic operations
 			empty_is_plain: a_body.is_empty implies not Result
 		end
 
+feature -- Access (mentions anywhere in the text)
+
+	mention_tokens: ARRAYED_LIST [STRING_32]
+			-- Every "@"-shaped token that names a participant: the registered
+			-- handles and the "@"-shaped aliases, lowercase, handles first.
+			-- A colon alias ("claude:") is not one: it is an ordinary word
+			-- anywhere but the start, and only `address_token' reads it.
+		local
+			l_alias: STRING_32
+		do
+			create Result.make (registry.count + registry.alias_count)
+			Result.compare_objects
+			across registry.participants as p loop
+				Result.extend (p.handle.as_lower)
+			end
+			across registry.alias_names as a loop
+				if a.code (1) = 64 then
+					l_alias := a.as_lower
+					if not Result.has (l_alias) then
+						Result.extend (l_alias)
+					end
+				end
+			end
+		ensure
+			at_shaped: across Result as t all t.count >= 2 and then t.code (1) = 64 end
+			all_known: across Result as t all registry.has (t) or registry.has_alias (t) end
+		end
+
+	handle_behind (a_token: READABLE_STRING_GENERAL): STRING_32
+			-- The registered handle `a_token' names, itself or as an alias.
+		require
+			names_someone: registry.has (a_token) or registry.has_alias (a_token)
+		do
+			if registry.has (a_token) then
+				Result := a_token.to_string_32.as_lower
+			else
+				Result := registry.handle_of_alias (a_token)
+			end
+		ensure
+			registered: registry.has (Result)
+		end
+
+	mentioned_handles (a_body: READABLE_STRING_GENERAL): ARRAYED_LIST [STRING_32]
+			-- The registered handles `a_body' mentions anywhere - in the order
+			-- of first mention, each once, whatever the case, wherever in the
+			-- text they stand (the rule is in this class's note).
+		local
+			i: INTEGER
+			l_handle: STRING_32
+		do
+			create Result.make (2)
+			Result.compare_objects
+			from i := 1 until i > a_body.count loop
+				across mention_tokens as t loop
+					if is_mention_at (a_body, t, i) then
+						l_handle := handle_behind (t)
+						if not Result.has (l_handle) then
+							Result.extend (l_handle)
+						end
+					end
+				end
+				i := i + 1
+			end
+		ensure
+			all_registered: across Result as h all registry.has (h) end
+			each_once: across Result as h all Result.occurrences (h) = 1 end
+			empty_when_blank: a_body.is_empty implies Result.is_empty
+		end
+
+	mention_token_at (a_body, a_handle: READABLE_STRING_GENERAL; a_index: INTEGER): detachable STRING_32
+			-- The token of `a_handle' - its own handle or one of its
+			-- "@"-shaped aliases - standing as a whole mention at `a_index'
+			-- of `a_body'; Void when none does.
+		require
+			registered: registry.has (a_handle)
+			in_range: a_index >= 1 and a_index <= a_body.count
+		do
+			across mention_tokens as t loop
+				if Result = Void and then handle_behind (t).same_string_general (a_handle.to_string_32.as_lower)
+					and then is_mention_at (a_body, t, a_index)
+				then
+					Result := t
+				end
+			end
+		ensure
+			stands_there: attached Result as t implies is_mention_at (a_body, t, a_index)
+			owned: attached Result as t implies handle_behind (t).same_string_general (a_handle.to_string_32.as_lower)
+		end
+
+	body_without_mentions_of (a_body, a_handle: READABLE_STRING_GENERAL): STRING_32
+			-- `a_body' with every mention of `a_handle' taken out, together
+			-- with the ":" or "," that followed it and the blanks around it,
+			-- and the words on either side closed up: "hello @Claude what is
+			-- 2+2" gives "hello what is 2+2", "so what @claude?" gives "so
+			-- what?".
+		require
+			registered: registry.has (a_handle)
+		local
+			i: INTEGER
+		do
+			create Result.make (a_body.count)
+			from i := 1 until i > a_body.count loop
+				if attached mention_token_at (a_body, a_handle, i) as t then
+					i := i + t.count
+					if i <= a_body.count and then (a_body.code (i) = 58 or a_body.code (i) = 44) then
+						i := i + 1
+					end
+					from until i > a_body.count or else not is_blank_code (a_body.code (i)) loop
+						i := i + 1
+					end
+					Result.right_adjust
+					if not Result.is_empty and then (i <= a_body.count and then not is_closing_code (a_body.code (i))) then
+						Result.append_character (' ')
+					end
+				else
+					Result.append_code (a_body.code (i))
+					i := i + 1
+				end
+			end
+			Result.left_adjust
+			Result.right_adjust
+		ensure
+			no_longer: Result.count <= a_body.count
+			trimmed: Result.is_empty or else (not is_blank_code (Result.code (1)) and not is_blank_code (Result.code (Result.count)))
+		end
+
+	addressed_body (a_body, a_handle: READABLE_STRING_GENERAL): STRING_32
+			-- `a_body' rewritten so `a_handle' leads it: the handle, then the
+			-- text with that participant's mentions taken out. A message that
+			-- names the bot in the middle therefore reaches the very same
+			-- addressed-request path - `parse', `via', the character cap - as
+			-- one that starts with it, and nothing downstream learns a second
+			-- addressing rule.
+		require
+			registered: registry.has (a_handle)
+		local
+			l_rest: STRING_32
+		do
+			Result := a_handle.to_string_32.as_lower
+			l_rest := body_without_mentions_of (a_body, a_handle)
+			if not l_rest.is_empty then
+				Result.append_character (' ')
+				Result.append (l_rest)
+			end
+		ensure
+			leads: Result.starts_with (a_handle.to_string_32.as_lower)
+			addressed_here: address_of (Result).same_string (a_handle.to_string_32.as_lower)
+		end
+
 feature -- Status report
+
+	mentions (a_body, a_token: READABLE_STRING_GENERAL): BOOLEAN
+			-- Does `a_token' stand as a whole mention anywhere in `a_body'?
+		require
+			at_shaped: a_token.count >= 2 and then a_token.code (1) = 64
+		local
+			i: INTEGER
+		do
+			from i := 1 until i > a_body.count or Result loop
+				Result := is_mention_at (a_body, a_token, i)
+				i := i + 1
+			end
+		ensure
+			blank_never: a_body.is_empty implies not Result
+		end
+
+	mentions_handle (a_body, a_handle: READABLE_STRING_GENERAL): BOOLEAN
+			-- Does `a_body' mention `a_handle' anywhere, by its handle or by
+			-- one of its "@"-shaped aliases?
+		require
+			registered: registry.has (a_handle)
+		do
+			Result := mentioned_handles (a_body).has (a_handle.to_string_32.as_lower)
+		ensure
+			definition: Result = mentioned_handles (a_body).has (a_handle.to_string_32.as_lower)
+		end
+
+	is_mention_at (a_body, a_token: READABLE_STRING_GENERAL; a_index: INTEGER): BOOLEAN
+			-- Does `a_token' stand at `a_index' of `a_body' as a whole
+			-- mention? The "@" must not itself follow a handle character (so
+			-- "bob@claude" mentions nobody), the run of handle characters
+			-- after it must be exactly the token's (so "@claudette" and
+			-- "@claude_bot" are not "@claude"), and the run must end the text
+			-- or be followed by a character that is not a handle character
+			-- (so "@claude,", "@claude:" and "@claude?" all count). Case is
+			-- folded on both sides.
+		require
+			at_shaped: a_token.count >= 2 and then a_token.code (1) = 64
+			in_range: a_index >= 1 and a_index <= a_body.count
+		local
+			l_lower, l_token: STRING_32
+			j: INTEGER
+		do
+			l_lower := a_body.to_string_32.as_lower
+			l_token := a_token.to_string_32.as_lower
+			if a_index + l_token.count - 1 <= l_lower.count
+				and then l_lower.substring (a_index, a_index + l_token.count - 1).same_string (l_token)
+				and then (a_index = 1 or else not rules.is_handle_code (l_lower.code (a_index - 1)))
+			then
+				j := a_index + l_token.count
+				Result := j > l_lower.count or else not rules.is_handle_code (l_lower.code (j))
+			end
+		ensure
+			token_there: Result implies a_body.to_string_32.as_lower.substring (a_index, a_index + a_token.count - 1).same_string (a_token.to_string_32.as_lower)
+			whole_word: Result implies (a_index + a_token.count > a_body.count or else not rules.is_handle_code (a_body.to_string_32.as_lower.code (a_index + a_token.count)))
+			never_after_a_handle_character: Result implies (a_index = 1 or else not rules.is_handle_code (a_body.to_string_32.as_lower.code (a_index - 1)))
+		end
+
+	is_closing_code (a_code: NATURAL_32): BOOLEAN
+			-- A closing mark - "." "," ";" ":" "!" "?" ")" "]" "}" - one that
+			-- must stay against the word before it when a mention between
+			-- them is taken out?
+		do
+			Result := a_code = 46 or a_code = 44 or a_code = 59 or a_code = 58 or a_code = 33
+				or a_code = 63 or a_code = 41 or a_code = 93 or a_code = 125
+		end
 
 	is_boundary_code (a_code: NATURAL_32): BOOLEAN
 			-- A blank, a line break, "," or ":"?

@@ -6,6 +6,12 @@ note
 		(M2), so a request can never carry a choice the parser would not
 		have produced.
 
+		`context_lines' is the room's recent conversation, oldest first, one
+		line per message and each already prefixed by its sender's display
+		name - what lets a participant answer "and its cube root?". It is
+		empty unless the dispatcher fills it (`set_context'), and it is
+		never part of `text': the question stays exactly what was asked.
+
 		`make' builds a request from someone the store does not know
 		(`asker_id' = 0: previews and tests); the dispatcher always uses
 		`make_addressed', whose asker is a stored member and therefore has a
@@ -75,6 +81,7 @@ feature {NONE} -- Initialization
 			if attached a_via as v then
 				via := v.to_string_32
 			end
+			create context_lines.make (0)
 		end
 
 feature -- Access
@@ -89,6 +96,28 @@ feature -- Access
 	max_characters: INTEGER
 	via: detachable STRING_32
 			-- "plain", "@qwen", "@claude" when the member chose a shaper.
+
+	context_lines: ARRAYED_LIST [STRING_32]
+			-- The room's recent messages, oldest first, each "<sender>: <text>";
+			-- empty when the participant carries no context window.
+
+feature -- Element change
+
+	set_context (a_lines: ARRAYED_LIST [STRING_32])
+			-- Give this request `a_lines' as the room's recent conversation.
+		require
+			none_empty: across a_lines as l all not l.is_empty end
+		do
+			create context_lines.make (a_lines.count)
+			across a_lines as l loop
+				context_lines.extend (l.twin)
+			end
+		ensure
+			same_count: context_lines.count = a_lines.count
+			a_copy: context_lines /= a_lines
+			same_lines: across 1 |..| a_lines.count as i all context_lines [i].same_string (a_lines [i]) end
+			text_untouched: text.same_string (old text)
+		end
 
 feature -- Status report
 
@@ -109,5 +138,6 @@ invariant
 	max_positive: max_characters > 0
 	via_given_if_attached: attached via as v implies not v.is_empty
 	via_shape: attached via as v implies (create {PARTICIPANT_RULES}).is_via_choice (v)
+	context_lines_given: across context_lines as l all not l.is_empty end
 
 end

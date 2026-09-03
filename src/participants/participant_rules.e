@@ -64,4 +64,13 @@ feature -- Constants
 	Handle_maximum: INTEGER = 32
 			-- Characters after the "@".
 
+	Default_context_messages: INTEGER = 12
+			-- How many recent room messages a configured participant is given
+			-- with a request when the entry does not say (Phase 4 memory).
+
+	Context_maximum: INTEGER = 50
+			-- The most a [[participants]] entry may ask for: the window is a
+			-- reminder, not a transcript, and every line of it is copied into
+			-- the engine's prompt on every turn.
+
 end

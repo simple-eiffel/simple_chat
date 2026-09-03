@@ -7,6 +7,14 @@ note
 		its own rate limit per asker (addendum 09). Its handle obeys
 		PARTICIPANT_RULES, so the limiter key is always ASCII (M1).
 
+		MEMORY (Phase 4). `context_messages' is how many of the room's most
+		recent messages the dispatcher attaches to a request, so a follow-up
+		("and its cube root?") reaches the engine with the turns it answers.
+		Zero - the default for a hand-built participant - means no window at
+		all; the [[participants]] configuration sets it, and
+		`context_block_of' is the one place a window becomes prompt text, so
+		every engine renders it the same way.
+
 		`answer' is a state-changing function by design (`calls', the
 		engine): recorded for the Phase 4.5 CQS audit. `in_flight' is what
 		a concurrent dispatcher checks before asking (M5); on the one
@@ -37,6 +45,10 @@ feature -- Access
 	max_characters: INTEGER
 			-- The longest answer this participant may give.
 
+	context_messages: INTEGER
+			-- How many recent room messages come with a request; 0 for a
+			-- participant that is told nothing but the question.
+
 	limit_key (a_asker_id: INTEGER_64): STRING_8
 			-- The rate-limit key for `a_asker_id' asking this participant.
 		require
@@ -46,6 +58,42 @@ feature -- Access
 		ensure
 			prefixed: Result.starts_with ("p:")
 			definition: Result.same_string ("p:" + handle.to_string_8 + ":" + a_asker_id.out)
+		end
+
+feature -- Element change
+
+	set_context_messages (a_count: INTEGER)
+			-- Give this participant a window of `a_count' recent room
+			-- messages with every request; 0 takes the window away.
+		require
+			in_range: a_count >= 0 and a_count <= {PARTICIPANT_RULES}.Context_maximum
+		do
+			context_messages := a_count
+		ensure
+			set: context_messages = a_count
+		end
+
+feature -- Conversion (contract support)
+
+	context_block_of (a_request: PARTICIPANT_REQUEST): STRING_32
+			-- The room's recent conversation as prompt text: a heading, one
+			-- line per message oldest first, and a blank line before the
+			-- question. Empty when the request carries no window, so an
+			-- engine may always prepend it.
+		do
+			create Result.make (128)
+			if not a_request.context_lines.is_empty then
+				Result.append ({STRING_32} "Recent messages in this room, oldest first:%N")
+				across a_request.context_lines as l loop
+					Result.append (l)
+					Result.append_character ('%N')
+				end
+				Result.append ({STRING_32} "%NAnswer the message below, using the conversation above when it is what the message refers to.%N%N")
+			end
+		ensure
+			empty_when_no_window: a_request.context_lines.is_empty implies Result.is_empty
+			carries_each: across a_request.context_lines as l all Result.has_substring (l) end
+			given_when_window: not a_request.context_lines.is_empty implies not Result.is_empty
 		end
 
 feature -- Status report
@@ -97,5 +145,6 @@ invariant
 	concurrency_positive: max_concurrent >= 1
 	within_concurrency: in_flight >= 0 and in_flight <= max_concurrent
 	max_positive: max_characters > 0
+	context_in_range: context_messages >= 0 and context_messages <= {PARTICIPANT_RULES}.Context_maximum
 
 end

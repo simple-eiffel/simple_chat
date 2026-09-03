@@ -759,6 +759,34 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 			empty_when_unknown: service.store.room (a_room_id) = Void implies (attached codec.page_from_bytes (Result) as p and then p.events.is_empty)
 		end
 
+	dispatcher_context (a_room_id, a_before_id: INTEGER_64; a_limit: INTEGER): STRING_8
+			-- The `a_limit' events of `a_room_id' immediately BEFORE
+			-- `a_before_id' as bytes - what `events_before' answers, without a
+			-- token: the dispatcher is this process. The memory window a
+			-- participant is given with a request (Phase 4): read from the
+			-- room, so it holds the bot's own replies too and survives a
+			-- restart. An unknown room gives an empty page.
+		require
+			before_positive: a_before_id > 0
+			limit_in_range: a_limit > 0 and a_limit <= {CHAT_SERVICE}.Page_maximum
+		local
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+		do
+			if a_room_id > 0 and then attached service.store.room (a_room_id) as l_room and then l_room.is_stored then
+				l_events := service.events_before (l_room, a_before_id, a_limit)
+			else
+				create l_events.make (0)
+			end
+			Result := codec.bytes_of (codec.page_to_json (l_events, create {ARRAYED_LIST [CHAT_STATUS]}.make (0)))
+			request_count := request_count + 1
+		ensure
+			counted: request_count = old request_count + 1
+			decodable: codec.page_from_bytes (Result) /= Void
+			bounded: attached codec.page_from_bytes (Result) as p implies p.events.count <= a_limit
+			all_before: attached codec.page_from_bytes (Result) as p implies across p.events as e all e.id < a_before_id and e.room_id = a_room_id end
+			empty_when_unknown: service.store.room (a_room_id) = Void implies (attached codec.page_from_bytes (Result) as p and then p.events.is_empty)
+		end
+
 	dispatcher_can_post (a_bot_user_id, a_room_id: INTEGER_64): BOOLEAN
 			-- May bot `a_bot_user_id' post in `a_room_id': stored, active, a bot, and a member?
 		do

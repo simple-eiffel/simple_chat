@@ -12,7 +12,10 @@ note
 		real schema, and an Ollama client pointed at an unroutable
 		loopback port - the suite never touches a live AI engine or the
 		network, and the Claude engines are exercised up to (never
-		through) the CLI call.
+		through) the CLI call. Phase 4 adds the mention-anywhere rule and
+		the memory window: a room built in the memory store, real messages
+		posted through the service, and the dispatcher woken over them, so
+		the window a participant is handed is the room's own history.
 	]"
 	author: "Larry Rix"
 
@@ -712,6 +715,261 @@ feature -- Dispatcher
 			end
 		end
 
+feature -- Mention anywhere (Phase 4)
+
+	test_mention_boundary_rule_anywhere_in_the_text
+			-- ADDRESS_PARSER's rule, whole: start, middle, end, punctuation,
+			-- case, a longer word, an "@" that follows a handle character,
+			-- an "@"-shaped alias, and the same handle named twice.
+		local
+			p: ADDRESS_PARSER
+			r: PARTICIPANT_REGISTRY
+		do
+			create r.make
+			r.register (create {NULL_PARTICIPANT}.make ({STRING_32} "@claude", bot ("c", {STRING_32} "C")))
+			r.register (create {NULL_PARTICIPANT}.make ({STRING_32} "@qwen", bot ("q", {STRING_32} "Q")))
+			r.register_alias ({STRING_32} "@robot", {STRING_32} "@claude")
+			create p.make (r)
+			assert ("at the start", p.mentions_handle ({STRING_32} "@Claude hello", {STRING_32} "@claude"))
+			assert ("in the middle", p.mentions_handle ({STRING_32} "hello @Claude what is 2+2", {STRING_32} "@claude"))
+			assert ("at the end", p.mentions_handle ({STRING_32} "and times 3 @claude", {STRING_32} "@claude"))
+			assert ("with a question mark", p.mentions_handle ({STRING_32} "so what @claude?", {STRING_32} "@claude"))
+			assert ("with a colon", p.mentions_handle ({STRING_32} "@claude: are you still getting this?", {STRING_32} "@claude"))
+			assert ("with a comma", p.mentions_handle ({STRING_32} "well @Claude, tell me", {STRING_32} "@claude"))
+			assert ("in brackets", p.mentions_handle ({STRING_32} "ask the bot (@CLAUDE) about it", {STRING_32} "@claude"))
+			assert ("a longer word is not the handle", not p.mentions_handle ({STRING_32} "hi @claudette there", {STRING_32} "@claude"))
+			assert ("an underscored handle is not the handle", not p.mentions_handle ({STRING_32} "hi @claude_bot there", {STRING_32} "@claude"))
+			assert ("an address inside a word is nobody", not p.mentions_handle ({STRING_32} "write to bob@claude now", {STRING_32} "@claude"))
+			assert ("an unregistered mention is nobody", p.mentioned_handles ({STRING_32} "hello @nobody there").is_empty)
+			assert ("blank text mentions nobody", p.mentioned_handles ({STRING_32} "").is_empty)
+			assert ("an %"@%" alias mentions its handle", p.mentioned_handles ({STRING_32} "please look @ROBOT at this").count = 1
+				and then p.mentioned_handles ({STRING_32} "please look @ROBOT at this").first.same_string ({STRING_32} "@claude"))
+			assert ("twice named, once listed", p.mentioned_handles ({STRING_32} "@claude and again @claude").count = 1)
+			assert ("two bots, both listed, in order", p.mentioned_handles ({STRING_32} "hi @qwen and @claude").count = 2
+				and then p.mentioned_handles ({STRING_32} "hi @qwen and @claude").first.same_string ({STRING_32} "@qwen"))
+			assert ("a colon alias stays a start-of-text address", p.mentioned_handles ({STRING_32} "well claude: hello").is_empty)
+		end
+
+	test_mention_rewritten_into_the_leading_address
+			-- `addressed_body': one addressed-request path serves a middle
+			-- mention, the question keeps its words, the "via" survives, and
+			-- a bare mention still asks nothing.
+		local
+			p: ADDRESS_PARSER
+			r: PARTICIPANT_REGISTRY
+		do
+			create r.make
+			r.register (create {NULL_PARTICIPANT}.make ({STRING_32} "@claude", bot ("c", {STRING_32} "C")))
+			create p.make (r)
+			assert ("middle mention leads now",
+				p.addressed_body ({STRING_32} "hello @Claude what is 2+2", {STRING_32} "@claude").same_string ({STRING_32} "@claude hello what is 2+2"))
+			assert ("a trailing mention keeps its punctuation",
+				p.addressed_body ({STRING_32} "so what @claude?", {STRING_32} "@claude").same_string ({STRING_32} "@claude so what?"))
+			assert ("both mentions go",
+				p.addressed_body ({STRING_32} "@claude hi and @claude again", {STRING_32} "@claude").same_string ({STRING_32} "@claude hi and again"))
+			assert ("a leading colon form is unchanged in meaning",
+				p.addressed_body ({STRING_32} "@claude: are you still getting this?", {STRING_32} "@claude").same_string ({STRING_32} "@claude are you still getting this?"))
+			assert ("the rewrite is addressed", p.is_addressed (p.addressed_body ({STRING_32} "hello @Claude what", {STRING_32} "@claude")))
+			assert ("the via survives the rewrite",
+				attached p.parse (p.addressed_body ({STRING_32} "look this up @claude via plain", {STRING_32} "@claude")) as l_r
+				and then (attached l_r.via as v and then v.same_string ({STRING_32} "plain")) and then l_r.text.same_string ({STRING_32} "look this up"))
+			assert ("a bare mention asks nothing", p.parse (p.addressed_body ({STRING_32} "@claude", {STRING_32} "@claude")) = Void)
+		end
+
+	test_dispatcher_answers_a_mention_in_the_middle
+			-- Larry's case: "@Claude" in the middle of a sentence is a
+			-- request, taken once, with the handle out of the question.
+		local
+			d: PARTICIPANT_DISPATCHER
+			e: CHAT_EVENT
+		do
+			d := posting_dispatcher (0)
+			e := message (11, 1, 7, {STRING_32} "hello @Mock what is 2+2", False)
+			assert ("the old start-of-text rule does not see it", d.target_of (e) = Void)
+			assert ("the mention rule does", d.addressed_targets (e).count = 1 and then d.addressed_targets (e).first = last_mock)
+			d.handle_mentions (e)
+			assert ("taken once, asked once", d.requests_seen = 1 and d.asks = 1 and d.answers_posted + d.answer_failures = 1)
+			assert ("the handle is out of the question",
+				attached last_mock as m and then attached m.last_request as q and then q.text.same_string ({STRING_32} "hello what is 2+2"))
+			d.handle_mentions (e)
+			assert ("a second delivery is skipped", d.requests_seen = 1 and d.asks = 1)
+			d.handle_mentions (message (12, 1, 7, {STRING_32} "and times 3? @mock", False))
+			assert ("a trailing mention is a request too", d.requests_seen = 2 and d.asks = 2
+				and attached last_mock as m2 and then attached m2.last_request as q2 and then q2.text.same_string ({STRING_32} "and times 3?"))
+		end
+
+	test_a_bots_own_mention_never_triggers_it
+			-- No echo loop: a bot-authored message, a system event and a
+			-- longer word are all nobody's request, however they read.
+		local
+			d: PARTICIPANT_DISPATCHER
+			e_bot, e_word, e_sys: CHAT_EVENT
+		do
+			d := posting_dispatcher (0)
+			e_bot := message (21, 1, 99, {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " thanks @mock, that helps", True)
+			d.handle_mentions (e_bot)
+			assert ("a bot's own mention is nobody's request", d.addressed_targets (e_bot).is_empty and d.requests_seen = 0 and d.mentions_seen = 0 and d.asks = 0)
+			e_word := message (22, 1, 7, {STRING_32} "have you met @mockingbird yet", False)
+			d.handle_mentions (e_word)
+			assert ("a longer word is not the handle", d.addressed_targets (e_word).is_empty and d.requests_seen = 0 and d.asks = 0)
+			e_sys := system_event (23, 1, {STRING_32} "nick joined, say hi @mock")
+			d.handle_mentions (e_sys)
+			assert ("a system event is nobody's request", d.addressed_targets (e_sys).is_empty and d.requests_seen = 0 and d.asks = 0)
+		end
+
+	test_two_bots_in_one_message_each_reply_once
+			-- Both named participants answer, each exactly once, and a page
+			-- delivered twice does not double either of them.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_page: STRING_8
+		do
+			d := posting_dispatcher (0)
+			l_page := page_bytes (<<message (31, 1, 7, {STRING_32} "morning @mock and @tool please", False)>>)
+			d.handle_page (1, l_page)
+			assert ("both taken, the second as a mention", d.requests_seen = 2 and d.mentions_seen = 1 and d.asks = 2)
+			assert ("each engine asked once", attached last_mock as m and then m.calls = 1
+				and attached last_tool as l_t and then l_t.calls = 1)
+			assert ("both accounted", d.answers_posted + d.answer_failures = 2)
+			d.handle_page (1, l_page)
+			assert ("the same page twice is taken once", d.requests_seen = 2 and d.mentions_seen = 1 and d.asks = 2)
+			assert ("the extra mention is remembered by (event, handle)",
+				d.has_answered_mention (31, {STRING_32} "@tool") and not d.has_answered_mention (31, {STRING_32} "@nobody")
+				and d.answered_mention_count = 1)
+			d.wake (1)
+			assert ("the floor prunes both books", d.answered_mention_count = 0 and d.answered_model.is_empty)
+		end
+
+	test_mention_keeps_the_rate_limit
+			-- The limiter is charged and obeyed for a middle mention exactly
+			-- as for a leading one: the second ask in the hour is refused
+			-- and the engine is never called.
+		local
+			d: PARTICIPANT_DISPATCHER
+		do
+			d := posting_dispatcher (0)
+			if attached last_limits as l_lim then
+				l_lim.set_limit ("p:@mock:", 1, 3600)
+			end
+			d.handle_mentions (message (41, 1, 7, {STRING_32} "hello @mock what is 2+2", False))
+			assert ("the first is granted", d.last_ask_granted and d.asks = 1 and d.last_ask_key.same_string ("p:@mock:7"))
+			d.handle_mentions (message (42, 1, 7, {STRING_32} "and again @mock", False))
+			assert ("the second is refused", not d.last_ask_granted and d.asks = 1
+				and attached last_mock as m and then m.calls = 1)
+			assert ("the refusal is told, not dropped", d.answers_posted + d.answer_failures = 2)
+		end
+
+feature -- Memory (Phase 4)
+
+	test_context_window_carries_the_conversation
+			-- Three turns in a real room: the third request reaches the
+			-- engine with the first two and the bot's own reply, oldest
+			-- first, each line prefixed by its sender's display name, and
+			-- the question itself is untouched.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_lines: ARRAYED_LIST [STRING_32]
+		do
+			d := posting_dispatcher (0)
+			if attached last_mock as m then
+				m.set_context_messages (12)
+			end
+			say (d, {STRING_32} "hello @mock what is 2+2")
+			say (d, {STRING_32} "thanks")
+			say (d, {STRING_32} "and times 3? @mock")
+			assert ("both mentions answered", d.requests_seen = 2 and d.asks = 2)
+			assert ("a window came with the third turn",
+				attached last_mock as m2 and then attached m2.last_request as q and then not q.context_lines.is_empty)
+			if attached last_mock as m3 and then attached m3.last_request as q2 then
+				l_lines := q2.context_lines
+				assert ("the question is the question, not the window", q2.text.same_string ({STRING_32} "and times 3?"))
+				assert ("three lines before it: the first ask, the bot's reply, the aside", l_lines.count = 3)
+				assert ("oldest first, the asker named", l_lines [1].same_string ({STRING_32} "Nick: hello @mock what is 2+2"))
+				assert ("the bot's own reply is in the window, marker not doubled",
+					l_lines [2].same_string ({CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Mock: In the beginning God created"))
+				assert ("the aside is there too", l_lines [3].same_string ({STRING_32} "Nick: thanks"))
+				assert ("the addressing message itself is not repeated in the window",
+					across l_lines as l all not l.has_substring ({STRING_32} "and times 3") end)
+			end
+		end
+
+	test_context_window_is_capped_and_optional
+			-- The window is `context_messages' long, no longer; zero takes
+			-- it away altogether and the prompt is what it always was.
+		local
+			d: PARTICIPANT_DISPATCHER
+			c: CLAUDE_CODE_PARTICIPANT
+			q: PARTICIPANT_REQUEST
+			l_lines: ARRAYED_LIST [STRING_32]
+		do
+			d := posting_dispatcher (0)
+			if attached last_mock as m then
+				m.set_context_messages (2)
+			end
+			say (d, {STRING_32} "one @mock")
+			say (d, {STRING_32} "two")
+			say (d, {STRING_32} "three")
+			say (d, {STRING_32} "four @mock")
+			assert ("capped at two", attached last_mock as m2 and then attached m2.last_request as q1 and then q1.context_lines.count = 2)
+			if attached last_mock as m3 and then attached m3.last_request as q2 then
+				assert ("and they are the newest two", q2.context_lines [1].same_string ({STRING_32} "Nick: two")
+					and q2.context_lines [2].same_string ({STRING_32} "Nick: three"))
+			end
+			if attached last_mock as m4 then
+				m4.set_context_messages (0)
+			end
+			say (d, {STRING_32} "five @mock")
+			assert ("zero means no window", attached last_mock as m5 and then attached m5.last_request as q3 and then q3.context_lines.is_empty)
+			create l_lines.make (2)
+			l_lines.extend ({STRING_32} "Nick: what is 2+2")
+			l_lines.extend ({STRING_32} "Bot: four")
+			q := request ({STRING_32} "and its cube root?", Void)
+			assert ("a request starts with no window", q.context_lines.is_empty)
+			c := claude_participant
+			assert ("no window, no change to the prompt", c.contextual_prompt_of (q).same_string (c.prompt_of (q)))
+			q.set_context (l_lines)
+			assert ("the window comes first and the question last",
+				c.contextual_prompt_of (q).ends_with (c.prompt_of (q))
+				and c.contextual_prompt_of (q).has_substring ({STRING_32} "Nick: what is 2+2")
+				and c.contextual_prompt_of (q).has_substring ({STRING_32} "Bot: four"))
+			assert ("the window is not the question", q.text.same_string ({STRING_32} "and its cube root?"))
+		end
+
+	test_claude_session_is_kept_per_room_and_dropped_on_failure
+			-- The resume path: a session id is kept per room and reused, a
+			-- room never borrows another's, and a session that could not
+			-- answer is forgotten so the next turn starts fresh.
+		local
+			c: CLAUDE_CODE_PARTICIPANT
+		do
+			c := claude_participant
+			assert ("no session at the start", c.sessions_model.is_empty and c.session_of (1) = Void)
+			c.remember_session (1, {STRING_32} "11111111-2222-3333-4444-555555555555")
+			c.remember_session (2, {STRING_32} "66666666-7777-8888-9999-aaaaaaaaaaaa")
+			assert ("kept per room", attached c.session_of (1) as s1 and then s1.same_string ({STRING_32} "11111111-2222-3333-4444-555555555555")
+				and attached c.session_of (2) as s2 and then s2.same_string ({STRING_32} "66666666-7777-8888-9999-aaaaaaaaaaaa"))
+			c.forget_session (1)
+			assert ("the failed room starts fresh, the other is untouched",
+				c.session_of (1) = Void and c.sessions_model.count = 1 and c.session_of (2) /= Void)
+		end
+
+	test_participant_config_carries_the_context_setting
+			-- The [[participants]] setting: a default, a value, zero, and a
+			-- number past the cap refused with the default kept.
+		local
+			e: PARTICIPANT_CONFIG
+		do
+			create e.make ({STRING_32} "@claude", {PARTICIPANT_CONFIG}.Kind_claude_code, "claude_bot", {STRING_32} "Claude", {STRING_32} "C:\sandbox")
+			assert ("a default window", e.context_messages = {PARTICIPANT_RULES}.Default_context_messages and e.context_messages = 12)
+			e.set_context_messages (4)
+			assert ("set", e.context_messages = 4)
+			e.set_context_messages (0)
+			assert ("zero is lawful", e.context_messages = 0)
+			e.set_context_messages ({PARTICIPANT_RULES}.Context_maximum)
+			assert ("the cap is lawful", e.context_messages = 50)
+			assert ("the limits are untouched", e.requests_per_hour = 5 and e.max_characters = 1200 and e.timeout_seconds = 120)
+		end
+
 feature {NONE} -- Fixtures
 
 	last_mock: detachable MOCK_PARTICIPANT
@@ -722,6 +980,46 @@ feature {NONE} -- Fixtures
 
 	last_limits: detachable RATE_LIMITER
 			-- The limiter behind the latest fixture's API.
+
+	last_service: detachable CHAT_SERVICE
+			-- The service behind the latest `posting_dispatcher', so a test
+			-- may post real messages into the room the dispatcher reads.
+
+	last_room: detachable CHAT_ROOM
+			-- The room `posting_dispatcher' built.
+
+	last_nick: detachable CHAT_USER
+			-- The stored human member of `last_room' - "Nick", who asks.
+
+	say (a_dispatcher: PARTICIPANT_DISPATCHER; a_body: STRING_32)
+			-- Post `a_body' as Nick into the fixture's room and let
+			-- `a_dispatcher' drain the room from the store, exactly as the
+			-- bus's wake does in the server.
+		require
+			room_built: last_service /= Void and last_room /= Void and last_nick /= Void
+		do
+			if attached last_service as s and attached last_room as r and attached last_nick as n then
+				if s.post_message (n, r, a_body).is_success then
+					a_dispatcher.wake (r.id)
+				end
+			end
+		end
+
+	claude_participant: CLAUDE_CODE_PARTICIPANT
+			-- A sandboxed Claude under C:\Users\Public\sc_mention_ctx, built
+			-- for the prompt and session laws only - the CLI is never called.
+		local
+			l_client: CLAUDE_CODE_CLIENT
+			l_dir: DIRECTORY
+		do
+			create l_dir.make ({STRING_32} "C:\Users\Public\sc_mention_ctx\participants\claude")
+			if not l_dir.exists then
+				l_dir.recursive_create_dir
+			end
+			create l_client.make
+			create Result.make ({STRING_32} "@claude", bot ("claude", {STRING_32} "Claude"), l_client,
+				{STRING_32} "C:\Users\Public\sc_mention_ctx", {STRING_32} "C:\Users\Public\sc_mention_ctx\participants\claude", 400, 5)
+		end
 
 	dispatcher (a_start_after: INTEGER_64): PARTICIPANT_DISPATCHER
 			-- A dispatcher over a CHAT_API on the memory store, with "@mock"
@@ -770,7 +1068,7 @@ feature {NONE} -- Fixtures
 			l_api: CHAT_API
 			l_mock: MOCK_PARTICIPANT
 			l_tool: MOCK_TOOL_PARTICIPANT
-			l_bot: CHAT_USER
+			l_bot, l_nick: CHAT_USER
 			l_now: SIMPLE_DATE_TIME
 		do
 			create l_config.make_defaults
@@ -779,8 +1077,12 @@ feature {NONE} -- Fixtures
 			create l_now.make_now
 			create l_bot.make (0, "mock", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Mock", "", False, True, l_now)
 			l_store.add_user (l_bot)
+			create l_nick.make (0, "nick", {STRING_32} "Nick",
+				"0123456789abcdef0123456789abcdef$600000$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", False, False, l_now)
+			l_store.add_user (l_nick)
 			l_store.add_room (create {CHAT_ROOM}.make (0, {STRING_32} "main", l_now))
 			l_store.add_membership (create {CHAT_MEMBERSHIP}.make (l_store.default_room_id, l_bot.id, {CHAT_MEMBERSHIP}.Role_member, l_now))
+			l_store.add_membership (create {CHAT_MEMBERSHIP}.make (l_store.default_room_id, l_nick.id, {CHAT_MEMBERSHIP}.Role_member, l_now))
 			create l_bus.make
 			create l_limits.make (3600)
 			create l_logger
@@ -793,6 +1095,9 @@ feature {NONE} -- Fixtures
 			last_mock := l_mock
 			last_tool := l_tool
 			last_limits := l_limits
+			last_service := l_service
+			last_room := l_store.room (l_store.default_room_id)
+			last_nick := l_nick
 			create Result.make (l_api, a_start_after)
 			Result.registry.register (l_mock)
 			Result.registry.register (l_tool)

@@ -24,6 +24,17 @@ note
 		is judged by PARTICIPANT_ANSWER.is_safe_image_path before the
 		dispatcher reads it. Sessions are kept per room (`sessions_model'),
 		so a conversation in one room never continues another's.
+
+		MEMORY (Phase 4) is carried BOTH ways, and neither alone is trusted.
+		The CLI's own `--resume <session id>' continues the room's session
+		(`session_of', `remember_session'); a turn that produced no answer
+		drops it (`forget_session'), so a session the CLI will not resume is
+		never asked for twice and the next turn starts fresh. Under that, and
+		on every turn, `contextual_prompt_of' puts the room's last messages
+		(PARTICIPANT_REQUEST's `context_lines', filled by the dispatcher from
+		the room itself) in front of the question, so a follow-up is
+		answerable even on a fresh session, after a restart, or when a resume
+		fails.
 	]"
 	author: "Larry Rix"
 
@@ -237,6 +248,18 @@ feature -- Element change
 			findable: attached session_of (a_room_id) as s and then s.same_string_general (a_session_id)
 		end
 
+	forget_session (a_room_id: INTEGER_64)
+			-- Start `a_room_id' fresh next time: the session kept for it
+			-- could not be resumed, and asking for it again would fail again.
+		require
+			positive_room: a_room_id > 0
+		do
+			sessions.remove (a_room_id)
+		ensure
+			gone: not sessions_model.domain.has (a_room_id)
+			others_kept: sessions_model |=| (old sessions_model).removed (a_room_id)
+		end
+
 feature -- Basic operations
 
 	answer (a_request: PARTICIPANT_REQUEST): PARTICIPANT_ANSWER
@@ -246,9 +269,12 @@ feature -- Basic operations
 			-- clears ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN in the child,
 			-- so the call draws on the login, never on API credit. The
 			-- persona is `persona_of' (--append-system-prompt-file), the
-			-- prompt `prompt_of'; the room's conversation continues through
+			-- prompt `contextual_prompt_of' - the room's recent messages, then
+			-- the question; the room's conversation continues through
 			-- --resume with `session_of (a_request.room_id)' and a
-			-- successful reply's session id is remembered per room. The
+			-- successful reply's session id is remembered per room, while a
+			-- turn that answered nothing drops the kept session so the next
+			-- one starts fresh on the context window alone. The
 			-- installed CLI does offer --json-schema for structured output;
 			-- v1 deliberately sends no schema and takes the whole result
 			-- text as the answer - `image_path' stays Void, so nothing is
@@ -259,17 +285,18 @@ feature -- Basic operations
 		local
 			l_started, l_now: SIMPLE_DATE_TIME
 			l_response: detachable AI_RESPONSE
-			l_failed: BOOLEAN
+			l_failed, l_resumed: BOOLEAN
 		do
 			create l_started.make_now
 			if not l_failed then
 				calls := calls + 1
 				if attached session_of (a_request.room_id) as l_session and then client.is_valid_session_id (l_session) then
 					client.set_resume_session (l_session)
+					l_resumed := True
 				else
 					client.clear_resume_session
 				end
-				l_response := client.ask_with_system (persona_of (a_request), prompt_of (a_request))
+				l_response := client.ask_with_system (persona_of (a_request), contextual_prompt_of (a_request))
 			end
 			create l_now.make_now
 			record_run ((l_now.to_timestamp - l_started.to_timestamp).to_integer_32.max (0))
@@ -277,6 +304,11 @@ feature -- Basic operations
 				attached client.last_session_id as l_id and then client.is_valid_session_id (l_id)
 			then
 				remember_session (a_request.room_id, l_id)
+			elseif l_resumed and then sessions.has (a_request.room_id) then
+					-- The resume did not answer: the session may be gone, or
+					-- the CLI refused it. Never ask for it again - the next
+					-- turn starts fresh, carrying the context window.
+				forget_session (a_request.room_id)
 			end
 			if l_failed or l_response = Void then
 				create Result.make_error (unavailable_error ("the engine raised instead of answering"))
@@ -322,6 +354,20 @@ feature -- Conversion (contract support)
 			named: Result.has_substring (handle)
 			room_named: Result.has_substring (a_request.room_name)
 			register_kept: Result.has_substring ({STRING_32} "Never invent facts")
+		end
+
+	contextual_prompt_of (a_request: PARTICIPANT_REQUEST): STRING_32
+			-- The user prompt with memory: the room's recent messages
+			-- (`context_block_of'), then `prompt_of'. Identical to
+			-- `prompt_of' when the request carries no window, so a
+			-- participant configured with `context_messages = 0' sends
+			-- exactly what it always sent.
+		do
+			Result := context_block_of (a_request) + prompt_of (a_request)
+		ensure
+			carries_request: Result.ends_with (prompt_of (a_request))
+			plain_when_no_window: a_request.context_lines.is_empty implies Result.same_string (prompt_of (a_request))
+			window_first: not a_request.context_lines.is_empty implies Result.starts_with (context_block_of (a_request))
 		end
 
 	prompt_of (a_request: PARTICIPANT_REQUEST): STRING_32

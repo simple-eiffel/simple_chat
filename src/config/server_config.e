@@ -44,6 +44,7 @@ note
 			requests_per_hour = 5                # optional, positive
 			max_characters = 1200                # optional, positive
 			timeout_seconds = 120                # optional, positive
+			context_messages = 12                # optional, 0..50 recent room messages given with a request
 			query_shaper = "none"                # optional: "none", "plain" or an "@name"
 			response_shaper = "none"             # optional: same shapes
 			aliases = ["Claude:", "@cl"]         # optional; kept lowercase, unique across the whole file
@@ -399,6 +400,7 @@ feature -- Constants (the file's keys, mirroring the attribute names)
 	Key_requests_per_hour: STRING_32 = "requests_per_hour"
 	Key_max_characters: STRING_32 = "max_characters"
 	Key_timeout_seconds: STRING_32 = "timeout_seconds"
+	Key_context_messages: STRING_32 = "context_messages"
 	Key_query_shaper: STRING_32 = "query_shaper"
 	Key_response_shaper: STRING_32 = "response_shaper"
 	Key_aliases: STRING_32 = "aliases"
@@ -708,6 +710,27 @@ feature {NONE} -- File loading (simple_toml; D6: every read is validated, no set
 				end
 			end
 			a_participant.set_limits (l_requests, l_characters, l_timeout)
+			load_participant_context (a_entry, a_participant, a_index)
+		end
+
+	load_participant_context (a_entry: TOML_TABLE; a_participant: PARTICIPANT_CONFIG; a_index: INTEGER)
+			-- The optional context window - how many recent room messages
+			-- come with a request. Zero is allowed (no memory); anything
+			-- above `Context_maximum' is refused and the default kept, so a
+			-- fat number cannot quietly grow every prompt.
+		local
+			l_context: INTEGER
+		do
+			l_context := a_participant.context_messages
+			if attached integer_setting (a_entry, Key_context_messages, participant_field (a_index, Key_context_messages)) as l_cell then
+				if l_cell.item >= 0 and l_cell.item <= {PARTICIPANT_RULES}.Context_maximum.to_integer_64 then
+					l_context := l_cell.item.to_integer_32
+				else
+					note_error (participant_field (a_index, Key_context_messages),
+						"must be an integer from 0 to " + {PARTICIPANT_RULES}.Context_maximum.out)
+				end
+			end
+			a_participant.set_context_messages (l_context)
 		end
 
 	load_participant_shapers (a_entry: TOML_TABLE; a_participant: PARTICIPANT_CONFIG; a_index: INTEGER)

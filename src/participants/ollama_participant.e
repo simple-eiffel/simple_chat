@@ -7,6 +7,11 @@ note
 		carries no curl --max-time today), so `last_timed_out' derives from
 		`elapsed_seconds', an overrun is an error, and `elapsed_seconds' is
 		never clamped.
+
+		MEMORY (Phase 4): the local models keep no session, so the room's
+		recent messages (`context_block_of' over the request's
+		`context_lines') go in front of every question. With
+		`context_messages = 0' the prompt is exactly what it always was.
 	]"
 	author: "Larry Rix"
 
@@ -80,6 +85,7 @@ feature -- Basic operations
 				l_system.append_string_general (a_request.max_characters.out)
 				l_system.append ({STRING_32} " characters. Never invent facts about the people in the room.")
 				create l_prompt.make (a_request.text.count + a_request.asker_display_name.count + 8)
+				l_prompt.append (context_block_of (a_request))
 				l_prompt.append (a_request.asker_display_name)
 				l_prompt.append ({STRING_32} " asks: ")
 				l_prompt.append (a_request.text)

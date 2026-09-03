@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A participant is addressed by its handle anywhere in a message**, not only at the
+  start. The rule, stated once in `ADDRESS_PARSER`'s note and tested there: a message
+  mentions a participant when, anywhere in its text, an `@` stands that is **not itself
+  preceded by a handle character** (`a-z0-9_-`), the unbroken run of handle characters
+  after it **equals** that participant's handle or one of its `@`-shaped aliases, and
+  that run **ends the text or is followed by a character that is not a handle
+  character**. Case is folded on both sides. So `hello @Claude what is 2+2`,
+  `and times 3 @claude`, `@claude:`, `@Claude,`, `so what @claude?` and `(@CLAUDE)` all
+  address `@claude`; `@claudette` and `@claude_bot` do not (their run is longer — `_` is
+  a handle character); `bob@claude` does not (the `@` follows a handle character). A
+  message that names **two** bots is answered by both, each exactly once, in the order
+  it names them; the same message delivered twice still answers once per bot; a
+  bot-authored message never addresses anybody, so nothing can loop. The handle is taken
+  out of the question the engine sees. Colon aliases (`Claude:`) keep the older
+  start-of-text rule — anywhere else they are ordinary words — and `address_of`,
+  `is_addressed` and `parse` are untouched, so every message that was addressed before
+  is addressed exactly as before: a middle mention is rewritten into the leading form
+  (`ADDRESS_PARSER.addressed_body`) and travels the one addressed-request path that
+  already existed.
+- **Memory: a per-participant context window.** A new `[[participants]]` setting,
+  `context_messages` (0..50, **12** when not given), says how many of the room's most
+  recent messages come with every request. The dispatcher reads them from the room
+  itself through the new `CHAT_API.dispatcher_context`, oldest first, each prefixed by
+  its sender's display name and shortened to 400 characters, the bot's own replies among
+  them, and every engine puts them in front of the question
+  (`PARTICIPANT.context_block_of`, `CLAUDE_CODE_PARTICIPANT.contextual_prompt_of`). It
+  is read from the store, never from anything the dispatcher remembers, so it survives a
+  restart and holds the room's last N messages whether or not the bot was there when
+  they were posted. `context_messages = 0` sends exactly the prompt that was sent
+  before. Under it, `@claude` still resumes the room's CLI session, and now
+  **forgets a session that answered nothing** (`forget_session`), so a session the CLI
+  will not resume is never asked for twice.
+- **Ten assaults**, 196 → **206** (`testing/participants_assault.e`): the boundary rule
+  at the start, in the middle, at the end, against punctuation, case, a longer word, an
+  `@` inside a word, an `@`-shaped alias and the same handle named twice; the rewrite
+  into the leading address with the `via` surviving it; a middle mention answered once
+  with the handle out of the question; a bot's own mention, a longer word and a system
+  event addressing nobody; two bots in one message each replying once and the page
+  delivered twice not doubling either; the rate limit still charged and obeyed on a
+  middle mention; a three-turn exchange in a real room whose third request carries the
+  first two turns and the bot's own reply, oldest first; the window capped at
+  `context_messages` and taken away by zero; the session kept per room and dropped on
+  failure; and the configuration setting with its default, its zero and its cap.
+
+### Fixed
+
+- `PARTICIPANT_DISPATCHER` no longer makes a **separate call from a postcondition**
+  (`context_line_of` checked a display name by asking the API again). ISE SCOOP
+  evaluates a lock-passed call's postcondition after the caller's locks are returned,
+  and the late reach for a processor nobody is holding froze the dispatcher solid the
+  first time a context window had a line in it. The name is checked against the local
+  cache the body filled.
+
+### Known
+
+- The dispatcher answers the **first** `claude -p` of a server run and then freezes on
+  the **second**: no child is started, nothing is logged, the rest of the server keeps
+  serving. Reproduced on `main`'s own binary with two leading `@claude` turns, and with
+  a *second participant's first* call, so it is neither `--resume` nor the context
+  window nor the addressing rule. It sits below simple_chat, in the process/engine path.
+
 ## [0.1.2] — 2026-09-03
 
 The first-run release: a hosting install finishes by creating the first administrator, starting the server and opening the window, in that order; passwords never echo; the door says where the server is; the host can reset a password; every window inherits Vision2's spacing model from simple_widgets 0.4.0. Built against simple_winhttp 0.1.1, simple_process 1.0.1, simple_encryption 2.1.1, simple_shell 1.9.2, simple_widgets 0.4.0 and simple_console 1.1.0.

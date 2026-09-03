@@ -33,6 +33,31 @@ note
 		dispatcher lives on (NEW-7). One request at a time per participant,
 		in order, behind a bounded FIFO (`Max_queue_depth'). Bot-authored,
 		system and image events are never requests (no echo loops).
+
+		MENTION ANYWHERE (Phase 4). A page's events go to `handle_mentions',
+		not straight to `handle_event': a message asks something of everyone
+		it names, wherever in the text it names them (ADDRESS_PARSER's note
+		has the rule). The first of them - the classic leading address when
+		there is one, else the first mention - goes through `handle_event'
+		unchanged, addressed by `addressed_form' when the mention was in the
+		middle, so idempotence, the rate limit, `via', the queue and the
+		accounting are exactly what they always were. Every FURTHER
+		participant named in the same message is served by
+		`handle_extra_mention', which is idempotent per (event, handle) in
+		`answered_mentions' - `answered' holds one id and could not tell two
+		bots apart - and is pruned by the same floor. Both end in
+		`serve_request', the one place a participant is asked and its answer
+		posted. A bot's own message never mentions anybody: `is_bot_authored'
+		stops it before the parser is asked, so no bot can trigger another.
+
+		MEMORY (Phase 4). A request carries the room's last
+		`context_messages' messages (`context_lines_of', through the store,
+		newest last, each prefixed by its sender's display name) so a
+		follow-up - "and its cube root?" - reaches the engine with the turns
+		it refers to. The window is read from the room, not from anything
+		this dispatcher remembers, so it survives a restart and needs no
+		second copy of the history; it holds whatever the room's last N
+		messages are, including the ones posted before the bot was added.
 	]"
 	author: "Larry Rix"
 
@@ -73,6 +98,7 @@ feature {NONE} -- Initialization
 			create pending_rooms.make (4)
 			create cursors.make (4)
 			create answered.make (64)
+			create answered_mentions.make (64)
 			create queue_depths.make (4)
 			queue_depths.compare_objects
 			create codec.make
@@ -166,6 +192,14 @@ feature -- Access
 
 	asks: INTEGER
 			-- Engine calls made: one per request the room could take and the limiter allowed.
+
+	mentions_seen: INTEGER
+			-- Of `requests_seen', how many were taken from a mention that was
+			-- NOT the message's first address: the second and further bots
+			-- named in one message. Such a request counts in `requests_seen'
+			-- too - it is a request, and the invariant's books
+			-- (`answers_cover_requests', `asks_within_requests') are kept in
+			-- that one currency.
 
 	participants_registered: INTEGER
 			-- Participants the shared configuration brought to life at creation (Task 7 item 5).
@@ -286,6 +320,62 @@ feature -- Access
 			registered: attached Result as p implies registry.has (p.handle)
 		end
 
+	addressed_targets (a_event: CHAT_EVENT): ARRAYED_LIST [PARTICIPANT]
+			-- Everyone `a_event' asks something of, in the order the message
+			-- names them: the classic leading address first when there is one
+			-- (a colon alias is only ever that), then every other participant
+			-- mentioned anywhere in the text, each once. Empty for a
+			-- bot-authored event, a non-message, and a message that asks
+			-- nobody - so nothing here can start an echo loop.
+		local
+			l_handles: ARRAYED_LIST [STRING_32]
+		do
+			create Result.make (2)
+			if a_event.is_message and not a_event.is_bot_authored then
+				if attached target_of (a_event) as l_first then
+					Result.extend (l_first)
+				end
+				l_handles := parser.mentioned_handles (a_event.body)
+				across l_handles as h loop
+					if attached registry.find (h) as p and then not Result.has (p) then
+						Result.extend (p)
+					end
+				end
+			end
+		ensure
+			never_bots: a_event.is_bot_authored implies Result.is_empty
+			only_messages: not a_event.is_message implies Result.is_empty
+			registered: across Result as p all registry.has (p.handle) end
+			classic_leads: attached target_of (a_event) as t implies (not Result.is_empty and then Result.first = t)
+			each_once: across Result as p all Result.occurrences (p) = 1 end
+		end
+
+	extra_targets (a_event: CHAT_EVENT): ARRAYED_LIST [PARTICIPANT]
+			-- Everyone `a_event' names after the first: the participants
+			-- `handle_extra_mention' serves (contract support).
+		do
+			Result := addressed_targets (a_event)
+			if not Result.is_empty then
+				Result.start
+				Result.remove
+			end
+		ensure
+			one_fewer: Result.count = (addressed_targets (a_event).count - 1).max (0)
+			never_the_first: attached target_of (a_event) as t implies not Result.has (t)
+		end
+
+	mention_request_of (a_event: CHAT_EVENT; a_target: PARTICIPANT): detachable ADDRESSED_REQUEST
+			-- What `a_target' is asked by a message that names it anywhere:
+			-- the message read as though it had led with the handle. Void
+			-- when nothing is left to ask (a bare mention, or only a `via').
+		require
+			registered: registry.has (a_target.handle)
+		do
+			Result := parser.parse (parser.addressed_body (a_event.body, a_target.handle))
+		ensure
+			for_the_target: attached Result as r implies r.handle.same_string (a_target.handle)
+		end
+
 	target_calls (a_event: CHAT_EVENT): INTEGER
 			-- `calls' of `target_of (a_event)', or 0 (contract support).
 		do
@@ -325,6 +415,22 @@ feature -- Status report
 			Result := answered.has (a_event_id)
 		ensure
 			definition: Result = answered_model.has (a_event_id)
+		end
+
+	has_answered_mention (a_event_id: INTEGER_64; a_handle: READABLE_STRING_GENERAL): BOOLEAN
+			-- Has the extra mention of `a_handle' in event `a_event_id' been taken?
+		do
+			Result := answered_mentions.has (mention_key (a_event_id, a_handle))
+		ensure
+			definition: Result = answered_mentions.has (mention_key (a_event_id, a_handle))
+		end
+
+	answered_mention_count: INTEGER
+			-- How many (event, handle) extra mentions are remembered.
+		do
+			Result := answered_mentions.count
+		ensure
+			non_negative: Result >= 0
 		end
 
 feature -- Basic operations
@@ -419,7 +525,7 @@ feature -- Basic operations
 			if attached codec.page_from_bytes (a_bytes) as p then
 				across p.events as e loop
 					if e.room_id = a_room_id and e.id > cursor_of (a_room_id) then
-						handle_event (e)
+						handle_mentions (e)
 						cursors.force (e.id, a_room_id)
 					end
 				end
@@ -438,6 +544,127 @@ feature -- Basic operations
 			nothing_queued: pending_rooms_model |=| old pending_rooms_model
 		end
 
+	handle_mentions (a_event: CHAT_EVENT)
+			-- Take `a_event' as a request for EVERYONE it addresses - the
+			-- leading handle or alias it may start with, and every
+			-- participant it mentions anywhere in its text - each exactly
+			-- once. The first goes through `handle_event' untouched when the
+			-- message already led with it, and through `addressed_form' when
+			-- the mention was in the middle; the rest through
+			-- `handle_extra_mention'. A message that addresses nobody still
+			-- goes to `handle_event', which does nothing with it, so the
+			-- unaddressed path is the one it always was.
+		local
+			l_targets: ARRAYED_LIST [PARTICIPANT]
+			i: INTEGER
+		do
+			l_targets := addressed_targets (a_event)
+			if l_targets.is_empty then
+				handle_event (a_event)
+			else
+				if target_of (a_event) /= Void then
+					handle_event (a_event)
+				else
+					handle_event (addressed_form (a_event, l_targets.first.handle))
+				end
+				from i := 2 until i > l_targets.count loop
+					handle_extra_mention (a_event, l_targets [i])
+					i := i + 1
+				end
+			end
+		ensure
+			ignores_bots: a_event.is_bot_authored implies (requests_seen = old requests_seen and mentions_seen = old mentions_seen)
+			ignores_non_messages: not a_event.is_message implies (requests_seen = old requests_seen and mentions_seen = old mentions_seen)
+			nothing_when_unaddressed: addressed_targets (a_event).is_empty implies (requests_seen = old requests_seen and mentions_seen = old mentions_seen)
+			bounded: mentions_seen <= old mentions_seen + extra_targets (a_event).count
+			one_request_at_most_per_target: requests_seen <= old requests_seen + addressed_targets (a_event).count
+			cursors_unchanged: cursors_model |=| old cursors_model
+			queue_kept_or_grown: (old pending_rooms_model) <= pending_rooms_model
+		end
+
+	addressed_form (a_event: CHAT_EVENT; a_handle: READABLE_STRING_GENERAL): CHAT_EVENT
+			-- `a_event' with its body rewritten so `a_handle' leads it
+			-- (ADDRESS_PARSER's `addressed_body'), and everything else - the
+			-- id above all, which is what idempotence and the cursors are
+			-- keyed on - left exactly as it stands. A message that names the
+			-- bot in the middle therefore reaches `handle_event' in the one
+			-- shape it has always understood.
+		require
+			registered: registry.has (a_handle)
+			a_message: a_event.is_message
+			not_a_bot: not a_event.is_bot_authored
+		do
+			create Result.make (a_event.id, a_event.room_id, a_event.sender_id, a_event.kind, a_event.created_at,
+				parser.addressed_body (a_event.body, a_handle), a_event.attachment, a_event.payload, a_event.is_bot_authored)
+		ensure
+			same_identity: Result.id = a_event.id and Result.room_id = a_event.room_id and Result.sender_id = a_event.sender_id
+			same_kind: Result.kind.same_string (a_event.kind) and Result.is_bot_authored = a_event.is_bot_authored
+			addressed_now: parser.address_of (Result.body).same_string (a_handle.to_string_32.as_lower)
+		end
+
+	handle_extra_mention (a_event: CHAT_EVENT; a_target: PARTICIPANT)
+			-- Take `a_event' as a request for `a_target', a participant it
+			-- names but does not lead with, once and once only: `answered'
+			-- carries one id and cannot tell two bots in one message apart,
+			-- so these are remembered per (event, handle) in
+			-- `answered_mentions' and pruned by the same floor. Everything
+			-- after that - the room check, `via', the queue, the limiter, the
+			-- post - is `serve_request', the same path the leading address
+			-- takes. An engine that raises is one `answer_failure' with its
+			-- slot released, exactly as in `handle_event'.
+		require
+			addressed: addressed_targets (a_event).has (a_target)
+		local
+			l_failed, l_taken: BOOLEAN
+			l_key: STRING_32
+		do
+			if not l_failed then
+				last_answer_raised := False
+			end
+			l_key := mention_key (a_event.id, a_target.handle)
+			if l_failed then
+				if attached queued_target as q and then queue_depth_of (q) > 0 then
+					dequeue (q)
+					queued_target := Void
+				end
+				answer_failures := answer_failures + 1
+				last_answer_raised := True
+				log.error ({STRING_32} "dispatcher: participant raised answering the mention of " + a_target.handle
+					+ {STRING_32} " in event " + a_event.id.out
+					+ (if attached last_raise_reason as r then {STRING_32} " - " + r else {STRING_32} "" end))
+			elseif a_event.id > pruned_floor and then not answered_mentions.has (l_key)
+				and then attached mention_request_of (a_event, a_target) as l_request
+			then
+				answered_mentions.put (a_event.id, l_key)
+				mentions_seen := mentions_seen + 1
+				requests_seen := requests_seen + 1
+				l_taken := True
+				serve_request (a_event, a_target, l_request.text, l_request.via)
+			end
+		ensure
+			ancient_skipped: a_event.id <= (old pruned_floor) implies mentions_seen = old mentions_seen
+			skipped_when_seen: (old has_answered_mention (a_event.id, a_target.handle) or a_event.id <= (old pruned_floor)) implies
+				(mentions_seen = old mentions_seen and requests_seen = old requests_seen and asks = old asks and answers_posted = old answers_posted)
+			taken_once: (a_event.id > (old pruned_floor) and not (old has_answered_mention (a_event.id, a_target.handle))
+				and mention_request_of (a_event, a_target) /= Void) implies
+				(mentions_seen = old mentions_seen + 1 and requests_seen = old requests_seen + 1
+				and has_answered_mention (a_event.id, a_target.handle))
+			nothing_asked_is_nothing_done: mention_request_of (a_event, a_target) = Void implies
+				(mentions_seen = old mentions_seen and requests_seen = old requests_seen and asks = old asks
+				and answers_posted = old answers_posted and answer_failures = old answer_failures)
+			answered_untouched: answered_model |=| old answered_model
+			rate_limited_not_asked: not last_ask_granted implies a_target.calls = old a_target.calls
+			engine_failure_accounted: last_answer_raised implies (answer_failures = old answer_failures + 1 and answers_posted = old answers_posted)
+			queue_settled: queue_depth_of (a_target) = old queue_depth_of (a_target)
+			cursors_unchanged: cursors_model |=| old cursors_model
+		rescue
+			if l_taken and not l_failed then
+				l_failed := True
+				last_raise_reason := current_raise_reason
+				retry
+			end
+		end
+
 	handle_event (a_event: CHAT_EVENT)
 			-- Take `a_event' as a request if it is one and has not been taken
 			-- (ids at or below `pruned_floor' count as taken - NEW-6): ask
@@ -450,7 +677,6 @@ feature -- Basic operations
 			-- branch once: one `answer_failure', the queue slot released,
 			-- the dispatcher alive (NEW-7).
 		local
-			l_answer: PARTICIPANT_ANSWER
 			l_failed, l_taken, l_queued: BOOLEAN
 		do
 			if not l_failed then
@@ -460,8 +686,9 @@ feature -- Basic operations
 				-- The engine (or the posting path after it) raised: the
 				-- request was taken on the first attempt; release the slot
 				-- and account the failure.
-				if l_queued and then attached target_of (a_event) as l_crashed and then queue_depth_of (l_crashed) > 0 then
+				if l_queued and then attached queued_target as l_crashed and then queue_depth_of (l_crashed) > 0 then
 					dequeue (l_crashed)
+					queued_target := Void
 					l_queued := False
 				end
 				answer_failures := answer_failures + 1
@@ -472,39 +699,11 @@ feature -- Basic operations
 				answered.put (a_event.id, a_event.id)
 				requests_seen := requests_seen + 1
 				l_taken := True
-				last_ask_granted := False
-				create last_via_key.make_empty
-				last_can_post := can_post (api, l_target.bot_user.id, a_event.room_id)
-				if not last_can_post then
-					answer_failures := answer_failures + 1
-				elseif attached request_via_of (a_event) as l_choice and then not l_target.permits_via (l_choice) then
-					post_answer (l_target, a_event.room_id, Via_refused_text + l_choice)
-				elseif queue_depth_of (l_target) >= Max_queue_depth then
-					post_answer (l_target, a_event.room_id, Busy_text)
-				else
-					last_ask_key := l_target.limit_key (a_event.sender_id)
-					if attached via_target_of (a_event) as l_via_target and then l_via_target /= l_target then
-						last_via_key := l_via_target.limit_key (a_event.sender_id)
-						last_ask_granted := try_ask (api, last_ask_key) and then try_ask (api, last_via_key)
-					else
-						last_ask_granted := try_ask (api, last_ask_key)
-					end
-					if not last_ask_granted then
-						post_answer (l_target, a_event.room_id, Limited_text)
-					else
-						enqueue (l_target)
-						l_queued := True
-						l_answer := l_target.answer (request_of (a_event, l_target))
-						dequeue (l_target)
-						l_queued := False
-						asks := asks + 1
-						if l_answer.is_success then
-							post_answer (l_target, a_event.room_id, l_answer.text)
-						elseif attached l_answer.error as e then
-							post_answer (l_target, a_event.room_id, apology_for (e))
-						end
-					end
+				l_queued := True
+				check parsed_by_target_of: attached parser.parse (a_event.body) as r then
+					serve_request (a_event, l_target, r.text, r.via)
 				end
+				l_queued := False
 			end
 		ensure
 			ancient_skipped: a_event.id <= (old pruned_floor) implies (requests_seen = old requests_seen and answered_model |=| old answered_model)
@@ -601,6 +800,17 @@ feature {NONE} -- The API, only as a separate argument
 			create Result.make_from_separate (a_api.dispatcher_page (a_room_id, a_since_id, a_limit))
 		end
 
+	pull_context (a_api: separate CHAT_API; a_room_id, a_before_id: INTEGER_64; a_limit: INTEGER): STRING_8
+			-- The `a_limit' events of `a_room_id' just before `a_before_id',
+			-- copied here as bytes (the memory window - Phase 4).
+		require
+			positive_room: a_room_id > 0
+			before_positive: a_before_id > 0
+			limit_in_range: a_limit > 0 and a_limit <= {CHAT_SERVICE}.Page_maximum
+		do
+			create Result.make_from_separate (a_api.dispatcher_context (a_room_id, a_before_id, a_limit))
+		end
+
 	can_post (a_api: separate CHAT_API; a_bot_user_id, a_room_id: INTEGER_64): BOOLEAN
 			-- May bot `a_bot_user_id' post in `a_room_id'?
 		do
@@ -658,6 +868,29 @@ feature {NONE} -- Implementation
 	answered: HASH_TABLE [INTEGER_64, INTEGER_64]
 			-- The ids of the requests taken.
 
+	answered_mentions: HASH_TABLE [INTEGER_64, STRING_32]
+			-- "<event id>:<handle>" -> the event id, for every EXTRA mention
+			-- taken: `answered' holds one id per event and could not tell two
+			-- bots named in one message apart. Pruned by the same floor, so
+			-- it stays as bounded as `answered' (NEW-6).
+
+	queued_target: detachable PARTICIPANT
+			-- The participant whose queue slot is out while its engine runs;
+			-- Void between requests. A rescue reads it to give the slot back.
+
+	mention_key (a_event_id: INTEGER_64; a_handle: READABLE_STRING_GENERAL): STRING_32
+			-- The `answered_mentions' key for `a_handle' in event `a_event_id'.
+		require
+			positive_id: a_event_id > 0
+			handle_given: not a_handle.is_empty
+		do
+			create Result.make_from_string_general (a_event_id.out)
+			Result.append_character (':')
+			Result.append_string_general (a_handle.to_string_32.as_lower)
+		ensure
+			shaped: Result.has_substring (a_event_id.out) and Result.ends_with (a_handle.to_string_32.as_lower)
+		end
+
 	queue_depths: HASH_TABLE [INTEGER, STRING_32]
 			-- Handle -> requests accepted and not yet answered.
 
@@ -707,14 +940,182 @@ feature {NONE} -- Implementation
 			Result := a_api.dispatcher_last_event_sender (a_room_id) = a_bot_user_id
 		end
 
+	serve_request (a_event: CHAT_EVENT; a_target: PARTICIPANT; a_text: READABLE_STRING_32; a_via: detachable READABLE_STRING_32)
+			-- Ask `a_target' `a_text' on behalf of `a_event' and post what
+			-- comes back: the room check, the `via' the target must permit
+			-- (else an explicit refusal, NEW-10), the bounded queue, the
+			-- asker's rate limit under both keys when the `via' names a
+			-- second participant (Issue 15), then one engine call and one
+			-- post - a reply, a refusal or an apology. The ONE place a
+			-- participant is asked, so the leading address and a middle
+			-- mention are served by the same rules. The caller owns taking
+			-- the request (idempotence, the counters) and the rescue that
+			-- releases the slot: `queued_target' names the participant whose
+			-- slot is out while the engine runs.
+		require
+			text_given: not a_text.is_empty
+			via_shaped: attached a_via as v implies (create {PARTICIPANT_RULES}).is_via_choice (v)
+		local
+			l_answer: PARTICIPANT_ANSWER
+		do
+			last_ask_granted := False
+			create last_via_key.make_empty
+			last_can_post := can_post (api, a_target.bot_user.id, a_event.room_id)
+			if not last_can_post then
+				answer_failures := answer_failures + 1
+			elseif attached a_via as l_choice and then not a_target.permits_via (l_choice) then
+				post_answer (a_target, a_event.room_id, Via_refused_text + l_choice)
+			elseif queue_depth_of (a_target) >= Max_queue_depth then
+				post_answer (a_target, a_event.room_id, Busy_text)
+			else
+				last_ask_key := a_target.limit_key (a_event.sender_id)
+				if attached a_via as l_choice2 and then attached registry.find (l_choice2) as l_via_target and then l_via_target /= a_target then
+					last_via_key := l_via_target.limit_key (a_event.sender_id)
+					last_ask_granted := try_ask (api, last_ask_key) and then try_ask (api, last_via_key)
+				else
+					last_ask_granted := try_ask (api, last_ask_key)
+				end
+				if not last_ask_granted then
+					post_answer (a_target, a_event.room_id, Limited_text)
+				else
+					enqueue (a_target)
+					queued_target := a_target
+					l_answer := a_target.answer (built_request (a_event, a_target, a_text, a_via))
+					dequeue (a_target)
+					queued_target := Void
+					asks := asks + 1
+					if l_answer.is_success then
+						post_answer (a_target, a_event.room_id, l_answer.text)
+					elseif attached l_answer.error as e then
+						post_answer (a_target, a_event.room_id, apology_for (e))
+					end
+				end
+			end
+		ensure
+			accounted: answers_posted + answer_failures = old answers_posted + old answer_failures + 1
+			asked_once_when_granted: last_ask_granted implies (asks = old asks + 1 and a_target.calls = old a_target.calls + 1)
+			not_asked_when_refused: not last_ask_granted implies (asks = old asks and a_target.calls = old a_target.calls)
+			charged: last_ask_granted implies last_ask_key.same_string (a_target.limit_key (a_event.sender_id))
+			slot_returned: queue_depth_of (a_target) = old queue_depth_of (a_target) and queued_target = Void
+			nothing_taken: requests_seen = old requests_seen and mentions_seen = old mentions_seen
+		end
+
+	built_request (a_event: CHAT_EVENT; a_target: PARTICIPANT; a_text: READABLE_STRING_32; a_via: detachable READABLE_STRING_32): PARTICIPANT_REQUEST
+			-- What `a_target' is asked, with the room's recent conversation
+			-- attached when `a_target' carries a context window. The window
+			-- is read from the room, never from `a_text': the question stays
+			-- exactly what was asked.
+		require
+			text_given: not a_text.is_empty
+			asker_stored: a_event.sender_id > 0
+			via_shaped: attached a_via as v implies (create {PARTICIPANT_RULES}).is_via_choice (v)
+		do
+			create Result.make_addressed (a_event.sender_id, display_name_of (api, a_event.sender_id), a_text,
+				a_event.room_id, room_name_of (api, a_event.room_id), a_target.max_characters, a_via)
+			if a_target.context_messages > 0 then
+				Result.set_context (context_lines_of (a_event, a_target.context_messages))
+			end
+		ensure
+			same_room: Result.room_id = a_event.room_id
+			same_asker: Result.asker_id = a_event.sender_id
+			text_carried: Result.text.same_string_general (a_text)
+			bounded_window: Result.context_lines.count <= a_target.context_messages
+			no_window_when_none: a_target.context_messages = 0 implies Result.context_lines.is_empty
+		end
+
+	context_lines_of (a_event: CHAT_EVENT; a_count: INTEGER): ARRAYED_LIST [STRING_32]
+			-- The room's last `a_count' messages before `a_event', oldest
+			-- first, each "<sender display name>: <text>". Read from the
+			-- store through the API, so it survives a restart and holds
+			-- whatever the room's last messages are - the bot's own replies
+			-- among them, which is what makes a follow-up answerable.
+		require
+			positive_count: a_count > 0 and a_count <= {PARTICIPANT_RULES}.Context_maximum
+			positive_id: a_event.id > 0
+			positive_room: a_event.room_id > 0
+		local
+			l_names: HASH_TABLE [STRING_32, INTEGER_64]
+			l_all: ARRAYED_LIST [STRING_32]
+			i: INTEGER
+		do
+			create Result.make (a_count)
+			create l_names.make (4)
+			create l_all.make (a_count)
+			if attached codec.page_from_bytes (pull_context (api, a_event.room_id, a_event.id, context_pull_of (a_count))) as p then
+				across p.events as e loop
+					if e.is_message and e.id /= a_event.id then
+						l_all.extend (context_line_of (e, l_names))
+					end
+				end
+			end
+			from i := (l_all.count - a_count + 1).max (1) until i > l_all.count loop
+				Result.extend (l_all [i])
+				i := i + 1
+			end
+		ensure
+			bounded: Result.count <= a_count
+			none_empty: across Result as l all not l.is_empty end
+		end
+
+	context_pull_of (a_count: INTEGER): INTEGER
+			-- How many events to pull to find `a_count' messages: twice as
+			-- many, so a run of joins and leaves cannot empty the window,
+			-- and never past the page limit.
+		require
+			positive: a_count > 0
+		do
+			Result := (a_count * 2).min ({CHAT_SERVICE}.Page_maximum)
+		ensure
+			at_least: Result >= a_count
+			in_range: Result > 0 and Result <= {CHAT_SERVICE}.Page_maximum
+		end
+
+	context_line_of (a_event: CHAT_EVENT; a_names: HASH_TABLE [STRING_32, INTEGER_64]): STRING_32
+			-- One window line for `a_event': its sender's display name (asked
+			-- of the API once per sender, `a_names' remembering it), then its
+			-- text, shortened to `Context_line_maximum'. A bot's body opens
+			-- with the marker its display name already carries; the second
+			-- copy is dropped, never the first.
+		require
+			a_message: a_event.is_message
+		local
+			l_name, l_body: STRING_32
+		do
+			if attached a_names.item (a_event.sender_id) as l_known then
+				l_name := l_known
+			else
+				l_name := display_name_of (api, a_event.sender_id)
+				a_names.force (l_name, a_event.sender_id)
+			end
+			l_body := a_event.body.twin
+			if l_body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker) then
+				l_body := l_body.substring ({CHAT_EVENT_KINDS}.Bot_marker.count + 1, l_body.count)
+				l_body.left_adjust
+			end
+			if l_body.count > Context_line_maximum then
+				l_body := l_body.substring (1, Context_line_maximum)
+			end
+			Result := l_name + {STRING_32} ": " + l_body
+		ensure
+			named: attached a_names.item (a_event.sender_id) as n and then Result.has_substring (n)
+			remembered: a_names.has (a_event.sender_id)
+			separated: Result.has_substring ({STRING_32} ": ")
+			given: not Result.is_empty
+				-- The name is checked against the LOCAL copy, never by asking
+				-- the API again: ISE SCOOP evaluates a lock-passed call's
+				-- postcondition after the caller's locks are returned, and a
+				-- separate call made there reaches for a processor nobody is
+				-- holding for it - which froze this dispatcher solid the first
+				-- time a window had a line in it.
+		end
+
 	request_of (a_event: CHAT_EVENT; a_target: PARTICIPANT): PARTICIPANT_REQUEST
 			-- What `a_target' is asked by `a_event'.
 		require
 			is_request: target_of (a_event) = a_target
 		do
 			check parsed_by_target_of: attached parser.parse (a_event.body) as r then
-				create Result.make_addressed (a_event.sender_id, display_name_of (api, a_event.sender_id), r.text,
-					a_event.room_id, room_name_of (api, a_event.room_id), a_target.max_characters, r.via)
+				Result := built_request (a_event, a_target, r.text, r.via)
 			end
 		ensure
 			same_room: Result.room_id = a_event.room_id
@@ -758,12 +1159,33 @@ feature {NONE} -- Implementation
 			across l_dead as d loop
 				answered.remove (d)
 			end
+			prune_answered_mentions (l_floor)
 			pruned_floor := l_floor
 		ensure
 			floor_set: pruned_floor = minimum_cursor
 			kept_above: across answered as ic all @ic.key > pruned_floor end
 			nothing_added: answered_model <= old answered_model
 			floor_monotone: pruned_floor >= old pruned_floor
+		end
+
+	prune_answered_mentions (a_floor: INTEGER_64)
+			-- Drop every extra mention taken at or below `a_floor': its room's
+			-- cursor is past it, so no page can deliver it again (NEW-6).
+		local
+			l_dead: ARRAYED_LIST [STRING_32]
+		do
+			create l_dead.make (8)
+			across answered_mentions as ic loop
+				if ic <= a_floor then
+					l_dead.extend (@ic.key)
+				end
+			end
+			across l_dead as d loop
+				answered_mentions.remove (d)
+			end
+		ensure
+			kept_above: across answered_mentions as ic all ic > a_floor end
+			nothing_added: answered_mentions.count <= old answered_mentions.count
 		end
 
 	apology_for (a_error: CHAT_ERROR): STRING_32
@@ -839,6 +1261,7 @@ feature {NONE} -- Population (Task 7 item 5)
 				end
 			end
 			if attached l_participant as p then
+				p.set_context_messages (a_config.context_messages)
 				registry.register (p)
 				participants_registered := participants_registered + 1
 				register_aliases (a_config)
@@ -1108,6 +1531,10 @@ feature {NONE} -- Population (Task 7 item 5)
 		end
 
 feature -- Constants
+
+	Context_line_maximum: INTEGER = 400
+			-- The longest a single window line may be: a reminder of what was
+			-- said, not the whole of a long message.
 
 	Max_queue_depth: INTEGER = 8
 			-- Requests waiting for one participant beyond which the next is refused.
