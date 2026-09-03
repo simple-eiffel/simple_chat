@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-09-02
+
+Libraries this release is built against, each fixed today for the same
+defect class (a C external that waits without the `blocking` marker stalls
+ISE's collector and every SCOOP processor with it): simple_winhttp 0.1.1
+(the client's long poll), simple_process 1.0.1 (the server no longer freezes
+the whole room while `claude -p` or a curl-driven engine thinks),
+simple_encryption 2.1.1 (login hashing crosses on C memory), simple_shell
+1.9.2 (the window's message pump and popup menu).
+
 ### Fixed
 
 - **The window froze for up to twenty-five seconds at a time after a few posts**
