@@ -25,6 +25,7 @@ feature {NONE} -- Initialization
 		do
 			create shown_ids.make (16)
 			create errors.make (4)
+			create hints.make (4)
 			create status.make_empty
 			is_foreground := True
 		ensure
@@ -53,6 +54,8 @@ feature -- Access
 
 	shown_ids: ARRAYED_LIST [INTEGER_64]
 	errors: ARRAYED_LIST [STRING_32]
+	hints: ARRAYED_LIST [STRING_32]
+			-- Every `show_hint' text, in order - the assault's window onto them.
 	status: STRING_32
 	mine_count: INTEGER
 	endpoint: detachable CHAT_ENDPOINT
@@ -66,6 +69,12 @@ feature -- Status report
 
 	is_connected: BOOLEAN
 			-- What the last `show_connection' said; False until one.
+
+	hint_count: INTEGER
+			-- How many `show_hint' calls have landed.
+		do
+			Result := hints.count
+		end
 
 	flips_on_show: BOOLEAN
 			-- Does each `show_event' toggle `is_foreground'?
@@ -124,8 +133,16 @@ feature -- Basic operations
 			endpoint_kept: endpoint = a_endpoint
 		end
 
+	show_hint (a_text: READABLE_STRING_GENERAL)
+		do
+			hints.extend (a_text.to_string_32)
+		ensure then
+			kept: hints.count = old hints.count + 1 and hints.last.same_string_general (a_text)
+		end
+
 invariant
 	model_consistent: shown_model.count = shown_ids.count
 	connections_non_negative: connection_count >= 0
+	hint_count_matches: hint_count = hints.count
 
 end

@@ -40,6 +40,23 @@ note
 		that has not been created is in front of nobody, and a headless
 		assault therefore drives the counting branch.
 
+		THE VERTICAL ACCOUNTING. Two of this pane's five rows are silent
+		most of the time, and simple_widgets 0.4.0 measures a label from the
+		FONT whether or not it has anything in it - so an empty status line
+		and an empty error line reserved a full row each (about forty-seven
+		pixels apiece at this window's 2x scale) and the column charged a
+		theme gap for each of them on top. That is the fixed band Larry saw
+		between the last bubble and the composer. STATUS_LINE makes silence
+		free and COLLAPSING_COLUMN stops charging a join for a flat child, so
+		the thread sits ONE theme gap above the composer and gets the row
+		back the instant there is something to say.
+
+		And the composer strip is a COMPOSER_ROW, not a plain SW_ROW, because
+		a plain row measures a wrapping child at the whole row's width while
+		arranging it at its share of that width - which made the composer's
+		second line paint below the box until the text was long enough to
+		wrap at the wider measuring width too.
+
 		SENDING. `on_submit' on the composer and the Send button run the
 		same `submit', which hands the text to the host's agent and clears
 		the line. Nothing here posts: the presenter owns that, and the
@@ -65,8 +82,9 @@ feature {NONE} -- Initialization
 			named: not a_room_title.is_empty
 			sane_size: a_width > 0 and a_height > 0
 		local
-			l_root: SW_COLUMN
-			l_header, l_composer: SW_ROW
+			l_root: COLLAPSING_COLUMN
+			l_header: SW_ROW
+			l_composer: COMPOSER_ROW
 		do
 			create room_title.make_from_string_general (a_room_title)
 			create shown_ids.make (64)
@@ -93,10 +111,10 @@ feature {NONE} -- Initialization
 			create unread_label.make_ui ("")
 			create connection_label.make_ui (Text_unreachable)
 			connection_label.set_muted (True)
-			create status_label.make_ui ("")
+			create {STATUS_LINE} status_label.make_ui ("")
 			status_label.set_muted (True)
-			create error_label.make_ui ("")
-			create input.make_single_line ("")
+			create {STATUS_LINE} error_label.make_ui ("")
+			create input.make_wrapping ("")
 			input.set_grow (1.0)
 			create send_button.make_primary (Text_send, Void)
 			create l_header.make
@@ -113,6 +131,7 @@ feature {NONE} -- Initialization
 			l_root.put (error_label)
 			l_root.put (l_composer)
 			root := l_root
+			composer := l_composer
 			window.set_root (l_root)
 				-- The agents come LAST, and that is void safety, not taste: an agent on
 				-- Current lets Current escape, so every attribute has to be set first.
@@ -150,6 +169,15 @@ feature -- Access
 
 	root: SW_COLUMN
 			-- Header, thread, status, error, composer.
+
+	composer: SW_ROW
+			-- The strip along the bottom: the wrapping box and the Send button.
+
+	status_label: SW_LABEL
+			-- The ephemeral line between the thread and the composer.
+
+	error_label: SW_LABEL
+			-- The last error, on its own line under the status line.
 
 	room_title: STRING_32
 			-- What the header strip calls this room.
@@ -189,6 +217,9 @@ feature -- Status report
 
 	is_connected: BOOLEAN
 			-- What the window last said about the server.
+
+	hint_count: INTEGER
+			-- How many `show_hint' bubbles have been added.
 
 feature -- Element change
 
@@ -269,6 +300,18 @@ feature -- Basic operations
 			redraw
 		ensure then
 			endpoint_kept: endpoint = a_endpoint
+		end
+
+	show_hint (a_text: READABLE_STRING_GENERAL)
+			-- A system-role bubble in the thread - the same centred role a real
+			-- system event draws with, but never added to `shown_ids': it named
+			-- nobody's message and carries no server id.
+		do
+			thread.add_message ({SW_CHAT_THREAD}.Role_system, a_text)
+			hint_count := hint_count + 1
+			redraw
+		ensure then
+			bubbled: thread.count = old thread.count + 1
 		end
 
 	run
@@ -426,8 +469,6 @@ feature {NONE} -- Implementation
 	title_label: SW_LABEL
 	unread_label: SW_LABEL
 	connection_label: SW_LABEL
-	status_label: SW_LABEL
-	error_label: SW_LABEL
 	send_button: SW_BUTTON
 
 feature -- Constants
@@ -441,6 +482,7 @@ feature -- Constants
 invariant
 	model_consistent: shown_model.count = shown_ids.count
 	unread_non_negative: unread >= 0
+	hint_count_non_negative: hint_count >= 0
 	titled: not room_title.is_empty
 	shaped_text_on: attached window.shaping
 

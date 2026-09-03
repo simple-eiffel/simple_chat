@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A wrapping, growing composer** (`apps/client/chat_input_box.e`, `CHAT_INPUT_BOX`). Larry's
+  report from the live room: "The input textbox/field does not wrap within the textbox. That is
+  a problem." The one-line `SW_TEXT_BOX` composer is now multi-line and measured-word-wrapping
+  (`make_wrapping`, alongside the still-available `make_single_line`): text wraps at the box's
+  width, the box grows with its content from one line up to a cap of five lines at the theme's
+  own scaled line height, and past the cap it scrolls internally (`draw` clips to the held
+  rectangle and shifts the parent's own painting up by the overflow) rather than growing the
+  window further. Plain **Return sends** and never leaves a trailing newline in the sent text,
+  even when the last thing typed was a Shift+Return with nothing after it; **Shift+Return**
+  inserts a newline, exactly the way the parent's own multi-line Return always has. Detecting
+  Shift on a Return that only ever arrives at `handle_char` as a bare character code required a
+  small `handle_key` redefinition too: `SW_WINDOW` dispatches the paired `WM_KEYDOWN` — carrying
+  the live Shift flag — immediately before the `WM_CHAR` that reaches `handle_char`, so
+  `handle_key` remembers it a moment early. `SW_CHAT_VIEW` now creates the composer with
+  `make_wrapping` in place of `make_single_line`.
+
+- **`@claude` discoverability** (`CHAT_VIEW.show_hint`/`hint_count`, effected in `SW_CHAT_VIEW` and
+  `MEMORY_CHAT_VIEW`; `CHAT_PRESENTER.bot_members`; `CLIENT_APP.open_room`). Larry's report: "I am
+  unsure how to send questions to the embedded Claude instance." (He then typed "@Claude Who are
+  you?" and it worked — the match was already case-insensitive; the problem was never knowing the
+  convention existed.) `CLIENT_APP.open_room` now shows one system-role bubble the moment a room's
+  roster (already fetched by the existing `load_roster`/`GET /rooms/{id}/members`) lists a bot,
+  naming every bot member actually present by its real `@username` — never a literal `"@claude"`
+  typed into this codebase, so the hint stays true the day a bot is renamed or a second one joins.
+  No hint is shown when the roster carries no bot.
+
+### Fixed
+
+- **The composer grows on the frame the wrap happens** (`apps/client/composer_row.e`,
+  `COMPOSER_ROW`; `SW_CHAT_VIEW`). Larry, typing into the live room at 2x: "The new wrap-of-text
+  will start below the textbox area until I get to about 1/3-1/2 of the way left-to-right and only
+  then does the text box grow in size." Nothing was stale and nothing was deferred: `SW_WINDOW`
+  re-lays the whole tree out on every frame — `after_input` runs `render`, and `render` runs
+  `arrange` then `draw` — so the box is measured and painted inside the same frame as the
+  keystroke that changed it. The disagreement was a WIDTH. `SW_ROW.arrange_line` hands each child
+  its share of the row (the non-growers keep their natural widths, the growers split what is left),
+  but `SW_ROW.preferred_height` asks every child for its height at the WHOLE row width, as if the
+  child were alone on it. For a label or a button that is harmless — their heights do not depend
+  on width. For a wrapping `SW_TEXT_BOX` it meant the composer was measured **120 px wider than it
+  was drawn** — the `Send` button's 104 px plus one 16 px theme gap — so the paint wrapped to
+  a second line while the measurement still said one, the column gave the row a one-line height, and
+  the second line landed BELOW the box until the text was long enough to wrap at the wider measuring
+  width too. That surplus is exactly how far across the second line got before the box finally grew.
+  Measured offscreen at 2x: the box is 732 px wide inside an 852 px row, and the first frame that
+  painted outside the box came at character 48 of an 80-character sentence — seven such frames in
+  all. `COMPOSER_ROW` measures the way `arrange_line` allocates, so the measured width and the
+  painted width are the same number; the bad-frame count is now zero.
+
+- **Empty status and error lines take no vertical space** (`apps/client/status_line.e`,
+  `STATUS_LINE`; `apps/client/collapsing_column.e`, `COLLAPSING_COLUMN`; `SW_CHAT_VIEW`). Larry:
+  "What remains is a rather large space between the bottom of the text area (above) and the top of
+  this textbox/field below. The space isn't huge, but remains fixed-space between the two." Measured
+  offscreen at 2x it was **142 px**, and every pixel of it is accounted for: since simple_widgets
+  0.4.0 an `SW_LABEL` measures its height from the FONT whether or not it has any text, so the empty
+  status line and the empty error line reserved **47 px each**, and `SW_COLUMN` charges a theme gap
+  for every join whether or not the child has any height — **16 + 47 + 16 + 47 + 16 = 142**.
+  `STATUS_LINE` asks for zero height (and paints nothing) while its text is empty;
+  `COLLAPSING_COLUMN` treats a flat child as ABSENT, so it costs no row and no join. The thread now
+  sits exactly **one theme gap — 16 px** above the composer (thread bottom 528, composer top
+  544), and a line gets its row back on the very next frame the instant there is something to say:
+  nothing is added to or removed from the tree and there is no flag to get out of step, because the
+  column re-asks every frame. The gap stays 16 px as the composer grows, which is what Larry already
+  observed of the old one. Both rules belong in simple_widgets — an empty label should be free,
+  and a zero-height child should not buy a gap — and are written here only because simple_widgets
+  is checked out on `fix/chat-thread-scrolling` this week. Evidence:
+  `.eiffel-workflow/evidence/gap-before.png` and `gap-after.png`, rendered offscreen at the room's
+  real 2x scale.
+
+### Testing
+
+- Three more assaults in `testing/window_assault.e`, **201 — 204**, all offscreen at the room's
+  real 2x scale and driving whole frames through `SW_WINDOW.request_render` — the same `render`
+  (arrange, then draw) a keystroke triggers.
+  `test_composer_grows_on_the_frame_the_wrap_happens` types an 80-character sentence one
+  `handle_char` at a time and, after EVERY frame, requires the height the box was given to equal the
+  height its own wrapped text needs AT THE WIDTH IT WAS GIVEN — zero bad frames now, seven
+  before, the first at character 48 — names the number the two halves have to agree on,
+  requiring `COMPOSER_ROW.allotted_width` for the box to equal the box's own `width`, and requires
+  the grown box to be a whole number of rows
+  plus its own inset (132 px = 2 x 60 + 12; the EMPTY box is not one row but 80 px, floored at the
+  painter's `min_control_height`, which is why the law is stated of the grown box).
+  `test_empty_status_rows_cost_nothing_and_a_spoken_one_costs_its_row` requires both empty lines to
+  ask for zero height and to be given none, the thread to sit one theme gap above the composer, and
+  a line that speaks to get its natural `line_step` back with the pane giving up exactly that row
+  plus its one new gap. `test_the_gap_holds_while_the_composer_grows` requires the gap to be one
+  theme gap with an empty composer AND unchanged with a paragraph in it, prints the whole vertical
+  accounting, and writes `.eiffel-workflow/evidence/gap-after.png` from that very state.
+
+- Three new assaults in `testing/window_assault.e` prove the composer directly against the real
+  `SW_CHAT_VIEW`/`CHAT_INPUT_BOX`, calling `preferred_height`/`draw`/`handle_key`/`handle_char` the
+  way a real keypress pair would, entirely offscreen: growth is exactly one `row_height` per line
+  from one line to the five-line cap and then holds flat past it
+  (`test_composer_grows_with_content_then_caps_at_five_lines`); `draw`'s temporary scroll shift of
+  its own `y` is fully restored after painting past the cap
+  (`test_composer_draw_restores_its_own_geometry_after_scrolling`); and Shift+Return inserts a
+  newline while a plain Return after it sends the whole line with none trailing
+  (`test_composer_return_sends_but_shift_return_inserts_a_newline`). Two more prove the hint through
+  the real `CLIENT_APP.open_room`, one roster with a bot and one without
+  (`test_client_app_hints_the_room_when_a_bot_is_in_the_roster`,
+  `test_client_app_shows_no_hint_when_the_roster_has_no_bot`). 196 → **201** assaults.
+
 ## [0.1.2] — 2026-09-03
 
 The first-run release: a hosting install finishes by creating the first administrator, starting the server and opening the window, in that order; passwords never echo; the door says where the server is; the host can reset a password; every window inherits Vision2's spacing model from simple_widgets 0.4.0. Built against simple_winhttp 0.1.1, simple_process 1.0.1, simple_encryption 2.1.1, simple_shell 1.9.2, simple_widgets 0.4.0 and simple_console 1.1.0.

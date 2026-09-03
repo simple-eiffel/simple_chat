@@ -45,6 +45,14 @@ feature -- Status report
 		deferred
 		end
 
+	hint_count: INTEGER
+			-- How many `show_hint' calls have landed, so a host can prove one fired
+			-- (or refused to, with nobody to address) without reading pixels.
+		deferred
+		ensure
+			non_negative: Result >= 0
+		end
+
 feature -- Basic operations
 
 	show_event (a_event: CHAT_EVENT; a_sender_name: READABLE_STRING_GENERAL; a_mine: BOOLEAN)
@@ -78,6 +86,18 @@ feature -- Basic operations
 		ensure
 			events_unchanged: shown_model |=| old shown_model
 			recorded: is_connected = a_connected
+		end
+
+	show_hint (a_text: READABLE_STRING_GENERAL)
+			-- A one-time, client-side note in the pane (discoverability, never a
+			-- server fact) - a system-role bubble, or whatever the descendant
+			-- draws one as. Never a server event, so `shown_model' never moves.
+		require
+			said: not a_text.is_empty
+		deferred
+		ensure
+			counted: hint_count = old hint_count + 1
+			events_unchanged: shown_model |=| old shown_model
 		end
 
 end

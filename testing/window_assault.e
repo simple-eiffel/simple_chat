@@ -157,6 +157,93 @@ feature -- The pane: CHAT_VIEW's contracts over simple_widgets
 			assert ("an ordinary character types, it does not send", sent.count = 1 and v.input.text.count = 6)
 		end
 
+	test_composer_grows_with_content_then_caps_at_five_lines
+			-- One line to five, each an exact `row_height' taller than the last -
+			-- then the cap holds no matter how much more is typed. Explicit
+			-- newlines (what Shift+Return inserts, proven separately below) give an
+			-- exact line count independent of font-measured word wrap, so the cap
+			-- boundary is provable without reading a single pixel.
+		local
+			v: SW_CHAT_VIEW
+			p: SW_PAINTER
+			row, h1, h2, h3, h4, h5, h6, h20: REAL_64
+		do
+			v := pane
+			p := v.window.painter
+			row := v.input.row_height (p)
+			assert ("a real row has real height", row > 0.0)
+			h1 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb")
+			h2 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc")
+			h3 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc%Nd")
+			h4 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc%Nd%Ne")
+			h5 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc%Nd%Ne%Nf")
+			h6 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "1%N2%N3%N4%N5%N6%N7%N8%N9%N10%N11%N12%N13%N14%N15%N16%N17%N18%N19%N20")
+			h20 := v.input.preferred_height (p, 300.0)
+			assert ("empty grows toward two lines", h1 < h2)
+			assert ("two grows toward three, by exactly one row", (h3 - h2 - row).abs < 0.01)
+			assert ("three grows toward four, by exactly one row", (h4 - h3 - row).abs < 0.01)
+			assert ("four grows toward five, by exactly one row - the cap", (h5 - h4 - row).abs < 0.01)
+			assert ("a sixth line does not grow the box further", h6 = h5)
+			assert ("nor does a twentieth", h20 = h5)
+		end
+
+	test_composer_draw_restores_its_own_geometry_after_scrolling
+			-- Past the cap, `draw' shifts its own `y' to scroll the tail into view
+			-- and must put it back before returning - the box is asked its
+			-- position by hit-testing and by every sibling in the row, and a
+			-- leaked shift would misplace both.
+		local
+			v: SW_CHAT_VIEW
+			p: SW_PAINTER
+			l_before_x, l_before_y, l_before_w, l_before_h: REAL_64
+		do
+			v := pane
+			p := v.window.painter
+			v.input.set_text ({STRING_32} "1%N2%N3%N4%N5%N6%N7%N8%N9%N10")
+			v.input.set_bounds (12.0, 640.0, 300.0, v.input.preferred_height (p, 300.0))
+			l_before_x := v.input.x
+			l_before_y := v.input.y
+			l_before_w := v.input.width
+			l_before_h := v.input.height
+			v.input.draw (p)
+			assert ("geometry is exactly what it was before painting",
+				v.input.x = l_before_x and v.input.y = l_before_y
+					and v.input.width = l_before_w and v.input.height = l_before_h)
+		end
+
+	test_composer_return_sends_but_shift_return_inserts_a_newline
+			-- `handle_key' sees Shift on the Return keydown that always precedes the
+			-- paired `handle_char'; a headless test drives the same pair by hand.
+		local
+			v: SW_CHAT_VIEW
+		do
+			v := pane
+			sent.wipe_out
+			v.set_on_send (agent record_sent)
+			v.input.set_text ({STRING_32} "line one")
+				-- `set_text' never moves the caret past what it already was (a fresh
+				-- box's is 0), so the caret has to be walked to the end by hand before
+				-- Shift+Return can append rather than insert at the front.
+			v.input.select_all
+			v.input.handle_key (39, False)
+			v.input.handle_key (13, True)
+			v.input.handle_char (13)
+			assert ("Shift+Return inserted a newline and sent nothing",
+				sent.is_empty and v.input.text.same_string_general ({STRING_32} "line one%N"))
+			v.input.handle_key (13, False)
+			v.input.handle_char (13)
+			assert ("a plain Return after it sent the whole thing and cleared the box",
+				sent.count = 1 and v.input.text.is_empty)
+			assert ("the sent text carries the newline mid-line but none trailing",
+				sent [1].same_string_general ({STRING_32} "line one"))
+		end
+
 feature -- The pane under the presenter
 
 	test_presenter_pumps_pages_into_the_real_pane
@@ -339,6 +426,55 @@ feature -- CLIENT_APP: which door does it take?
 			assert ("closing the room stops the poller", not app.presenter.is_room_open)
 		end
 
+	test_client_app_hints_the_room_when_a_bot_is_in_the_roster
+			-- Real roster data, never a hard-coded "@claude": the roster names the
+			-- bot, and the pane's one hint bubble names it right back.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			cf: CLIENT_CONFIG
+			app: CLIENT_APP
+			l_why: detachable STRING_32
+		do
+			create t.make
+			cf := scratch_config ("bothint")
+			create app.make_for_test (t, cf)
+			t.script (200, login_reply (Hex_64))
+			l_why := app.attempt_login (Loopback_url, "larry", {STRING_32} "right")
+			assert ("logged in", app.client.is_logged_in and l_why = Void)
+			t.script (200, "[{%"id%":4,%"name%":%"main%"}]")
+			t.script (200, "{%"members%":[" + member_reply + "," + bot_member_reply + "]}")
+			app.open_room
+			assert ("the room opened with one bot in the roster",
+				app.presenter.is_room_open and app.presenter.bot_members.count = 1)
+			assert ("exactly one hint was shown", app.view.hint_count = 1)
+			assert ("as a system-role bubble", app.view.thread.count = 1
+				and app.view.thread.messages [1].role = {SW_CHAT_THREAD}.Role_system)
+			assert ("naming the real bot's own @username, not a literal typed into this file",
+				app.view.thread.messages [1].text.has_substring ({STRING_32} "@claude"))
+		end
+
+	test_client_app_shows_no_hint_when_the_roster_has_no_bot
+			-- The other half of the same law: nobody to address, nothing said.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			cf: CLIENT_CONFIG
+			app: CLIENT_APP
+			l_why: detachable STRING_32
+		do
+			create t.make
+			cf := scratch_config ("nobothint")
+			create app.make_for_test (t, cf)
+			t.script (200, login_reply (Hex_64))
+			l_why := app.attempt_login (Loopback_url, "larry", {STRING_32} "right")
+			assert ("logged in", app.client.is_logged_in and l_why = Void)
+			t.script (200, "[{%"id%":4,%"name%":%"main%"}]")
+			t.script (200, "{%"members%":[" + member_reply + "]}")
+			app.open_room
+			assert ("the room opened with nobody to address",
+				app.presenter.is_room_open and app.presenter.bot_members.is_empty)
+			assert ("so no hint was shown", app.view.hint_count = 0 and app.view.thread.count = 0)
+		end
+
 	test_client_app_reports_a_server_that_lists_no_room
 			-- The pane opens anyway, carrying the reason: a member who is told nothing
 			-- learns nothing.
@@ -470,6 +606,164 @@ feature -- CLIENT_APP: nothing answered at all (Larry's install, 2026-09-02)
 				a.Settings_file.has_substring ({STRING_32} "simple_chat") and a.Settings_file.ends_with ({STRING_32} "client.toml"))
 		end
 
+feature -- The room's vertical accounting
+
+	test_composer_grows_on_the_frame_the_wrap_happens
+			-- Larry typed a sentence wider than the box and watched the second
+			-- line appear BELOW it, the box growing only once that line was a
+			-- third of the way across. A frame is a full re-layout - SW_WINDOW's
+			-- `after_input' runs `render', and `render' runs `arrange' then
+			-- `draw' - so the box is measured and painted inside the same
+			-- frame as the keystroke. The law that has to hold on EVERY such
+			-- frame is that the height it was given equals the height the
+			-- wrapped text needs AT THE WIDTH IT WAS GIVEN. Anything else and
+			-- the glyphs go somewhere the rectangle is not.
+		local
+			v: SW_CHAT_VIEW
+			p: SW_PAINTER
+			l_line: STRING_32
+			i, l_bad, l_first_bad: INTEGER
+			l_needed, l_first_height, l_row, l_rows: REAL_64
+		do
+			v := pane
+			p := v.window.painter
+			v.window.request_render
+			l_row := v.input.row_height (p)
+			l_first_height := v.input.height
+			l_line := {STRING_32} "Let us now see what happens when I type a sentence much larger than the text box"
+			from
+				i := 1
+			until
+				i > l_line.count
+			loop
+				v.input.handle_char (l_line.item (i).code)
+				v.window.request_render
+				l_needed := v.input.preferred_height (p, v.input.width)
+				if (v.input.height - l_needed).abs > 0.01 then
+					l_bad := l_bad + 1
+					if l_first_bad = 0 then
+						l_first_bad := i
+					end
+				end
+				i := i + 1
+			end
+			if l_bad > 0 then
+				print ("    first bad frame at character " + l_first_bad.out
+					+ " of " + l_line.count.out + "; " + l_bad.out + " frames painted outside the box%N")
+			end
+			print ("    empty " + l_first_height.out + " px, wrapped " + v.input.height.out
+				+ " px, one row " + l_row.out + " px, inset " + (2.0 * v.input.Composer_pad_y).out
+				+ " px, box " + v.input.width.out + " px wide%N")
+			assert ("every frame gave the box the height its own wrapped text needs", l_bad = 0)
+				-- and the reason it holds: the strip is a COMPOSER_ROW, and the width
+				-- it MEASURES the box at is the width it ARRANGES the box to. A plain
+				-- SW_ROW measures at the whole row width - `Send' and one gap wider -
+				-- which is the 120 px the paint had and the measurement did not.
+			assert ("the composer strip measures the box at the width it draws it at",
+				attached {COMPOSER_ROW} v.composer as cr
+					and then (cr.allotted_width (p, cr.width, 1) - v.input.width).abs < 0.01)
+			assert ("and the sentence really did wrap - the box is taller than it started",
+				v.input.height > l_first_height + 0.01)
+				-- An EMPTY box is not one row tall: SW_TEXT_BOX floors its height at
+				-- the painter's `min_control_height', which at 2x is taller than a
+				-- single row plus the inset. So the law about whole rows is stated
+				-- of the GROWN box, where the floor no longer binds.
+			l_rows := (v.input.height - 2.0 * v.input.Composer_pad_y) / l_row
+			assert ("and the grown box is a whole number of rows plus its own inset",
+				(l_rows - l_rows.rounded).abs < 0.01)
+		end
+
+	test_empty_status_rows_cost_nothing_and_a_spoken_one_costs_its_row
+			-- Two empty labels sat between the thread and the composer, each
+			-- reserving a font-derived row (SW_LABEL measures from the font,
+			-- text or no text) and each charging the column a theme gap on top.
+			-- Empty means absent: no row, no gap. Speaking gets the row back on
+			-- the very next frame, with no widget added or removed.
+		local
+			v: SW_CHAT_VIEW
+			p: SW_PAINTER
+			l_gap, l_step, l_before, l_after: REAL_64
+		do
+			v := pane
+			p := v.window.painter
+			v.window.request_render
+			print ("    empty status asks " + v.status_label.preferred_height (p, v.root.width).out
+				+ ", empty error asks " + v.error_label.preferred_height (p, v.root.width).out
+				+ ", gap " + (v.composer.y - (v.thread.y + v.thread.height)).out
+				+ ", theme gap " + p.theme.padding.out + "%N")
+			assert ("an empty status line asks for no height",
+				v.status_label.preferred_height (p, v.root.width) = 0.0)
+			assert ("nor does an empty error line",
+				v.error_label.preferred_height (p, v.root.width) = 0.0)
+			assert ("and the column gives them none",
+				v.status_label.height = 0.0 and v.error_label.height = 0.0)
+			l_gap := v.composer.y - (v.thread.y + v.thread.height)
+			assert ("so the pane sits exactly one theme gap above the composer",
+				(l_gap - p.theme.padding).abs < 0.01)
+			l_before := v.thread.height
+			v.show_status ({STRING_32} "connecting to the server")
+			v.window.request_render
+			l_step := v.status_label.line_step (p)
+			assert ("a line with something to say gets its natural row",
+				(v.status_label.height - l_step).abs < 0.01)
+			assert ("the error line is still silent and still flat", v.error_label.height = 0.0)
+			l_after := v.thread.height
+			assert ("and the pane gave up exactly that row plus its one new gap",
+				(l_before - l_after - l_step - p.theme.padding).abs < 0.01)
+		end
+
+	test_the_gap_holds_while_the_composer_grows
+			-- Larry's second observation: the space does not move as the box
+			-- grows. It must not START wrong either - one theme gap, before and
+			-- after - and the evidence frame is written from this very state.
+		local
+			v: SW_CHAT_VIEW
+			p: SW_PAINTER
+			l_line: STRING_32
+			i: INTEGER
+			l_gap_at_one, l_gap_at_many, l_h_at_one: REAL_64
+		do
+			v := pane
+			p := v.window.painter
+			v.show_event (message_event (1, 7, "the space between the pane and the box"), {STRING_32} "larry", False)
+			v.show_event (system_event (2, "and it stays the same size as the box grows"), {STRING_32} "system", False)
+			v.window.request_render
+			l_gap_at_one := v.composer.y - (v.thread.y + v.thread.height)
+			l_h_at_one := v.input.height
+			l_line := {STRING_32} "A sentence long enough to wrap onto a second and then a third line inside the composer box itself"
+			from
+				i := 1
+			until
+				i > l_line.count
+			loop
+				v.input.handle_char (l_line.item (i).code)
+				v.window.request_render
+				i := i + 1
+			end
+			l_gap_at_many := v.composer.y - (v.thread.y + v.thread.height)
+				-- the accounting, and the frame, BEFORE any verdict: the numbers
+				-- are the point of this test whether it passes or fails
+			print ("    thread bottom " + (v.thread.y + v.thread.height).out
+				+ "  composer top " + v.composer.y.out
+				+ "  gap " + l_gap_at_many.out
+				+ "  theme gap " + p.theme.padding.out
+				+ "  status h " + v.status_label.height.out
+				+ "  error h " + v.error_label.height.out
+				+ "  composer h " + v.composer.height.out
+				+ "  input w " + v.input.width.out
+				+ "  row w " + v.composer.width.out + "%N")
+			assert ("the evidence frame is on disk", v.window.write_frame (Gap_evidence_path))
+			assert ("the box did grow", v.input.height > l_h_at_one + 0.01)
+			assert ("one theme gap with an empty composer",
+				(l_gap_at_one - p.theme.padding).abs < 0.01)
+			assert ("and the same one theme gap with a paragraph in it",
+				(l_gap_at_many - l_gap_at_one).abs < 0.01)
+		end
+
+	Gap_evidence_path: STRING_32 = ".eiffel-workflow/evidence/gap-after.png"
+			-- Where `test_the_gap_holds_while_the_composer_grows' leaves its frame,
+			-- written from the project root the runner is started in.
+
 feature {NONE} -- Fixtures: the pane
 
 	pane: SW_CHAT_VIEW
@@ -560,6 +854,12 @@ feature {NONE} -- Fixtures: the wire
 			-- User 5, "larry" - what GET /me answers, and what a roster entry looks like.
 		do
 			Result := "{%"id%":5,%"username%":%"larry%",%"display_name%":%"Larry%",%"is_admin%":true,%"is_bot%":false}"
+		end
+
+	bot_member_reply: STRING_8
+			-- User 9, "claude" - a roster entry for the room's assistant.
+		do
+			Result := "{%"id%":9,%"username%":%"claude%",%"display_name%":%"Claude%",%"is_admin%":false,%"is_bot%":true}"
 		end
 
 	wire_event (a_id, a_room, a_sender: INTEGER_64; a_kind, a_body: STRING_8): STRING_8

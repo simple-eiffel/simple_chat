@@ -29,6 +29,24 @@ the runtime the thread has left Eiffel, so ISE's collector (it stops *every* thr
 collects) never waits on the poll. Unmarked, the same poll froze the window for 21 seconds at a time;
 see `CHANGELOG.md` and `.eiffel-workflow/evidence/phase4-freeze.txt`.
 
+**The composer wraps.** `CHAT_INPUT_BOX` was the room's one-line field; it is now multi-line and
+measured-word-wrapping, growing with what is typed up to five lines and then scrolling instead of
+growing the window further. Plain Enter still sends and never leaves a trailing newline; Shift+Enter
+inserts one. And since Larry could type but not discover the `@claude` convention, the pane now
+opens with a system bubble naming any bot in the roster by its real `@username` — never a literal
+typed into this codebase — the moment the room's membership says one is there.
+
+And it grows *when* it wraps. A row measures a wrapping child at the whole row's width while
+arranging it at its share of that width, so the composer was measured 120 px wider than it was
+drawn — the Send button plus one theme gap — and the second line painted below the box until
+the text was long enough to wrap at the wider width too; `COMPOSER_ROW` measures the way the row
+allocates. The band under the thread went the same way: an empty `SW_LABEL` still reserves a
+font-derived row (47 px at 2x) and a column still charges a gap for it, which was 142 px of nothing
+between the last bubble and the box. `STATUS_LINE` makes silence free and `COLLAPSING_COLUMN` stops
+buying a gap for a flat child, so the thread sits one 16 px theme gap above the composer and the
+line comes back the instant there is something to say. Offscreen at 2x, before and after:
+`.eiffel-workflow/evidence/gap-before.png`, `gap-after.png`.
+
 What no headless assault can prove is that the **pixels** are right; that is `RUNBOOK.md`, and it is
 the one thing still owed. Two limits are stated rather than hidden: an image event is shown as a
 named, sized attachment line and not as a picture (no WIC decoder is linked into this client), and
