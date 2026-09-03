@@ -227,6 +227,11 @@ feature -- The pane: CHAT_VIEW's contracts over simple_widgets
 			sent.wipe_out
 			v.set_on_send (agent record_sent)
 			v.input.set_text ({STRING_32} "line one")
+				-- `set_text' never moves the caret past what it already was (a fresh
+				-- box's is 0), so the caret has to be walked to the end by hand before
+				-- Shift+Return can append rather than insert at the front.
+			v.input.select_all
+			v.input.handle_key (39, False)
 			v.input.handle_key (13, True)
 			v.input.handle_char (13)
 			assert ("Shift+Return inserted a newline and sent nothing",
