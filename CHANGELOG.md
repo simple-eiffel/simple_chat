@@ -7,17 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [0.1.3] — 2026-09-03
 
-- **Password prompts show one dot per keystroke** (`apps/server/server_app.e`,
-  all three account commands). 0.1.2 read passwords with
-  `SIMPLE_CONSOLE.read_hidden_line`, which shows nothing at all; Larry, at the
-  installer's console: "I was surprised by not even have dots for pw chars.
-  That meant that I didn't know whether my keystrokes were being registered."
-  The prompts now use `read_masked_line_default` from simple_console 1.2.0 -
-  a dot per accepted character, Backspace erases one, Enter ends, nothing of
-  the password itself on screen. Redirected input (the verification scripts)
-  reads a plain line exactly as before.
+The conversation release: the assistant answers a mention anywhere in a message and carries the room's last twelve messages into every turn; the dispatcher no longer rings itself (one answer per process with contracts on, since the first day); the pane follows its tail and has a scrollbar; the composer wraps and grows; password prompts show dots; the assistant's text is decoded correctly. Built against simple_widgets 0.5.0, simple_console 1.2.0 and simple_ai_client with the UTF-8 fix, on top of 0.1.2's libraries.
 
 ### Added
 
@@ -65,26 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `context_messages` and taken away by zero; the session kept per room and dropped on
   failure; and the configuration setting with its default, its zero and its cap.
 
-### Fixed
-
-- `PARTICIPANT_DISPATCHER` no longer makes a **separate call from a postcondition**
-  (`context_line_of` checked a display name by asking the API again). ISE SCOOP
-  evaluates a lock-passed call's postcondition after the caller's locks are returned,
-  and the late reach for a processor nobody is holding froze the dispatcher solid the
-  first time a context window had a line in it. The name is checked against the local
-  cache the body filled.
-
-### Known
-
-- The dispatcher answers the **first** `claude -p` of a server run and then freezes on
-  the **second**: no child is started, nothing is logged, the rest of the server keeps
-  serving. Reproduced on `main`'s own binary with two leading `@claude` turns, and with
-  a *second participant's first* call, so it is neither `--resume` nor the context
-  window nor the addressing rule. It sits below simple_chat, in the process/engine path.
-
-
-### Added
-
 - **A wrapping, growing composer** (`apps/client/chat_input_box.e`, `CHAT_INPUT_BOX`). Larry's
   report from the live room: "The input textbox/field does not wrap within the textbox. That is
   a problem." The one-line `SW_TEXT_BOX` composer is now multi-line and measured-word-wrapping
@@ -111,7 +83,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typed into this codebase, so the hint stays true the day a bot is renamed or a second one joins.
   No hint is shown when the roster carries no bot.
 
+- **Five assaults, 214 → 219** (`testing/participants_assault.e`).
+
+  `dispatcher_post_does_not_ring_the_dispatcher_back` is the regression test, at
+  the seam where the defect was made: a member's post rings the room **and wakes
+  the dispatcher**, which is the whole point of the doorbell; the dispatcher's own
+  answer rings the room and **does not** wake it; and the next member's message
+  wakes it again, so the doorbell is not left switched off. It is driven through
+  `handle_event`, not through a drain, so the only ring on the stack is the
+  answer's own — on **one** processor a bus wake is a plain call, so a drain
+  *started by* a ring would post from inside that ring's own frame and break
+  `EVENT_BUS.ring.counted`, which the server never does (there the wake is
+  asynchronous and `ring` returns long before the dispatcher moves). That
+  asymmetry is why the fixture subscribes deliberately rather than by default.
+
+  Around it: `dispatcher_answers_the_second_and_third_request_of_a_run` (what the
+  freeze actually cost), `dispatcher_answers_two_requests_that_arrive_together`
+  (both sitting on one page before the drain begins — the shape Larry hit),
+  `dispatcher_two_bots_answer_the_same_room` (the second bot's *first* call, which
+  the freeze took just as surely, because it was never about the participant), and
+  `bus_mutes_one_ticket_and_only_for_that_post`, which also pins
+  `EVENT_BUS.Dispatcher_subscriber_name` to
+  `PARTICIPANT_DISPATCHER.subscriber_name`, since the mute is keyed on it.
+
+  Proven red before green: with the mute disabled the regression test dies on
+  `handle_event`'s own `accounted` and `cursors_unchanged`, because the re-entrant
+  wake nests a whole drain under the frame that is answering.
+
+### Changed
+
+- **Password prompts show one dot per keystroke** (`apps/server/server_app.e`,
+  all three account commands). 0.1.2 read passwords with
+  `SIMPLE_CONSOLE.read_hidden_line`, which shows nothing at all; Larry, at the
+  installer's console: "I was surprised by not even have dots for pw chars.
+  That meant that I didn't know whether my keystrokes were being registered."
+  The prompts now use `read_masked_line_default` from simple_console 1.2.0 -
+  a dot per accepted character, Backspace erases one, Enter ends, nothing of
+  the password itself on screen. Redirected input (the verification scripts)
+  reads a plain line exactly as before.
+
 ### Fixed
+
+- `PARTICIPANT_DISPATCHER` no longer makes a **separate call from a postcondition**
+  (`context_line_of` checked a display name by asking the API again). ISE SCOOP
+  evaluates a lock-passed call's postcondition after the caller's locks are returned,
+  and the late reach for a processor nobody is holding froze the dispatcher solid the
+  first time a context window had a line in it. The name is checked against the local
+  cache the body filled.
 
 - **The composer grows on the frame the wrap happens** (`apps/client/composer_row.e`,
   `COMPOSER_ROW`; `SW_CHAT_VIEW`). Larry, typing into the live room at 2x: "The new wrap-of-text
@@ -152,41 +170,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is checked out on `fix/chat-thread-scrolling` this week. Evidence:
   `.eiffel-workflow/evidence/gap-before.png` and `gap-after.png`, rendered offscreen at the room's
   real 2x scale.
-
-### Testing
-
-- Three more assaults in `testing/window_assault.e`, **201 — 204**, all offscreen at the room's
-  real 2x scale and driving whole frames through `SW_WINDOW.request_render` — the same `render`
-  (arrange, then draw) a keystroke triggers.
-  `test_composer_grows_on_the_frame_the_wrap_happens` types an 80-character sentence one
-  `handle_char` at a time and, after EVERY frame, requires the height the box was given to equal the
-  height its own wrapped text needs AT THE WIDTH IT WAS GIVEN — zero bad frames now, seven
-  before, the first at character 48 — names the number the two halves have to agree on,
-  requiring `COMPOSER_ROW.allotted_width` for the box to equal the box's own `width`, and requires
-  the grown box to be a whole number of rows
-  plus its own inset (132 px = 2 x 60 + 12; the EMPTY box is not one row but 80 px, floored at the
-  painter's `min_control_height`, which is why the law is stated of the grown box).
-  `test_empty_status_rows_cost_nothing_and_a_spoken_one_costs_its_row` requires both empty lines to
-  ask for zero height and to be given none, the thread to sit one theme gap above the composer, and
-  a line that speaks to get its natural `line_step` back with the pane giving up exactly that row
-  plus its one new gap. `test_the_gap_holds_while_the_composer_grows` requires the gap to be one
-  theme gap with an empty composer AND unchanged with a paragraph in it, prints the whole vertical
-  accounting, and writes `.eiffel-workflow/evidence/gap-after.png` from that very state.
-
-- Three new assaults in `testing/window_assault.e` prove the composer directly against the real
-  `SW_CHAT_VIEW`/`CHAT_INPUT_BOX`, calling `preferred_height`/`draw`/`handle_key`/`handle_char` the
-  way a real keypress pair would, entirely offscreen: growth is exactly one `row_height` per line
-  from one line to the five-line cap and then holds flat past it
-  (`test_composer_grows_with_content_then_caps_at_five_lines`); `draw`'s temporary scroll shift of
-  its own `y` is fully restored after painting past the cap
-  (`test_composer_draw_restores_its_own_geometry_after_scrolling`); and Shift+Return inserts a
-  newline while a plain Return after it sends the whole line with none trailing
-  (`test_composer_return_sends_but_shift_return_inserts_a_newline`). Two more prove the hint through
-  the real `CLIENT_APP.open_room`, one roster with a bot and one without
-  (`test_client_app_hints_the_room_when_a_bot_is_in_the_roster`,
-  `test_client_app_shows_no_hint_when_the_roster_has_no_bot`). 196 → **201** assaults.
-
-### Fixed
 
 - **The dispatcher answers the second question of a server run, and the third.**
   It answered the first and then went deaf for the life of the process: no child
@@ -236,36 +219,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line anywhere. Whatever the next such raise turns out to be, the next wake will
   drain again and the log will say what happened.
 
-### Added
-
-- **Five assaults, 214 → 219** (`testing/participants_assault.e`).
-
-  `dispatcher_post_does_not_ring_the_dispatcher_back` is the regression test, at
-  the seam where the defect was made: a member's post rings the room **and wakes
-  the dispatcher**, which is the whole point of the doorbell; the dispatcher's own
-  answer rings the room and **does not** wake it; and the next member's message
-  wakes it again, so the doorbell is not left switched off. It is driven through
-  `handle_event`, not through a drain, so the only ring on the stack is the
-  answer's own — on **one** processor a bus wake is a plain call, so a drain
-  *started by* a ring would post from inside that ring's own frame and break
-  `EVENT_BUS.ring.counted`, which the server never does (there the wake is
-  asynchronous and `ring` returns long before the dispatcher moves). That
-  asymmetry is why the fixture subscribes deliberately rather than by default.
-
-  Around it: `dispatcher_answers_the_second_and_third_request_of_a_run` (what the
-  freeze actually cost), `dispatcher_answers_two_requests_that_arrive_together`
-  (both sitting on one page before the drain begins — the shape Larry hit),
-  `dispatcher_two_bots_answer_the_same_room` (the second bot's *first* call, which
-  the freeze took just as surely, because it was never about the participant), and
-  `bus_mutes_one_ticket_and_only_for_that_post`, which also pins
-  `EVENT_BUS.Dispatcher_subscriber_name` to
-  `PARTICIPANT_DISPATCHER.subscriber_name`, since the mute is keyed on it.
-
-  Proven red before green: with the mute disabled the regression test dies on
-  `handle_event`'s own `accounted` and `cursors_unchanged`, because the re-entrant
-  wake nests a whole drain under the frame that is answering.
-
 ### Known
+
+- The dispatcher answers the **first** `claude -p` of a server run and then freezes on
+  the **second**: no child is started, nothing is logged, the rest of the server keeps
+  serving. Reproduced on `main`'s own binary with two leading `@claude` turns, and with
+  a *second participant's first* call, so it is neither `--resume` nor the context
+  window nor the addressing rule. It sits below simple_chat, in the process/engine path.
 
 - `CHAT_API.dispatcher_try_ask` is the other lock-passing call on the answering
   path, and its postcondition re-reads the caller's separate string at exit
@@ -274,6 +234,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   synchronization point. It did not fire in any run on this branch. It is a frozen
   contract and was **not** touched; the next cycle should decide whether to
   re-state both clauses over a local copy as `dispatcher_post` did.
+
+### Testing
+
+- Three more assaults in `testing/window_assault.e`, **201 — 204**, all offscreen at the room's
+  real 2x scale and driving whole frames through `SW_WINDOW.request_render` — the same `render`
+  (arrange, then draw) a keystroke triggers.
+  `test_composer_grows_on_the_frame_the_wrap_happens` types an 80-character sentence one
+  `handle_char` at a time and, after EVERY frame, requires the height the box was given to equal the
+  height its own wrapped text needs AT THE WIDTH IT WAS GIVEN — zero bad frames now, seven
+  before, the first at character 48 — names the number the two halves have to agree on,
+  requiring `COMPOSER_ROW.allotted_width` for the box to equal the box's own `width`, and requires
+  the grown box to be a whole number of rows
+  plus its own inset (132 px = 2 x 60 + 12; the EMPTY box is not one row but 80 px, floored at the
+  painter's `min_control_height`, which is why the law is stated of the grown box).
+  `test_empty_status_rows_cost_nothing_and_a_spoken_one_costs_its_row` requires both empty lines to
+  ask for zero height and to be given none, the thread to sit one theme gap above the composer, and
+  a line that speaks to get its natural `line_step` back with the pane giving up exactly that row
+  plus its one new gap. `test_the_gap_holds_while_the_composer_grows` requires the gap to be one
+  theme gap with an empty composer AND unchanged with a paragraph in it, prints the whole vertical
+  accounting, and writes `.eiffel-workflow/evidence/gap-after.png` from that very state.
+
+- Three new assaults in `testing/window_assault.e` prove the composer directly against the real
+  `SW_CHAT_VIEW`/`CHAT_INPUT_BOX`, calling `preferred_height`/`draw`/`handle_key`/`handle_char` the
+  way a real keypress pair would, entirely offscreen: growth is exactly one `row_height` per line
+  from one line to the five-line cap and then holds flat past it
+  (`test_composer_grows_with_content_then_caps_at_five_lines`); `draw`'s temporary scroll shift of
+  its own `y` is fully restored after painting past the cap
+  (`test_composer_draw_restores_its_own_geometry_after_scrolling`); and Shift+Return inserts a
+  newline while a plain Return after it sends the whole line with none trailing
+  (`test_composer_return_sends_but_shift_return_inserts_a_newline`). Two more prove the hint through
+  the real `CLIENT_APP.open_room`, one roster with a bot and one without
+  (`test_client_app_hints_the_room_when_a_bot_is_in_the_roster`,
+  `test_client_app_shows_no_hint_when_the_roster_has_no_bot`). 196 → **201** assaults.
 
 ## [0.1.2] — 2026-09-03
 
