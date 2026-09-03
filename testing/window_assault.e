@@ -360,6 +360,116 @@ feature -- CLIENT_APP: which door does it take?
 			assert ("and the pane was told why", not app.view.errors.is_empty)
 		end
 
+feature -- CLIENT_APP: nothing answered at all (Larry's install, 2026-09-02)
+
+	test_no_server_on_this_pc_is_told_how_to_start_one
+			-- The install with no server running and no account yet: the sign-in never
+			-- reaches anything, and the door must say so in words that name the Start
+			-- Menu entry - not the transport's own number.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			cf: CLIENT_CONFIG
+			app: CLIENT_APP
+			l_why: detachable STRING_32
+		do
+			create t.make
+			cf := scratch_config ("noserver")
+			create app.make_for_test (t, cf)
+			assert ("the locator probed this PC and found nothing alive", t.exchange_count = 1)
+			assert ("so the door points at this PC's own loopback", app.endpoint.base_url.same_string (Loopback_url))
+			t.script_failure (Winhttp_words)
+			l_why := app.attempt_login (Loopback_url, "larry", {STRING_32} "open sesame")
+			assert ("nothing answered, so nothing is logged in", not app.client.is_logged_in)
+			assert ("and the client kept the fact that the transport failed", app.client.last_status = 0)
+			assert ("the member is told no server runs here",
+				attached l_why as w and then w.has_substring ({STRING_32} "No chat server is running on this PC"))
+			assert ("with the address that did not answer",
+				attached l_why as w and then w.has_substring (Loopback_url.to_string_32))
+			assert ("the Start Menu entry that starts one",
+				attached l_why as w and then w.has_substring ({STRING_32} "Start Menu > SimpleChat Server > Start server"))
+			assert ("the settings file for the other case",
+				attached l_why as w and then w.has_substring ({STRING_32} "client.toml"))
+			assert ("and not one word of the transport's own",
+				attached l_why as w and then not w.has_substring ({STRING_32} "WinHTTP"))
+		end
+
+	test_an_unreachable_friend_is_named_with_his_address_and_the_settings_file
+			-- The other half: this PC hosts nothing, the room is somebody else's, and
+			-- nothing answers there. Never tell this member to start a server.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			cf: CLIENT_CONFIG
+			app: CLIENT_APP
+			l_why: detachable STRING_32
+		do
+			create t.make
+			cf := scratch_config ("friend")
+			cf.set_prefers_local (False)
+			cf.set_only_server_url (Friend_url)
+			create app.make_for_test (t, cf)
+			assert ("the locator tried the friend and nothing else", t.exchange_count = 1)
+			assert ("so the door points at his server", app.endpoint.base_url.same_string (Friend_url))
+			t.script_failure (Winhttp_words)
+			l_why := app.attempt_login (Friend_url, "larry", {STRING_32} "open sesame")
+			assert ("nothing answered, so nothing is logged in", not app.client.is_logged_in)
+			assert ("and the client kept the fact that the transport failed", app.client.last_status = 0)
+			assert ("the member is told which room could not be reached",
+				attached l_why as w and then w.has_substring ({STRING_32} "Cannot reach the room at " + Friend_url.to_string_32))
+			assert ("that the host may be down or the address wrong",
+				attached l_why as w and then w.has_substring ({STRING_32} "may be down"))
+			assert ("and where that address is kept",
+				attached l_why as w and then w.has_substring ({STRING_32} "client.toml"))
+			assert ("but never that he should start a server of his own",
+				attached l_why as w and then not w.has_substring ({STRING_32} "Start Menu"))
+		end
+
+	test_a_refused_password_still_gets_the_servers_own_words
+			-- A server that ANSWERED is a different thing entirely: 401 keeps the wording
+			-- it always had, and no advice about outages is folded into it.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			cf: CLIENT_CONFIG
+			app: CLIENT_APP
+			l_why: detachable STRING_32
+		do
+			create t.make
+			cf := scratch_config ("refused")
+			create app.make_for_test (t, cf)
+			t.script (401, "{%"code%":%"bad_credentials%",%"message%":%"Wrong name or password%"}")
+			l_why := app.attempt_login (Loopback_url, "larry", {STRING_32} "wrong")
+			assert ("the server answered, and its status is what the client kept", app.client.last_status = 401)
+			assert ("its own words are what the door shows",
+				attached l_why as w and then w.has_substring ({STRING_32} "Wrong name or password"))
+			assert ("with nothing about a server that is not running",
+				attached l_why as w and then not w.has_substring ({STRING_32} "No chat server is running"))
+			assert ("and nothing about the Start Menu",
+				attached l_why as w and then not w.has_substring ({STRING_32} "Start Menu"))
+		end
+
+	test_connection_advice_reads_the_address_and_nothing_else
+			-- CONNECTION_ADVICE on its own, at the two spellings of this PC and at a
+			-- stranger: the address is the whole distinction.
+		local
+			a: CONNECTION_ADVICE
+			cf: CLIENT_CONFIG
+		do
+			create a
+			cf := scratch_config ("advice")
+			assert ("127.0.0.1 is this PC", a.is_this_pc (Loopback_url, cf))
+			assert ("and so is localhost", a.is_this_pc ("http://localhost:8080", cf))
+			assert ("and so is the address the config itself builds", a.is_this_pc (cf.local_url, cf))
+			assert ("a friend's https server is not", not a.is_this_pc (Friend_url, cf))
+			assert ("this PC gets the Start Menu",
+				a.advice_for (Loopback_url, cf).has_substring (a.Start_server_entry))
+			assert ("a friend does not",
+				not a.advice_for (Friend_url, cf).has_substring (a.Start_server_entry))
+			assert ("both name the settings file, spelled as the README spells it",
+				a.advice_for (Loopback_url, cf).has_substring (a.Settings_file)
+					and a.advice_for (Friend_url, cf).has_substring (a.Settings_file))
+			assert ("and the settings file is the one CLIENT_CONFIG writes",
+				a.Settings_file.has_substring ({STRING_32} "simple_chat") and a.Settings_file.ends_with ({STRING_32} "client.toml"))
+		end
+
 feature {NONE} -- Fixtures: the pane
 
 	pane: SW_CHAT_VIEW
@@ -500,6 +610,13 @@ feature {NONE} -- Fixtures: the config
 feature {NONE} -- Constants
 
 	Loopback_url: STRING_8 = "http://127.0.0.1:8080"
+
+	Friend_url: STRING_8 = "https://chat.example.com"
+			-- A room somebody else hosts: acceptable to CHAT_URL_RULES, and not this PC.
+
+	Winhttp_words: STRING_8 = "WinHTTP 12029: a connection with the server could not be established"
+			-- The kind of sentence a transport failure actually carries - a mechanism, not
+			-- an action. It is what the door used to show, and what it must not show now.
 
 	Hex_64: STRING_8 = "a3f1c07d5b9e2846afd310c6b47e59182d0ab7c4e6f5901324578badc0ffee11"
 			-- 64 lowercase hex digits: the shape SESSION_ISSUER mints.

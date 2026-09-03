@@ -294,7 +294,11 @@ feature -- Basic operations
 	attempt_login (a_url, a_username: READABLE_STRING_8; a_password: READABLE_STRING_GENERAL): detachable STRING_32
 			-- What the door's Log in button does: point the client at `a_url' (rebuilding
 			-- the client and the presenter when it is a different server), then log in.
-			-- Void on success; the server's own message on failure.
+			-- Void on success; the server's own message on failure - EXCEPT when nothing
+			-- answered at all (`CHAT_CLIENT.last_status' = 0), where the transport's own
+			-- words name a mechanism the member cannot act on and CONNECTION_ADVICE names
+			-- what he can do instead. A refusal the server DID send - a wrong password, an
+			-- unknown name, a locked account - keeps the server's wording, untouched.
 		require
 			logged_out: not client.is_logged_in
 			named: not a_username.is_empty
@@ -317,7 +321,11 @@ feature -- Basic operations
 				end
 				l_result := client.login (a_username, a_password)
 				if not l_result.is_success and then attached l_result.error as e then
-					Result := e.message
+					if client.last_status = 0 then
+						Result := advice.advice_for (a_url, config)
+					else
+						Result := e.message
+					end
 				end
 			end
 		ensure
@@ -412,6 +420,13 @@ feature -- Constants
 
 	Message_bad_server: STRING_32 = "That is not an address this client will send a password to"
 	Message_no_rooms: STRING_32 = "The server lists no room for this account"
+
+	advice: CONNECTION_ADVICE
+			-- The ONE place the words for a server that never answered live; nothing in
+			-- this window invents its own sentence about an outage.
+		once
+			create Result
+		end
 
 feature {NONE} -- Processors
 
