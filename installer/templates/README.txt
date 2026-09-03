@@ -49,7 +49,9 @@ namely
     public_name = "yourname.duckdns.org"
 
 Accounts are made by you, never signed up for: "Create first admin" once, then
-"Create user" for each friend. Stop the server before either - they open the
+"Create user" for each friend. If somebody forgets their password - including
+you - "Reset a password" gives them a new one and signs out everyone who was
+logged in as them. Stop the server before any of the three: they open the
 database directly and refuse to run while it is up.
 
 

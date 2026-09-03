@@ -108,7 +108,7 @@ cp "$SERVER_BUILT" "$SRC/server/SimpleChatServer.exe"
 echo "  server/SimpleChatServer.exe  $(du -h "$SRC/server/SimpleChatServer.exe" | cut -f1)"
 
 for f in run_server.cmd start_server.cmd start_server_hidden.vbs stop_server.cmd \
-         create_admin.cmd create_user.cmd view_log.cmd backup_room.cmd \
+         create_admin.cmd create_user.cmd reset_password.cmd view_log.cmd backup_room.cmd \
          restore_backup.cmd HOSTING-GUIDE.html server.toml.in ; do
     cp "$HERE/templates/$f" "$SRC/server/"
     echo "  server/$f"

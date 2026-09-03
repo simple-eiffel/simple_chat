@@ -135,6 +135,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {SERVICE_ASSAULT}).test_events_since_pages_gapless, "events_since_pages_gapless")
 			run_test (agent (create {SERVICE_ASSAULT}).test_upload_signature_size_and_pinning, "upload_signature_size_and_pinning")
 			run_test (agent (create {SERVICE_ASSAULT}).test_reset_password_revokes_sessions, "reset_password_revokes_sessions")
+			run_test (agent (create {SERVICE_ASSAULT}).test_password_reset_by_the_host, "password_reset_by_the_host")
 			run_test (agent (create {SERVICE_ASSAULT}).test_change_password_needs_the_old_one, "change_password_needs_the_old_one")
 			run_test (agent (create {SERVICE_ASSAULT}).test_backup_writes_a_copy_that_opens_as_a_database, "backup_writes_a_copy_that_opens_as_a_database")
 			run_test (agent (create {SERVICE_ASSAULT}).test_two_backups_in_the_same_second_are_two_files, "two_backups_in_the_same_second_are_two_files")
@@ -151,6 +152,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {API_ASSAULT}).test_api_change_password_flow, "api_change_password_flow")
 			run_test (agent (create {API_ASSAULT}).test_api_admin_gate_and_create_user, "api_admin_gate_and_create_user")
 			run_test (agent (create {API_ASSAULT}).test_api_admin_reset_password_kills_sessions, "api_admin_reset_password_kills_sessions")
+			run_test (agent (create {API_ASSAULT}).test_host_console_reset_kills_a_live_token, "host_console_reset_kills_a_live_token")
 			run_test (agent (create {API_ASSAULT}).test_api_admin_bot_token_once_and_revoke, "api_admin_bot_token_once_and_revoke")
 			run_test (agent (create {API_ASSAULT}).test_api_participants_and_backup_answers, "api_participants_and_backup_answers")
 
@@ -172,6 +174,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_config_bind_address_refused, "config_bind_address_refused")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_gates_and_door_match, "server_app_gates_and_door_match")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_display_name_gate, "server_app_display_name_gate")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_reset_password_gate, "server_app_reset_password_gate")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_decodes_utf8_console_bytes, "server_app_decodes_utf8_console_bytes")
 
 			print ("=== CLIENT WIRING (Phase 4) ===%N")

@@ -111,6 +111,77 @@ feature -- Administration
 			assert ("new password lives", l_login.is_success)
 		end
 
+	test_password_reset_by_the_host
+			-- What `--reset-password' does. The host is at a console holding
+			-- NO session and no token: the member is found BY USERNAME in the
+			-- store, and given a new password through
+			-- CHAT_SERVICE.reset_password. This is the way back into a room
+			-- whose only administrator forgot theirs; before the flag existed
+			-- the remedy was to delete the database and lose the room.
+			--
+			-- Both gates the flag puts in front of `reset_password's
+			-- preconditions are pinned in the state that matters: an unknown
+			-- username finds nobody to reset, and a bot is not a person with
+			-- a password.
+		local
+			l_service: CHAT_SERVICE
+			l_admin: CHAT_USER
+			l_app: SERVER_APP
+			l_created, l_result: CHAT_RESULT [CHAT_USER]
+			l_bot: CHAT_RESULT [TUPLE [bot: CHAT_USER; token: STRING_8]]
+			l_login: CHAT_RESULT [CHAT_SESSION]
+		do
+			l_service := service
+			l_admin := admin_of (l_service)
+			assert ("the admin is there to be locked out", l_admin.is_stored)
+			create l_app.make_idle
+
+			l_created := l_service.create_user ("nick", {STRING_32} "Nick", {STRING_32} "open sesame 42", False)
+			assert ("member minted", l_created.is_success)
+
+				-- A username this room does not know: the lookup the flag
+				-- makes finds nothing, so there is nothing to reset and the
+				-- command must refuse rather than call.
+			assert ("an unknown username finds nobody", l_service.store.user_by_username ("mallory") = Void)
+			assert ("the room is unchanged by the miss", l_service.store.user_count = 2)
+
+				-- A bot has no password, only a token. The flag's own gate
+				-- says so before `reset_password' could trip `person'.
+			l_bot := l_service.create_bot ("helper", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Helper")
+			assert ("bot minted", l_bot.is_success)
+			if attached l_service.store.user_by_username ("helper") as b then
+				assert ("a bot is refused a password reset", not l_app.is_resettable_member (b))
+			else
+				assert ("the bot is in the store", False)
+			end
+
+				-- The member is logged in when the host resets: the session
+				-- must not survive it, or a leaked password would still be
+				-- worth something to whoever holds the token.
+			l_login := l_service.authenticate ("nick", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("logged in first", l_login.is_success)
+			if attached l_service.store.user_by_username ("nick") as u then
+				assert ("a stored person may be reset", l_app.is_resettable_member (u))
+				assert ("that member holds a session", l_service.store.has_session_of (u.id))
+				l_result := l_service.reset_password (u, {STRING_32} "quite another pass")
+				assert ("the reset succeeds", l_result.is_success)
+				assert ("every live session was signed out", not l_service.store.has_session_of (u.id))
+			else
+				assert ("the member is in the store", False)
+			end
+
+			l_login := l_service.authenticate ("nick", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("the old password is dead", not l_login.is_success)
+			l_login := l_service.authenticate ("nick", {STRING_32} "quite another pass", "127.0.0.1")
+			assert ("the new password lives", l_login.is_success)
+
+				-- The reset reaches one account and no other: the admin's own
+				-- password still works and nobody was added or removed.
+			l_login := l_service.authenticate ("larry", {STRING_32} "open sesame 42", "127.0.0.1")
+			assert ("the admin is untouched", l_login.is_success)
+			assert ("the population is unchanged", l_service.store.user_count = 3)
+		end
+
 	test_change_password_needs_the_old_one
 		local
 			l_service: CHAT_SERVICE

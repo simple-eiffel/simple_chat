@@ -55,7 +55,7 @@ bar (simple_shell publishes no `SetWindowText`).
 | Client stack | `src/client/` | UI-free and assaulted headless: `CHAT_CLIENT`, `EVENT_POLLER`, `CHAT_PRESENTER`, `SERVICE_LOCATOR`, `HTTP_TRANSPORT` (deferred; `MEMORY_HTTP_TRANSPORT` is scripted), `CHAT_VIEW` / `NOTIFIER` (deferred) |
 | Front door, DNS | `src/door/`, `apps/server/ops/` | `FRONT_DOOR` deferred → `CADDY_FRONT_DOOR`, `NO_FRONT_DOOR`, `EIFFEL_FRONT_DOOR`; `DUCKDNS_UPDATER` |
 | Window | `apps/client/` | `SW_CHAT_VIEW` (CHAT_VIEW over simple_widgets, shaped text), `LOGIN_WINDOW`, `CHAT_INPUT_BOX` (Enter submits) |
-| Apps | `apps/server/`, `apps/client/` | `SERVER_APP` (`--create-admin`), `CLIENT_APP`, `TRAY_NOTIFIER`, `WINHTTP_TRANSPORT`, `POLLER_HOST` |
+| Apps | `apps/server/`, `apps/client/` | `SERVER_APP` (`--create-admin`, `--create-user`, `--reset-password`), `CLIENT_APP`, `TRAY_NOTIFIER`, `WINHTTP_TRANSPORT`, `POLLER_HOST` |
 
 Lock order, never inverted: store < limiter < bus, and no lock is held while calling out to a subscriber.
 
@@ -80,14 +80,17 @@ component does not exist and `/COMPONENTS=client,server` yields the client alone
 client is per-user-installable precisely because it needs none of that.
 
 A host gets a `SimpleChat Server` Start Menu folder — start, stop, create the first
-admin, create a user, the log, the config, back up the room, restore a backup — and a
+admin, create a user, reset a password, the log, the config, back up the room, restore a
+backup — and a
 **hosting guide** written for a non-programmer: the two lines in `server.toml` that turn
 hosting on, a free DuckDNS name, router port forwarding, how to tell whether your
 provider's CGNAT makes that impossible, backups, and the cold-standby procedure.
 
 Accounts are minted by the host (`--create-admin` once, then `--create-user` per person);
 there is no self-registration. Both prompt for a display name and read the console as
-UTF-8, so a Hebrew or Greek name survives.
+UTF-8, so a Hebrew or Greek name survives. A forgotten password is not the end of the
+room: `--reset-password <username>` gives an existing member a new one and signs out
+every session they hold.
 
 **Uninstalling never deletes the room.** The data folder, `server.toml`, the backups and
 each member's `client.toml` all survive, so reinstalling picks up where it left off.

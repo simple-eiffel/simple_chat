@@ -129,11 +129,29 @@ an account on your room but you. It asks for three things:</p>
 <p>Then tell them their username, their password and the address of your room.
 They install SimpleChat, leave the hosting box unticked, and log in.</p>
 
+<h2>2b. When somebody forgets their password</h2>
+
+<p>Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr;
+<strong>Reset a password</strong>. Type the username, then the new password twice.
+It does not ask for a display name &mdash; the account already has one, and this
+never renames anybody.</p>
+
+<p><strong>This includes you.</strong> If you are the only administrator and you have
+forgotten your own password, this is the way back in. Before it existed, the only
+remedy was to delete the room's database and lose every message in it.</p>
+
+<p>Everyone signed in as that person is <strong>signed out</strong> by the reset, on
+every device. That is deliberate: if the password had been learned by somebody it
+should not have been, changing it would be worth nothing while their existing sign-in
+still worked. They log back in with the new password.</p>
+
 <div class="warn">
-<strong>Stop the server first.</strong> Both &ldquo;Create first admin&rdquo; and
-&ldquo;Create user&rdquo; open the database directly. They refuse to run while the server
-is up, because a write that races the running server's can fail on a database lock and
-the account would simply not be created. Stop, create the accounts, start again.
+<strong>Stop the server first.</strong> &ldquo;Create first admin&rdquo;,
+&ldquo;Create user&rdquo; and &ldquo;Reset a password&rdquo; all open the database
+directly. They refuse to run while the server is up, because a write that races the
+running server's can fail on a database lock &mdash; the account would simply not be
+created, or, worse for a reset, the new password would never take effect while the old
+one went on working and nobody was signed out. Stop, do the job, start again.
 </div>
 
 <h2>3. Going public</h2>

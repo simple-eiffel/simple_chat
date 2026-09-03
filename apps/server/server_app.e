@@ -9,7 +9,19 @@ note
 		ordinary member the same way, prompting for a display name and the
 		password twice, and refused until an admin exists. There is no
 		self-registration: the host makes every account, which is what
-		these two flags are for. Any other `--flag'
+		those two flags are for.
+		`simple_chat_server --reset-password <name> [config.toml]' gives an
+		EXISTING member a new password - prompting for it twice, and asking
+		for no display name, because the account already has one. Every live
+		session of that member is signed out, which is
+		CHAT_SERVICE.reset_password's own postcondition and the point of the
+		command: a password that leaked is taken away, not merely replaced.
+		A username this room does not know, or one naming a bot (a bot has
+		no password, only a token), is refused with a clear line and a
+		NON-ZERO exit status, so the shipped wrapper can tell a refusal from
+		a reset. Before this flag existed, a host who forgot the password had
+		no way back in but to delete the database and lose the room.
+		Any other `--flag'
 		prints usage instead of being mistaken for a configuration path.
 
 		Only the username travels in argv, and the rules confine it to
@@ -18,11 +30,16 @@ note
 		decoded as UTF-8 (`line_read_text'), so a Hebrew or Greek name
 		survives when the console is at code page 65001.
 
-		CONCURRENCY: both flags open their own connection to the same
+		CONCURRENCY: all three flags open their own connection to the same
 		SQLite file. The store is WAL, which does admit a second process,
 		but nothing here sets a busy timeout - so a write racing the
 		running server's can come back SQLITE_BUSY and fail the creation.
-		Stop the server first. The shipped wrappers say so and check.
+		`--reset-password' carries the same exposure and a worse
+		consequence: the new hash would not land, the old password would
+		still let a person in, and the sessions the running server is
+		holding would never be revoked - a reset announced on the console
+		and absent from the room. Stop the server first. The shipped
+		wrappers say so and check, this one included.
 		Warns when ANTHROPIC_API_KEY is set in its environment (RISK-016):
 		that key would shadow the Claude subscription login for every
 		participant.
@@ -61,6 +78,18 @@ feature {NONE} -- Initialization
 				else
 					print ("--create-user: the username must be 1..32 characters of a-z, 0-9 and underscore.%N")
 					usage
+				end
+			elseif l_args.argument_count >= 2 and then l_args.argument (1).same_string ("--reset-password") then
+				if is_acceptable_username (l_args.argument (2)) then
+					reset_member_password (l_args.argument (2).to_string_8, admin_config_path_from (l_args))
+				else
+					print ("--reset-password: the username must be 1..32 characters of a-z, 0-9 and underscore.%N")
+					usage
+						-- Every `--reset-password' refusal leaves non-zero, this
+						-- one included: a wrapper that cannot tell a refusal from
+						-- a reset would tell the host the password had changed
+						-- when it had not.
+					exit_with_failure
 				end
 			elseif l_args.argument_count >= 1 and then l_args.argument (1).starts_with ("--") then
 				usage
@@ -272,11 +301,112 @@ feature -- Commands
 			end
 		end
 
+	reset_member_password (a_username: READABLE_STRING_8; a_config_path: READABLE_STRING_GENERAL)
+			-- Prompt for a new password twice, then give it to the EXISTING
+			-- member `a_username' through CHAT_SERVICE.reset_password,
+			-- against the same store `serve' would open - which also signs
+			-- out every live session that member holds (`sessions_revoked').
+			--
+			-- This is the way back in for a host who forgot the password.
+			-- Until it existed the only remedy was to delete
+			-- `data/simple_chat.db*' and lose the room with it.
+			--
+			-- No display name is asked for: the account already has one, and
+			-- nothing here may quietly rename a person. The password echoes,
+			-- exactly as `create_admin' says it does - there is no echo
+			-- suppression in v1 and none is invented here.
+			--
+			-- Refused, each time with a non-zero exit status and nothing
+			-- changed: a configuration that will not load, a store that will
+			-- not open, a username this room does not know, a username that
+			-- names a BOT (a bot has no password to reset - revoke and
+			-- reissue its token instead), two entries that differ, and an
+			-- entry shorter than `password_minimum'.
+			--
+			-- The username arrives from argv, so the rules confine it to
+			-- a-z, 0-9 and underscore and nothing non-ASCII is ever put on a
+			-- Windows command line; the shipped wrapper lowercases what the
+			-- host types before handing it over, as `create_user.cmd' does.
+			--
+			-- STOP THE SERVER FIRST. This opens the store directly, and
+			-- nothing here sets a busy timeout: a write that races the
+			-- running server's comes back SQLITE_BUSY, so the new hash never
+			-- lands, the old password still works, and the sessions the
+			-- running server is holding are never revoked. The wrapper
+			-- checks for a running server and refuses; from a bare console
+			-- the host has to know.
+		require
+			acceptable: is_acceptable_username (a_username)
+			path_given: not a_config_path.is_empty
+		local
+			l_config: SERVER_CONFIG
+			l_first, l_second: STRING_32
+			l_result: CHAT_RESULT [CHAT_USER]
+			l_user: detachable CHAT_USER
+			l_reset: BOOLEAN
+		do
+			create l_config.make_from_file (a_config_path)
+			if not l_config.is_valid then
+				print ("--reset-password: the configuration is refused; fix it first:%N")
+				print_errors (l_config)
+			elseif attached new_service (l_config) as l_service then
+				l_user := l_service.store.user_by_username (a_username)
+				if attached l_user as u then
+					if not is_resettable_member (u) then
+							-- A bot authenticates with a token, and its stored
+							-- hash is empty by CHAT_USER's own invariant; there
+							-- is no password here to reset.
+						print ("--reset-password: %"" + a_username + "%" is a bot; a bot has no password, only a token. Revoke and reissue that token instead; nothing was changed.%N")
+					else
+						print ("WARNING: the password will echo on this console (no echo suppression in v1).%N")
+						print ("New password for %"" + a_username + "%" (at least " + l_config.password_minimum.out + " characters): ")
+						io.read_line
+						l_first := line_read
+						print ("Again: ")
+						io.read_line
+						l_second := line_read
+						if not passwords_acceptable (l_first, l_second, l_config.password_minimum) then
+							if not l_first.same_string (l_second) then
+								print ("--reset-password: the two entries do not match; nothing was changed.%N")
+							else
+								print ("--reset-password: the password must be at least " + l_config.password_minimum.out + " characters; nothing was changed.%N")
+							end
+						else
+							l_result := l_service.reset_password (u, l_first)
+							if l_result.is_success then
+								l_reset := True
+								print ("--reset-password: the password for %"" + a_username + "%" was reset, and every live session that member had was signed out.%N")
+							elseif attached l_result.error as l_error then
+								print ("--reset-password: refused - ")
+								print_line_32 (l_error.message)
+							end
+						end
+					end
+				else
+					print ("--reset-password: this room has no member %"" + a_username + "%"; nothing was changed.%N")
+					print ("Usernames are 1..32 characters of a-z, 0-9 and underscore - check the spelling, and note there are no capitals in one.%N")
+				end
+				if l_service.store.is_open then
+						-- Close before teardown: an open SQLite handle disposed
+						-- during run-time shutdown segfaulted after every
+						-- successful run (the same reason `create_admin' closes),
+						-- and `exit_with_failure' below leaves at once.
+					l_service.store.close
+				end
+			else
+				print ("--reset-password: the store cannot be opened; nothing was changed.%N")
+			end
+			if not l_reset then
+				exit_with_failure
+			end
+		end
+
 	usage
 		do
 			print ("simple_chat_server [simple_chat_server.toml]%N")
 			print ("simple_chat_server --create-admin <username> [simple_chat_server.toml]%N")
 			print ("simple_chat_server --create-user <username> [simple_chat_server.toml]%N")
+			print ("simple_chat_server --reset-password <username> [simple_chat_server.toml]%N")
 		end
 
 feature -- Status report
@@ -304,6 +434,18 @@ feature -- Status report
 			Result := (create {CHAT_USER_RULES}).is_valid_human_display_name (a_name)
 		ensure
 			definition: Result = (create {CHAT_USER_RULES}).is_valid_human_display_name (a_name)
+		end
+
+	is_resettable_member (a_user: CHAT_USER): BOOLEAN
+			-- Would CHAT_SERVICE.reset_password accept `a_user'?
+			-- Asked BEFORE the call, so the preconditions `person' and
+			-- `stored' are discharged by this application rather than
+			-- tripped by it: a host who names the room's bot at the console
+			-- has made a typing mistake, not a programming error.
+		do
+			Result := not a_user.is_bot and a_user.is_stored
+		ensure
+			definition: Result = (not a_user.is_bot and a_user.is_stored)
 		end
 
 	passwords_acceptable (a_first, a_second: READABLE_STRING_GENERAL; a_minimum: INTEGER): BOOLEAN
@@ -440,6 +582,27 @@ feature {NONE} -- Implementation
 			end
 		ensure
 			open_when_built: attached Result as r implies r.store.is_open
+		end
+
+	exit_with_failure
+			-- Leave with exit status 1, having printed the reason already.
+			--
+			-- `--reset-password' is the one command here whose caller has to
+			-- be able to tell a refusal from a success WITHOUT reading the
+			-- console: `reset_password.cmd' tests `errorlevel' and prints
+			-- either "the password was changed" or "nothing was changed",
+			-- and a wrapper that always saw 0 would tell the host the
+			-- password had changed when it had not.
+			--
+			-- `die' terminates without raising, so nothing has to be
+			-- unwound; the store is already closed above, which is what
+			-- keeps the disposal segfault `create_admin' documents away
+			-- from this path too.
+		local
+			l_exceptions: EXCEPTIONS
+		do
+			create l_exceptions
+			l_exceptions.die (1)
 		end
 
 	print_errors (a_config: SERVER_CONFIG)

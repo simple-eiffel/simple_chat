@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--reset-password <username> [config.toml]`** on the server executable
+  (`apps/server/server_app.e`). A host who forgot the password had exactly one
+  remedy before this: delete `data/simple_chat.db*` and lose every message in
+  the room with it. `CHAT_SERVICE.reset_password` had been implemented,
+  contracted and assaulted since Phase 4 — it was reachable only over HTTP,
+  from an admin session, which is precisely what a locked-out admin does not
+  have.
+
+  The console shape is `--create-admin`'s, minus the display-name prompt: the
+  account already has a name and nothing here renames anybody. The new password
+  is typed twice, under the same `password_minimum` rule and behind the same
+  “the password will echo” warning the other two print — there is still no echo
+  suppression in v1 and none was invented here. On success it says the password
+  was reset **and that every live session that member held was signed out**,
+  which is `reset_password`'s own `sessions_revoked` postcondition: a password
+  somebody else has learned is taken away, not merely replaced.
+
+  Refused, with a line saying which and **a non-zero exit status**, changing
+  nothing: a configuration that will not load, a store that will not open, a
+  username this room does not know, a username naming a **bot** (a bot holds a
+  token and no password — `CHAT_USER`'s `bots_have_none`), two entries that
+  differ, and an entry below the minimum. The exit status is what lets
+  `reset_password.cmd` tell the host “nothing was changed” instead of assuming a
+  reset it never saw.
+
+  Two new pure queries carry it, both assaulted through `SERVER_APP.make_idle`:
+  `is_resettable_member` (the gate that discharges `reset_password`'s `person`
+  and `stored` preconditions before the call, so a host naming the room's bot
+  gets a sentence rather than a contract violation) and `exit_with_failure`.
+  No existing contract was touched.
+
+- **Installer: “Reset a password”** in the `SimpleChat Server` Start Menu folder
+  (`installer/templates/reset_password.cmd`, staged and registered like
+  `create_user.cmd`). It sets code page 65001, lowercases the typed username in
+  pure batch, refuses to run while `SimpleChatServer.exe` is up — all three
+  store-direct commands do, and for a reset a lost `SQLITE_BUSY` race would
+  leave the old password working and everyone still signed in — and reads the
+  exit status to report what actually happened. The hosting guide gains a
+  “When somebody forgets their password” section — including the case that
+  motivated the whole command, the host who is the only administrator and is
+  the one locked out — and its stop-the-server warning now names all three
+  store-direct commands.
+
+- Three assaults, 188 → **191**: `server_app_reset_password_gate` (the pure
+  gates: a stored person, an unstored one, a bot, and the argv username rules),
+  `password_reset_by_the_host` (the store-direct path — unknown username finds
+  nobody, bot refused, live session revoked, old password dead, new one alive,
+  nobody else touched) and `host_console_reset_kills_a_live_token` (the same
+  reset seen from the HTTP surface: a token issued beforehand answers 401, the
+  old password is refused at `/login`, the new one accepted — with no admin
+  session anywhere in it, unlike the endpoint test beside it).
+
 ## [0.1.1] — 2026-09-02
 
 Libraries this release is built against, each fixed today for the same

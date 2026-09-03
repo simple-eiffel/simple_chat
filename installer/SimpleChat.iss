@@ -216,6 +216,7 @@ Source: "src\server\start_server_hidden.vbs";  DestDir: "{app}"; Components: ser
 Source: "src\server\stop_server.cmd";          DestDir: "{app}"; Components: server; Flags: ignoreversion
 Source: "src\server\create_admin.cmd";         DestDir: "{app}"; Components: server; Flags: ignoreversion
 Source: "src\server\create_user.cmd";          DestDir: "{app}"; Components: server; Flags: ignoreversion
+Source: "src\server\reset_password.cmd";       DestDir: "{app}"; Components: server; Flags: ignoreversion
 Source: "src\server\view_log.cmd";             DestDir: "{app}"; Components: server; Flags: ignoreversion
 Source: "src\server\backup_room.cmd";          DestDir: "{app}"; Components: server; Flags: ignoreversion
 Source: "src\server\restore_backup.cmd";       DestDir: "{app}"; Components: server; Flags: ignoreversion
@@ -261,6 +262,8 @@ Name: "{group}\{#AppName} Server\Create first admin";  Filename: "{app}\create_a
     WorkingDir: "{app}"; Comment: "Make the first account - do this once, before anyone logs in"; Components: server
 Name: "{group}\{#AppName} Server\Create user";         Filename: "{app}\create_user.cmd"; \
     WorkingDir: "{app}"; Comment: "Make an account for a friend - accounts are created by you, never self-registered"; Components: server
+Name: "{group}\{#AppName} Server\Reset a password";    Filename: "{app}\reset_password.cmd"; \
+    WorkingDir: "{app}"; Comment: "Give an existing member a new password - the way back in when somebody, possibly you, has forgotten theirs"; Components: server
 Name: "{group}\{#AppName} Server\Server log";          Filename: "{app}\view_log.cmd"; \
     WorkingDir: "{app}"; Comment: "What the server printed"; Components: server
 Name: "{group}\{#AppName} Server\Edit server config";  Filename: "{sys}\notepad.exe"; \

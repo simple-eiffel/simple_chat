@@ -369,6 +369,63 @@ feature -- Tests: the server app's pure gates
 				= (create {CHAT_USER_RULES}).is_valid_human_display_name ({STRING_32} "Nick"))
 		end
 
+	test_server_app_reset_password_gate
+			-- The gates `--reset-password' puts in front of
+			-- CHAT_SERVICE.reset_password's `person' and `stored'
+			-- preconditions, and in front of the username rules on the way
+			-- in from argv. A host who mistypes a member's name, or names
+			-- the room's bot, has made a typing mistake - not a programming
+			-- error - so the application asks first and refuses politely.
+		local
+			l_app: SERVER_APP
+			l_now: SIMPLE_DATE_TIME
+			l_hash: STRING_8
+			l_person, l_unstored, l_bot: CHAT_USER
+		do
+			create l_app.make_idle
+			create l_now.make_now
+
+				-- A hash of the shape CHAT_USER's invariant demands: a
+				-- 32-hex salt, an iteration count at the OWASP floor, and a
+				-- 64-hex digest. Written out rather than computed - this test
+				-- is about the gate, and 600,000 rounds would prove nothing
+				-- here that PASSWORD_HASHER's own assault does not.
+			l_hash := "0123456789abcdef0123456789abcdef$600000$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+			create l_person.make (7, "nick", {STRING_32} "Nick", l_hash, False, False, l_now)
+			assert ("a stored person may be reset", l_app.is_resettable_member (l_person))
+
+				-- Id 0 is CHAT_USER's "not stored yet": `reset_password' would
+				-- have no row to update, and its `stored' precondition says so.
+			create l_unstored.make (0, "nick", {STRING_32} "Nick", l_hash, False, False, l_now)
+			assert ("an unstored person is refused", not l_app.is_resettable_member (l_unstored))
+
+				-- A bot authenticates with a token and carries no hash at all
+				-- (`bots_have_none'), so there is no password here to reset.
+				-- Its display name must carry the marker, which is the same
+				-- invariant read from the other side.
+			create l_bot.make (9, "helper", {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " Helper", "", False, True, l_now)
+			assert ("a bot is refused", not l_app.is_resettable_member (l_bot))
+
+				-- The query answers its own definition, so the application's
+				-- gate and the service's preconditions cannot drift apart.
+			assert ("gate equals the rule", l_app.is_resettable_member (l_person)
+				= (not l_person.is_bot and l_person.is_stored))
+
+				-- Only the username travels in argv, under the same rules the
+				-- two create flags apply: no capitals, no spaces, never empty.
+			assert ("a plain username passes", l_app.is_acceptable_username ({STRING_32} "nick"))
+			assert ("a capital is refused", not l_app.is_acceptable_username ({STRING_32} "Nick"))
+			assert ("a space is refused", not l_app.is_acceptable_username ({STRING_32} "nick jones"))
+			assert ("empty is refused", not l_app.is_acceptable_username ({STRING_32} ""))
+
+				-- The new password is typed twice and measured against
+				-- `password_minimum', exactly as the create flags do.
+			assert ("matching long passwords pass", l_app.passwords_acceptable ({STRING_32} "brand new pass 7", {STRING_32} "brand new pass 7", 8))
+			assert ("mismatch refused", not l_app.passwords_acceptable ({STRING_32} "brand new pass 7", {STRING_32} "brand new pass 8", 8))
+			assert ("short refused", not l_app.passwords_acceptable ({STRING_32} "short", {STRING_32} "short", 8))
+		end
+
 	test_server_app_decodes_utf8_console_bytes
 			-- The READING PATH, fed real UTF-8 BYTES - not decimal escapes of
 			-- the finished code points, which would prove nothing about
