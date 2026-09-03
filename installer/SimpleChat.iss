@@ -173,6 +173,33 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut for the chat windo
 Name: "autostart"; Description: "Start the chat server when Windows starts"; \
     GroupDescription: "Hosting:"; Components: server; Flags: unchecked
 
+; ---------------------------------------------------------------------------
+; @claude - the AI member of the room.
+;
+; TWO ROWS, ONE NAME. Inno allows the same task Name on more than one entry and
+; `Check' decides which of them exists, so exactly one is ever shown: the
+; ticked one when this PC has Claude Code, the unticked one when it has not.
+; That is the whole trick, and it is worth stating because the obvious
+; alternative does not work - WizardSelectTasks called from InitializeWizard is
+; a no-op (measured on 2026-09-03: the wizard's task list has not been built
+; yet, and /TASKS is applied afterwards, so the call is silently thrown away).
+; Both rows answer to WizardIsTaskSelected('claudemember') and to
+; /TASKS=claudemember.
+;
+; TICKING IT IS NOT ENOUGH BY ITSELF. The block is written into server.toml
+; only when the installer CREATES that file - an existing config is never
+; modified, which is this installer's standing rule (see [Files]). And
+; SimpleChatServer.exe needs `claude' on the PATH of the account that STARTS
+; the server, which is not necessarily the account that installed it: a logon
+; scheduled task runs as whoever logs on.
+; ---------------------------------------------------------------------------
+Name: "claudemember"; \
+    Description: "Add @claude to the room (uses this PC's Claude Code subscription; found on this PC: yes)"; \
+    GroupDescription: "Hosting:"; Components: server; Check: ClaudeCommandFound
+Name: "claudemember"; \
+    Description: "Add @claude to the room (uses this PC's Claude Code subscription; found on this PC: no - tick this only if you will install Claude Code before starting the server)"; \
+    GroupDescription: "Hosting:"; Components: server; Flags: unchecked; Check: ClaudeCommandMissing
+
 [Dirs]
 ; The room's home. Never removed by the uninstaller.
 Name: "{#ServerRoot}";        Components: server; Flags: uninsneveruninstall
@@ -284,11 +311,78 @@ Filename: "{sys}\schtasks.exe"; \
     Flags: runhidden waituntilterminated; Components: server; Tasks: autostart; \
     StatusMsg: "Registering the server to start with Windows..."
 
-Filename: "{app}\HOSTING-GUIDE.html"; Description: "Open the hosting guide"; \
-    Flags: shellexec postinstall skipifsilent nowait; Components: server
+; ===========================================================================
+; THE FINISH SEQUENCE - THE ORDER IS THE FEATURE
+;
+; WHY IT CHANGED. On 2026-09-02 Larry installed on a PC with no server running
+; and no account on it, and the finish page did the one thing it knew how to
+; do: it opened the chat window. He was met by a sign-in that could not
+; possibly work - there was nothing listening to answer it, and no account to
+; answer it with. For a HOST the window is the LAST thing that should happen,
+; not the first. So, for a hosting install, pressing Finish now runs:
+;
+;     1. create the first administrator      (skipped when a room already exists)
+;     2. start the server, and say whether it answered
+;     3. open the chat window
+;
+; A client-only install has no step 1 or 2 and keeps "Open SimpleChat now"
+; exactly as it was.
+;
+; WHY THIS IS A SEQUENCE AND NOT THREE THINGS AT ONCE. Inno processes [Run]
+; entries IN THE ORDER THEY ARE LISTED, and `waituntilterminated' makes Setup
+; wait for each one before going on to the next - Inno Setup help, "[Run] and
+; [UninstallRun] sections", under Flags: waituntilterminated ("Setup will wait
+; until the process terminates before proceeding to the next entry"). The
+; ordering itself is stated in the same section's opening paragraph. Step 3 is
+; `nowait' deliberately: the chat window is the last step, and nothing waits
+; for the host to close it.
+;
+; WHY A .cmd NEEDS {cmd}. A batch file is not an executable and cannot be a
+; [Run] Filename on its own; it is launched as `{cmd} /c "<script>"'. That also
+; gives it a real console - which these two scripts need, because the server
+; prints its own prompts to one and reads the answers back from it.
+;
+; WHY runasoriginaluser ON ALL OF THEM. The install is elevated; every Start
+; Menu entry that runs these same scripts is not. The load-bearing case is step
+; 2: a server started by the elevated installer could not afterwards be stopped
+; by "Stop server" from the Start Menu, because a non-elevated taskkill cannot
+; touch an elevated process. Steps 1 and 3 follow for the same reason - the
+; room's store and the member's client.toml should belong to the person who
+; will use them, not to whoever happened to answer the UAC prompt.
+; ===========================================================================
 
+; --- 1. the first administrator --------------------------------------------
+; Check: only when the room has no store yet. Re-running the installer over an
+; existing room must never offer to mint a second first-admin: the server does
+; refuse one, but only AFTER asking for a display name and a password twice,
+; and a wizard step whose only possible ending is a refusal is a dead end.
+; create_admin.cmd carries the same test itself, for the Start Menu path and as
+; a second lock on this one.
+Filename: "{cmd}"; Parameters: "/c ""{app}\create_admin.cmd"""; WorkingDir: "{app}"; \
+    Description: "Create the first administrator now (a console asks for a name and a password)"; \
+    Flags: postinstall skipifsilent waituntilterminated runasoriginaluser; \
+    Components: server; Check: RoomHasNoDatabase
+
+; --- 2. start it, and confirm it answers ------------------------------------
+; /nopause keeps the wizard moving. The console still prints what /health
+; answered, still names whatever program is sitting on the port when there is a
+; collision, and still holds itself open long enough to read - it just does not
+; wait for a keypress. Without the switch, which is how the Start Menu entry
+; runs it, it pauses: right when a human started it deliberately.
+Filename: "{cmd}"; Parameters: "/c ""{app}\start_server.cmd"" /nopause"; WorkingDir: "{app}"; \
+    Description: "Start the server now"; \
+    Flags: postinstall skipifsilent waituntilterminated runasoriginaluser; \
+    Components: server
+
+; --- 3. ...and only now the window, with something to sign in to ------------
 Filename: "{app}\{#AppExe}"; WorkingDir: "{userappdata}\{#ClientCfgDir}"; Description: "Open {#AppName} now"; \
-    Flags: postinstall skipifsilent nowait; Components: client
+    Flags: postinstall skipifsilent nowait runasoriginaluser; Components: client
+
+; The hosting guide is reference material, not a step in the sequence. It is
+; listed last on purpose: it opens a browser, and it belongs behind the chat
+; window rather than in front of it.
+Filename: "{app}\HOSTING-GUIDE.html"; Description: "Open the hosting guide"; \
+    Flags: shellexec postinstall skipifsilent nowait runasoriginaluser; Components: server
 
 [UninstallRun]
 ; Remove the logon task. Runs before files are deleted. It is harmless when no
@@ -309,6 +403,11 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#ServerExe}"; \
 ; here, but a shortcut someone made by hand, or a run from Explorer, still
 ; could. Sweeping *.log costs nothing and makes the uninstall exact.
 Type: files; Name: "{app}\*.log"
+
+; server_root.cmd is written by [Code], not by [Files], so Inno has no record
+; of it and would leave it behind - and one stray file keeps the whole install
+; folder alive after an otherwise clean uninstall.
+Type: files; Name: "{app}\server_root.cmd"
 
 ; ---------------------------------------------------------------------------
 ; NO OTHER [UninstallDelete] ENTRY, DELIBERATELY.
@@ -346,10 +445,263 @@ ConfirmUninstall=Remove %1 from this PC?%n%nYour chat history, accounts and sett
 
 [Code]
 
-{ Warn a host who ticks the hosting box that there is a guide to follow.
-  Silent installs never see this. }
-procedure CurStepChanged(CurStep: TSetupStep);
+var
+  { True when the server config was ALREADY on this PC before [Files]
+    ran. Recorded at ssInstall, which Inno calls just before the installation
+    proper starts - so it is the honest answer to "did WE create that file?",
+    without depending on whether an AfterInstall runs for an entry that
+    `onlyifdoesntexist' skipped. }
+  ServerTomlExistedBefore: Boolean;
+
+  { `claude' on the PATH: looked for once, then remembered. ClaudeCommandFound
+    is a [Tasks] Check, so it is asked repeatedly. }
+  ClaudeSearched, ClaudeIsHere: Boolean;
+
+{ ---------------------------------------------------------------------------
+  IS CLAUDE CODE ON THIS PC?
+
+  Only ever used to decide whether the @claude checkbox starts ticked and which
+  of its two descriptions is shown. A wrong answer costs nothing that cannot be
+  undone by the person looking at the checkbox.
+
+  Read as the INSTALLING user. Setup is normally elevated by UAC from that same
+  user's session, so PATH, USERPROFILE and APPDATA are still that user's - but
+  an administrator who elevates as a DIFFERENT account will be searched
+  instead, and the answer will be about that account. The finding goes to the
+  log either way.
+  --------------------------------------------------------------------------- }
+function ClaudeInFolder(const ADir: String): Boolean;
+var
+  D: String;
 begin
+  Result := False;
+  if ADir = '' then
+    Exit;
+  D := RemoveBackslashUnlessRoot(ADir);
+  Result := FileExists(D + '\claude.cmd') or FileExists(D + '\claude.exe')
+         or FileExists(D + '\claude.bat') or FileExists(D + '\claude');
+end;
+
+function ClaudeStarInFolder(const ADir: String): Boolean;
+var
+  Rec: TFindRec;
+begin
+  Result := False;
+  if ADir = '' then
+    Exit;
+  if FindFirst(RemoveBackslashUnlessRoot(ADir) + '\claude*', Rec) then
+  begin
+    try
+      repeat
+        if Rec.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0 then
+        begin
+          Result := True;
+          Break;
+        end;
+      until not FindNext(Rec);
+    finally
+      FindClose(Rec);
+    end;
+  end;
+end;
+
+function ClaudeCommandFound: Boolean;
+var
+  Rest, Part: String;
+  I: Integer;
+begin
+  if not ClaudeSearched then
+  begin
+    ClaudeSearched := True;
+    ClaudeIsHere := False;
+
+    Rest := GetEnv('PATH');
+    if Rest <> '' then
+    begin
+      Rest := Rest + ';';
+      while (Rest <> '') and not ClaudeIsHere do
+      begin
+        I := Pos(';', Rest);
+        if I = 0 then
+        begin
+          Part := Trim(Rest);
+          Rest := '';
+        end
+        else
+        begin
+          Part := Trim(Copy(Rest, 1, I - 1));
+          Rest := Copy(Rest, I + 1, Length(Rest));
+        end;
+        { A PATH entry may be quoted. }
+        if (Length(Part) >= 2) and (Part[1] = '"') and (Part[Length(Part)] = '"') then
+          Part := Copy(Part, 2, Length(Part) - 2);
+        if (Part <> '') and ClaudeInFolder(Part) then
+          ClaudeIsHere := True;
+      end;
+    end;
+
+    { The two places Claude Code installs itself that are not always on the
+      PATH an elevated process inherits. }
+    if not ClaudeIsHere then
+      ClaudeIsHere := ClaudeStarInFolder(GetEnv('USERPROFILE') + '\.local\bin');
+    if not ClaudeIsHere then
+      ClaudeIsHere := FileExists(GetEnv('APPDATA') + '\npm\claude.cmd');
+
+    if ClaudeIsHere then
+      Log('SimpleChat: Claude Code found for the installing user - the @claude checkbox starts ticked.')
+    else
+      Log('SimpleChat: no claude command found for the installing user - the @claude checkbox starts unticked.');
+  end;
+  Result := ClaudeIsHere;
+end;
+
+function ClaudeCommandMissing: Boolean;
+begin
+  Result := not ClaudeCommandFound;
+end;
+
+{ ---------------------------------------------------------------------------
+  Does this PC already have a room? The store is the only honest witness: an
+  administrator exists only inside it, and the installer never creates it.
+  --------------------------------------------------------------------------- }
+function RoomHasNoDatabase: Boolean;
+begin
+  Result := not FileExists(ExpandConstant('{#ServerRoot}\data\simple_chat.db'));
+end;
+
+{ ---------------------------------------------------------------------------
+  server_root.cmd - the one place the room's home folder is stated.
+
+  The launchers used to say  set "ROOT=%ProgramData%\SimpleChat"  outright, and
+  that was survivable while a human ran them from the Start Menu. It stops
+  being survivable now that the wizard runs two of them BY ITSELF: a /DVERIFY
+  build would have created an administrator in, and started a server against,
+  the REAL room - the exact class of collision the verify identity exists to
+  prevent (VERIFICATION-2026-09-02.md, section 1).
+
+  So the installer writes the root, and the three scripts it runs read it from
+  here. Written at ssPostInstall, which Inno calls after the files are in place
+  and BEFORE the postinstall [Run] entries fire, so it is always there in time -
+  including for the logon scheduled task, which has no environment to inherit.
+  --------------------------------------------------------------------------- }
+procedure WriteServerRootFile;
+var
+  L: TArrayOfString;
+  F: String;
+begin
+  F := ExpandConstant('{app}\server_root.cmd');
+  SetArrayLength(L, 7);
+  L[0] := '@echo off';
+  L[1] := 'REM Written by the SimpleChat installer. Do not edit - it is rewritten';
+  L[2] := 'REM on every install. It is the ONE place the room''s home folder is';
+  L[3] := 'REM stated, which is what keeps a verification build''s launchers from';
+  L[4] := 'REM ever reaching the real room.';
+  L[5] := 'set "SIMPLECHAT_ROOT=' + ExpandConstant('{#ServerRoot}') + '"';
+  L[6] := '';
+  if SaveStringsToFile(F, L, False) then
+    Log('SimpleChat: wrote ' + F)
+  else
+    Log('SimpleChat: COULD NOT write ' + F + ' - the launchers fall back to %ProgramData%\SimpleChat.');
+end;
+
+{ ---------------------------------------------------------------------------
+  @claude, written into a config THIS INSTALL CREATED.
+
+  Two designs were on the table: post-process the installed file, or ship a
+  second template with the block already uncommented. Post-processing wins, and
+  the reason is maintenance, not cleverness - one template instead of two that
+  have to be kept in step, and the block the host reads afterwards is the SAME
+  block the template documents, in the same place, under the same explanation.
+  A second variant would have doubled the file that carries every hosting
+  instruction in the product, for the sake of nine lines.
+
+  AN EXISTING CONFIG IS NEVER MODIFIED. That is this installer's standing rule,
+  and it is not negotiable for a file the host is told to edit by hand: the
+  port, the DuckDNS name and the token all live in it.
+
+  The file is pure ASCII as shipped, and this only ever runs on one the
+  installer has just written from that template, so the ANSI round-trip through
+  LoadStringsFromFile / SaveStringsToFile cannot lose anything.
+  --------------------------------------------------------------------------- }
+procedure EnableClaudeParticipant;
+var
+  Cfg, T: String;
+  Lines: TArrayOfString;
+  I, Start: Integer;
+  Changed: Boolean;
+begin
+  Cfg := ExpandConstant('{#ServerRoot}\server.toml');
+
+  if ServerTomlExistedBefore then
+  begin
+    Log('SimpleChat: @claude was asked for, but server.toml was already on this PC. ' +
+        'An existing config is never modified; the participants block is left ' +
+        'commented in place for the host to uncomment.');
+    Exit;
+  end;
+  if not FileExists(Cfg) then
+  begin
+    Log('SimpleChat: @claude was asked for, but ' + Cfg + ' is not there. Nothing written.');
+    Exit;
+  end;
+  if not LoadStringsFromFile(Cfg, Lines) then
+  begin
+    Log('SimpleChat: @claude was asked for, but ' + Cfg + ' could not be read. Nothing written.');
+    Exit;
+  end;
+
+  Start := -1;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+    if Trim(Lines[I]) = '# [[participants]]' then
+    begin
+      Start := I;
+      Break;
+    end;
+  if Start < 0 then
+  begin
+    Log('SimpleChat: @claude was asked for, but the commented participants block was ' +
+        'not found in ' + Cfg + '. Nothing written.');
+    Exit;
+  end;
+
+  { Uncomment from  # [[participants]]  down to the first line that is not a
+    "# " comment - which is the end of the block, and the end of the file. }
+  Changed := False;
+  I := Start;
+  while I < GetArrayLength(Lines) do
+  begin
+    T := Trim(Lines[I]);
+    if Copy(T, 1, 2) = '# ' then
+    begin
+      Lines[I] := Copy(T, 3, Length(T));
+      Changed := True;
+      I := I + 1;
+    end
+    else
+      Break;
+  end;
+
+  if Changed and SaveStringsToFile(Cfg, Lines, False) then
+    Log('SimpleChat: @claude enabled in ' + Cfg + ' (' + IntToStr(I - Start) + ' lines uncommented).')
+  else
+    Log('SimpleChat: @claude could not be written into ' + Cfg + '.');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Msg: String;
+begin
+  { Before a single file is copied: did this PC already have a server config? }
+  if CurStep = ssInstall then
+    ServerTomlExistedBefore := FileExists(ExpandConstant('{#ServerRoot}\server.toml'));
+
+  if (CurStep = ssPostInstall) and WizardIsComponentSelected('server') then
+  begin
+    WriteServerRootFile;
+    if WizardIsTaskSelected('claudemember') then
+      EnableClaudeParticipant;
+  end;
+
   { Hosting was asked for, but this is a per-user install - so the server
     component does not exist and only the client went down. Say so plainly
     rather than letting the host discover an empty Start Menu folder. }
@@ -370,17 +722,45 @@ begin
              mbInformation, MB_OK);
   end;
 
+  { The host's finish briefing. It used to list three things for the host to go
+    and do by hand; the wizard now DOES the first two of them, so what this
+    says is what is about to happen - and what is still theirs. }
   if (CurStep = ssPostInstall) and WizardIsComponentSelected('server')
      and not WizardSilent then
   begin
-    MsgBox('The chat server is installed, but the room is not reachable from ' +
-           'the internet yet - that is deliberate.' + #13#10#13#10 +
-           'Next steps, all in the Start Menu under "SimpleChat Server":' + #13#10 +
-           '  1. Create first admin' + #13#10 +
-           '  2. Start server' + #13#10 +
-           '  3. Hosting guide - for going public (router, DuckDNS) and for ' +
-           'setting up a standby host' + #13#10#13#10 +
-           'Your settings are at C:\ProgramData\SimpleChat\server.toml.',
-           mbInformation, MB_OK);
+    Msg := 'The chat server is installed.' + #13#10#13#10 +
+           'When you press Finish, this installer will, in order:' + #13#10#13#10;
+    if RoomHasNoDatabase then
+      Msg := Msg + '  1. open a console and ask you to create the first administrator' + #13#10
+    else
+      Msg := Msg + '  1. (skipped - this PC already has a room, so it already has ' +
+                   'its first administrator)' + #13#10;
+    Msg := Msg +
+           '  2. start the server, and tell you whether it answered' + #13#10 +
+           '  3. open the chat window, so you can sign in with that account' + #13#10#13#10 +
+           'Each step waits for the one before it. You can untick any of them on ' +
+           'the next page and do it yourself later from the Start Menu, under ' +
+           '"SimpleChat Server".' + #13#10#13#10;
+
+    if WizardIsTaskSelected('claudemember') then
+    begin
+      if ServerTomlExistedBefore then
+        Msg := Msg + '@claude: this PC already had a server.toml, and the installer ' +
+                     'never edits one. To add @claude, uncomment the [[participants]] ' +
+                     'block at the foot of it yourself.' + #13#10#13#10
+      else
+        Msg := Msg + '@claude has been added to the room. It runs on THIS PC''s own ' +
+                     'Claude Code subscription, so the claude command has to be on the ' +
+                     'PATH of whichever account STARTS the server.' + #13#10#13#10;
+    end;
+
+    Msg := Msg +
+           'STILL YOURS TO DO: the room is not reachable from the internet yet - ' +
+           'that is deliberate. The hosting guide covers going public (your router ' +
+           'and a DuckDNS name) and setting up a standby host; it opens last, ' +
+           'behind the chat window.' + #13#10#13#10 +
+           'Your settings are at ' + ExpandConstant('{#ServerRoot}') + '\server.toml.';
+
+    MsgBox(Msg, mbInformation, MB_OK);
   end;
 end;

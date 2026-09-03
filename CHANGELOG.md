@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **An `@claude` checkbox in the installer.** Under “Hosting:”, offering to add
+  the AI member of the room and saying whether Claude Code was found on the PC:
+  it starts **ticked only when a `claude` command is on the PATH of the
+  installing user** (searched across `PATH`, plus `%USERPROFILE%\.local\bin\claude*`
+  and `%APPDATA%\npm\claude.cmd`, the two places Claude Code installs itself that
+  an elevated process does not always inherit). Ticked, it uncomments the
+  `[[participants]]` block at the foot of `server.toml` — **but only when the
+  installer created that file.** An existing config is never modified; that rule
+  is not negotiable for a file the host is told to edit by hand, and it holds
+  here. The work is done by post-processing the installed file in `[Code]`
+  rather than by shipping a second template variant: one template instead of two
+  that have to be kept in step, and the host afterwards reads the same block in
+  the same place, under the same paragraph of explanation.
+
+  Two `[Tasks]` rows share the name `claudemember` behind mutually exclusive
+  `Check` functions, so exactly one is ever shown. That is not a flourish:
+  `WizardSelectTasks` called from `InitializeWizard` was measured to be a no-op
+  (the wizard's task list is not built yet, and `/TASKS` is applied afterwards),
+  so the declarative form is the only one that works.
+
+- **`{app}\server_root.cmd`**, written by `[Code]`: one line naming the room's
+  home folder, read by `create_admin.cmd`, `start_server.cmd` and
+  `run_server.cmd`. It exists because the wizard now runs two of those scripts by
+  itself — without it a `/DVERIFY` build would have created an administrator in,
+  and started a server against, the **real** room, which is the exact collision
+  the verify identity exists to prevent. An environment `SIMPLECHAT_ROOT` wins
+  over it, and the old hard-coded `%ProgramData%\SimpleChat` is still the
+  fallback.
+
+### Changed
+
+- **The installer's finish sequence, for a hosting install, is now an order.**
+  It was: open the chat window, and list three chores for the host to go and do.
+  On 2026-09-02 Larry installed on a PC with no server running and no account,
+  and was met by a sign-in that could not possibly work — nothing was listening,
+  and there was no account to answer with. For a host the window is the **last**
+  thing that should happen. Pressing Finish now runs, each step waiting for the
+  one before it:
+
+  1. **create the first administrator** in a console — skipped when
+     `{commonappdata}\SimpleChat\data\simple_chat.db` already exists, so
+     re-running the installer over an existing room never offers to mint a second
+     first-admin (the server refuses one anyway, but only *after* asking for a
+     display name and a password twice);
+  2. **start the server**, and say whether it answered `/health`, or name the
+     program holding the port;
+  3. **open the chat window**, with something to sign in to.
+
+  The hosting guide opens last, behind the window; it is reference material, not
+  a step. A client-only install has no steps 1 or 2 and keeps “Open SimpleChat
+  now” exactly as it was. All four entries carry `runasoriginaluser`: the install
+  is elevated, the Start Menu entries that run the same scripts are not, and a
+  server started elevated could not afterwards be stopped by “Stop server”,
+  because a non-elevated `taskkill` cannot touch an elevated process.
+
+- **The finish message** says what the wizard is about to do instead of listing
+  three chores, and keeps only the guide — going public, and a standby host — as
+  the manual part.
+
+- **`start_server.cmd` takes `/nopause`.** It prints everything it always printed
+  and holds the window open long enough to read, but does not wait for a
+  keypress, which would stall the wizard behind a key nobody is present to press.
+  Without the switch — which is how the Start Menu entry runs it — it pauses as
+  it always has.
+
+- **`create_admin.cmd` leaves quietly when the room already has an
+  administrator**: it says so and exits 0 rather than walking the host through a
+  display name and two passwords on the way to a refusal.
+
+### Fixed
+
+- **Pressing Enter at the username prompt produced gibberish.** `set /p` leaves
+  the variable **undefined** on an empty line, and `!ADMIN:A=a!` on an undefined
+  variable does not expand to nothing — it expands to the literal text `A=a`. The
+  “No username given” guard sat *after* the lowercasing chain and so could never
+  fire: the script printed `Using username: A=a` and then an error about `a-z`
+  and underscores. The guard now runs before the chain, with the old one kept as
+  a second net for an answer of nothing but spaces. This is the first prompt the
+  new finish sequence puts in front of a host.
+
+- **The port was never read out of `server.toml`.** `for /f (' … ')` runs its
+  command through `cmd /c`, and cmd strips the first and last quote of any `/c`
+  string that begins with a quote and holds more than two — so
+  `'"%SYS%\findstr.exe" /r /c:"^ *port *=" "%ROOT%\server.toml"'` arrived as
+  `C:\Windows\System32\findstr.exe" /r /c:" *port`, which is not a command at
+  all. Measured against a config saying `port = 8097`: the shipped form yielded
+  `8090`, the bare-path form `8097`. The same shape defeated the
+  **port-collision** loop in both `start_server.cmd` and `run_server.cmd`, which
+  is worse — quoted, it ran nothing, so a collision was never detected and the
+  server was launched at a door already taken. Both files now leave the
+  executable path bare (System32 has no space in it) and keep the quotes on every
+  argument.
+
+- **`timeout.exe` does not return when stdin is redirected or `NUL`**, which
+  wedged two verification runs. The `/nopause` hold is `ping -n N 127.0.0.1`
+  instead — the batch sleep that has no opinion about stdin.
+
+
 ### Changed
 
 - **The sign-in door's refusal line is an ordinary UI label again**

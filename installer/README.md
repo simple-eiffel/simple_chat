@@ -88,6 +88,95 @@ becomes a standby host — is just re-running the installer and ticking the box.
 Inno restores the previously installed component selection on a reinstall, so
 only the new one has to be ticked.
 
+### The finish sequence — the order is the feature
+
+For a **hosting** install, pressing Finish now runs three things, each waiting
+for the one before it:
+
+1. **Create the first administrator** — a console asks for a username and a
+   password. Skipped when `{commonappdata}\SimpleChat\data\simple_chat.db`
+   already exists, i.e. when this PC already has a room. The `Check` function is
+   `RoomHasNoDatabase`, and `create_admin.cmd` carries the same test itself.
+2. **Start the server** — and say whether it answered `/health`, or name the
+   program holding the port if there is a collision.
+3. **Open the chat window** — with something to sign in to.
+
+The hosting guide opens last, behind the window; it is reference material, not a
+step. A **client-only** install has no steps 1 or 2 and keeps "Open SimpleChat
+now" exactly as before.
+
+This order is Larry's call, and it comes from a real morning: on 2026-09-02 he
+installed on a PC with no server running and no account, and the finish page did
+the only thing it knew how to do — it opened the chat window, and he was met by a
+sign-in that could not possibly work. For a host the window is the **last** thing
+that should happen.
+
+Inno processes `[Run]` entries in the order they are listed, and
+`waituntilterminated` holds the next until the previous has ended, which is what
+makes this a sequence rather than three things at once. All four entries carry
+`runasoriginaluser`: the install is elevated, the Start Menu entries that run the
+same scripts are not, and a server started elevated could not afterwards be
+stopped by "Stop server", because a non-elevated `taskkill` cannot touch an
+elevated process.
+
+`start_server.cmd` takes **`/nopause`** for this. It prints everything it always
+printed and holds the window open long enough to read, but does not wait for a
+keypress — a `pause` there would stall the wizard behind a key nobody is present
+to press. Without the switch, which is how the Start Menu entry runs it, it
+pauses as it always has.
+
+### The @claude checkbox
+
+Under "Hosting:", with the server component:
+
+> Add @claude to the room (uses this PC's Claude Code subscription; found on
+> this PC: **yes**/**no**)
+
+It starts **ticked only when a `claude` command is on the PATH of the installing
+user** — searched across `PATH`, plus `%USERPROFILE%\.local\bin\claude*` and
+`%APPDATA%\npm\claude.cmd`, which are the two places Claude Code installs itself
+that an elevated process does not always inherit.
+
+Two `[Tasks]` rows share the name `claudemember`, with mutually exclusive
+`Check` functions, so exactly one is ever shown — the ticked one or the unticked
+one. That is not a flourish: `WizardSelectTasks` called from `InitializeWizard`
+is measurably a no-op (the wizard's task list is not built yet and `/TASKS` is
+applied afterwards), so the declarative form is the only one that works. Both
+rows answer to `WizardIsTaskSelected('claudemember')` and to
+`/TASKS=claudemember`.
+
+Ticked, it uncomments the `[[participants]]` block at the foot of `server.toml`
+— **but only when the installer created that file**. An existing config is never
+modified; that rule is not negotiable for a file the host is told to edit by
+hand. The work is done in `[Code]` on the installed file rather than by shipping
+a second template: one template instead of two that have to be kept in step, and
+the host afterwards reads the same block in the same place under the same
+explanation.
+
+`SimpleChatServer.exe` needs `claude` on the PATH of the account that **starts**
+the server, which is not necessarily the account that installed it — a logon
+scheduled task runs as whoever logs on. The checkbox says so, and so does the
+hosting guide.
+
+### `server_root.cmd`
+
+`[Code]` writes one generated file into `{app}`: a single
+`set "SIMPLECHAT_ROOT=…"` naming the room's home folder.
+`create_admin.cmd`, `start_server.cmd` and `run_server.cmd` read it; an
+environment `SIMPLECHAT_ROOT` wins over it (that is how verification drives them
+against a scratch room), and the old hard-coded `%ProgramData%\SimpleChat` is
+still the fallback.
+
+It exists because the wizard now runs two of those scripts **by itself**. Without
+it a `/DVERIFY` build would have created an administrator in, and started a
+server against, the real room — the exact collision the verify identity exists to
+prevent. `[UninstallDelete]` sweeps it, since `[Files]` has no record of it and
+one stray file keeps a whole install folder alive.
+
+The other five launchers still name `%ProgramData%\SimpleChat` themselves, and
+`stop_server.cmd` kills by image name, which no root can scope. A verify build's
+Start Menu is therefore still aimed at the real room; do not run it.
+
 ### Where things land
 
 | | |
@@ -150,3 +239,4 @@ the re-fetch commands.
 | `templates/` | config templates, the nine launchers, the hosting guide, `README.txt` |
 | `THIRD-PARTY.md` | the pins and their licences |
 | `VERIFICATION-2026-09-02.md` | verification record, and the incident that shaped the verify identity |
+| `VERIFICATION-2026-09-03.md` | verification record for the finish sequence and the @claude checkbox |
