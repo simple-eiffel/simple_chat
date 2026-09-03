@@ -96,6 +96,14 @@ nothing and leaves with exit status 1. A forgotten password is not the end of th
 room: `--reset-password <username>` gives an existing member a new one and signs out
 every session they hold.
 
+**Signing in when nothing answers.** A sign-in that never reaches a server does not show
+you the transport's complaint; it shows you what to do. If the address is this PC's own
+loopback, the window says no chat server is running here and names the Start Menu entry
+that starts one — *SimpleChat Server > Start server*. If it is a friend's address, it names
+the address it could not reach and points at `%APPDATA%\simple_chat\client.toml`, where
+that address is kept. A wrong password is a different thing entirely and still comes back
+in the server's own words.
+
 **Uninstalling never deletes the room.** The data folder, `server.toml`, the backups and
 each member's `client.toml` all survive, so reinstalling picks up where it left off.
 

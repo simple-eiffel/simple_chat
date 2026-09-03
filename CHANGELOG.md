@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The sign-in door's refusal line is an ordinary UI label again**
+  (`apps/client/login_window.e`). It carried a nominal size of 9.0 as a
+  workaround for a simple_widgets defect - a wrapped `SW_LABEL` stepped its
+  lines by `size + 9.0` while painting at `size * text_scale`. simple_widgets
+  0.4.0 derives the step from the measured font metrics at the painted size,
+  so the workaround and its constant are gone; the line is drawn at the form's
+  size like every other label on it. The same release gives every window built
+  on the library Vision2's spacing model - a border between the window edge and
+  its content, padding between siblings, an inner inset in every control, and
+  control minimum sizes that follow the font - which this client inherits
+  without a change, because it never set spacing of its own.
+
 - **Passwords no longer echo at the console.** `--create-admin`, `--create-user`
   and `--reset-password` (`apps/server/server_app.e`) read every password — and
   every “Again:” confirmation — through `SIMPLE_CONSOLE.read_hidden_line`
@@ -158,6 +170,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reset seen from the HTTP surface: a token issued beforehand answers 401, the
   old password is refused at `/login`, the new one accepted — with no admin
   session anywhere in it, unlike the endpoint test beside it).
+
+### Changed
+
+- **A sign-in that reaches nothing at all now says what to do about it, instead of
+  quoting the transport.** Larry installed the client on a PC with no server
+  running and no account yet; the finish page opened the window, he typed a name
+  and a password, and it "didn't work". Everything the window could tell him was
+  true and useless: a connection label reading *not answering*, and on the door's
+  refusal line whatever WinHTTP called the failure — a mechanism, never an action.
+
+  `HTTP_REPLY.status` is 0 **exactly** when the transport failed, so that is the
+  fact the client now keeps (`CHAT_CLIENT.last_status`, added). `CHAT_ERROR`
+  cannot carry it: `error_of` maps a transport failure onto 503, and a server
+  answers 503 of its own accord as well (`CHAT_SERVICE.backup` does), so the two
+  are indistinguishable by the time the door sees them.
+
+  `CONNECTION_ADVICE` (new, `src/client/`) is the one place the words live, and
+  the *address* is the whole distinction it draws. This PC's own loopback — the
+  address `CLIENT_CONFIG.prefers_local` and `local_port` build — means the room is
+  meant to be hosted here and no server is running, so the member is pointed at
+  the Start Menu entry that starts one, word for word as `installer/SimpleChat.iss`
+  writes it. Any other address is somebody else's server, so he is pointed at the
+  host and at `%APPDATA%\simple_chat\client.toml`, and is never told to start a
+  server of his own.
+
+  **A refusal is not an outage.** A wrong password, an unknown name, a locked
+  account: those carry a real HTTP status and the server's own wording, and
+  nothing here touches them. `CLIENT_APP.attempt_login` asks for advice only when
+  `last_status` is 0.
+
+- **The door's refusal line wraps** (`apps/client/login_window.e`). An instruction
+  a member cannot read whole is not an instruction: a single-line `SW_LABEL` ran
+  the advice off the right edge and took the Start Menu entry with it. The window
+  grew from 460 × 340 to 640 × 420 to hold three wrapped lines, and the refusal
+  line carries its own nominal size (`Error_text_size`) because `SW_LABEL` steps a
+  wrapped line by `size + 9.0` while `SW_PAINTER` paints it at
+  `size * theme.text_scale` — at `Text_scale` 2.0 the two only agree while the
+  nominal size stays small.
+
+  Proven on the finalized client against a dead loopback port, not only in the
+  assault: the door shows *"No chat server is running on this PC (nothing answers
+  at http://127.0.0.1:45999). If this PC hosts the room: Start Menu > SimpleChat
+  Server > Start server, then sign in again. If a friend hosts it: put their
+  address in %APPDATA%\simple_chat\client.toml"* across three legible lines, with
+  the buttons still on the form.
 
 ## [0.1.1] — 2026-09-02
 

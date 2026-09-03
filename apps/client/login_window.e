@@ -65,7 +65,17 @@ feature {NONE} -- Initialization
 			create username_box.make_single_line ("")
 			create password_box.make_password ("")
 			create remember_box.make (Text_remember, True, Void)
-			create error_label.make_ui ("")
+				-- THE REFUSAL LINE HAS TO BE ABLE TO BE THREE LINES. Since Phase 4's
+				-- no-server pass it can carry CONNECTION_ADVICE - two sentences naming
+				-- what to do next - and a single-line SW_LABEL would simply run off the
+				-- right edge and take the instruction with it. `with_wrap' breaks it at
+				-- word boundaries to the form's width instead.
+				--
+				-- It is an ordinary UI label at the form's own size: since simple_widgets
+				-- 0.4.0 a wrapped SW_LABEL steps its lines from the measured font
+				-- metrics at the painted size, so no nominal-size workaround is needed.
+			create error_label.make_ui ({STRING_32} "")
+			error_label.with_wrap.do_nothing
 			create login_button.make_primary (Text_login, Void)
 			create cancel_button.make (Text_cancel, Void)
 			create l_buttons.make
@@ -266,8 +276,11 @@ feature -- Basic operations
 feature -- Constants
 
 	Window_title: STRING_32 = "simple_chat - log in"
-	Window_width: INTEGER = 460
-	Window_height: INTEGER = 340
+	Window_width: INTEGER = 640
+	Window_height: INTEGER = 420
+			-- Wider and taller than Task 10's 460 x 340: the refusal line now wraps
+			-- CONNECTION_ADVICE, and an instruction the member cannot read whole is
+			-- no instruction.
 
 	Text_server: STRING_32 = "Server"
 	Text_username: STRING_32 = "Name"
