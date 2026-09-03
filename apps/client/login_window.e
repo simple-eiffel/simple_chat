@@ -65,7 +65,18 @@ feature {NONE} -- Initialization
 			create username_box.make_single_line ("")
 			create password_box.make_password ("")
 			create remember_box.make (Text_remember, True, Void)
-			create error_label.make_ui ("")
+				-- THE REFUSAL LINE HAS TO BE ABLE TO BE THREE LINES. Since Phase 4's
+				-- no-server pass it can carry CONNECTION_ADVICE - two sentences naming
+				-- what to do next - and a single-line SW_LABEL would simply run off the
+				-- right edge and take the instruction with it. `with_wrap' breaks it at
+				-- word boundaries to the form's width instead.
+				--
+				-- The nominal size is NOT the form's: SW_LABEL steps a wrapped line by
+				-- `size + 9.0' while SW_PAINTER draws it at `size * theme.text_scale',
+				-- so at `Text_scale' 2.0 the two only agree while the nominal size stays
+				-- small. `Error_text_size' is where they do.
+			create error_label.make ({STRING_32} "", {SW_PAINTER}.Role_ui, Error_text_size, False)
+			error_label.with_wrap.do_nothing
 			create login_button.make_primary (Text_login, Void)
 			create cancel_button.make (Text_cancel, Void)
 			create l_buttons.make
@@ -266,8 +277,19 @@ feature -- Basic operations
 feature -- Constants
 
 	Window_title: STRING_32 = "simple_chat - log in"
-	Window_width: INTEGER = 460
-	Window_height: INTEGER = 340
+	Window_width: INTEGER = 640
+	Window_height: INTEGER = 420
+			-- Wider and taller than Task 10's 460 x 340: the refusal line now wraps
+			-- CONNECTION_ADVICE, and an instruction the member cannot read whole is
+			-- no instruction.
+
+	Error_text_size: REAL_64 = 9.0
+			-- The nominal size of the refusal line, drawn at `Error_text_size' *
+			-- `Text_scale'. See the note in `make': a wrapped SW_LABEL steps its lines
+			-- by `size + 9.0' and paints them at `size * text_scale', so the nominal
+			-- size has to stay under about 7.3 for the two to agree exactly; 9.0 buys
+			-- back readable height (18 px drawn) at a two-pixel tightening between
+			-- lines, which is the trade Larry's eyes want.
 
 	Text_server: STRING_32 = "Server"
 	Text_username: STRING_32 = "Name"

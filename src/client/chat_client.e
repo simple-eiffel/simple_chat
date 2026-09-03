@@ -49,6 +49,14 @@ feature -- Access
 	me: detachable CHAT_MEMBER
 			-- Who is logged in.
 
+	last_status: INTEGER
+			-- The HTTP status of the last exchange this client made, as HTTP_REPLY reports
+			-- it: 0 EXACTLY when that exchange failed at the transport - nothing answered -
+			-- and 0 before any exchange at all; 200..599 otherwise. CHAT_ERROR cannot carry
+			-- this: a transport failure and a server's own 503 both arrive as 503, and the
+			-- window has to tell them apart to say anything a member can act on
+			-- (CONNECTION_ADVICE).
+
 feature -- Status report
 
 	is_logged_in: BOOLEAN
@@ -508,6 +516,9 @@ feature {NONE} -- Requests
 			positive_timeout: a_timeout_seconds > 0
 		do
 			Result := transport.send (a_method, endpoint.url_for (a_path), a_headers, a_body, a_timeout_seconds)
+				-- Kept because `error_of' cannot: it maps a transport failure onto 503, which
+				-- a server may also answer with of its own accord (CHAT_SERVICE.backup does).
+			last_status := Result.status
 		ensure
 			attempted: transport.exchange_count = old transport.exchange_count + 1
 		end

@@ -209,6 +209,12 @@ feature {NONE} -- Initialization
 			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_opens_the_first_room_and_ticks, "client_app_opens_the_first_room_and_ticks")
 			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_reports_a_server_that_lists_no_room, "client_app_reports_a_server_that_lists_no_room")
 
+			print ("=== NOTHING ANSWERED AT ALL (phase4/no-server-message) ===%N")
+			run_test (agent (create {WINDOW_ASSAULT}).test_no_server_on_this_pc_is_told_how_to_start_one, "no_server_on_this_pc_is_told_how_to_start_one")
+			run_test (agent (create {WINDOW_ASSAULT}).test_an_unreachable_friend_is_named_with_his_address_and_the_settings_file, "an_unreachable_friend_is_named_with_his_address_and_the_settings_file")
+			run_test (agent (create {WINDOW_ASSAULT}).test_a_refused_password_still_gets_the_servers_own_words, "a_refused_password_still_gets_the_servers_own_words")
+			run_test (agent (create {WINDOW_ASSAULT}).test_connection_advice_reads_the_address_and_nothing_else, "connection_advice_reads_the_address_and_nothing_else")
+
 			print ("=== SCOOP CONSUMER ===%N")
 			run_test (agent s.test_scoop_compatibility, "scoop_compatibility")
 
