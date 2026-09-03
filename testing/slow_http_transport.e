@@ -1,13 +1,25 @@
 note
 	description: "[
 		An HTTP_TRANSPORT that waits the way the real one waits: inside a
-		plain blocking C call, where ISE's collector cannot see the
-		thread. It reads `seconds' out of the long-poll's own URL, waits
-		that long (capped by `cap_seconds' so an assault stays short) and
-		answers an empty page - so a poller that asks for a 25 s wait
-		spends 25 s (capped) in C, and one that asks for none spends
-		none. A POST to /login is answered at once with a well-formed
-		reply, which is how the host's client gets a session.
+		C call marked `blocking', exactly as SIMPLE_WINHTTP.c_send is
+		marked since 0.1.1. It reads `seconds' out of the long-poll's own
+		URL, waits that long (capped by `cap_seconds' so an assault stays
+		short) and answers an empty page - so a poller that asks for a
+		25 s wait spends 25 s (capped) in C, and one that asks for none
+		spends none. A POST to /login is answered at once with a
+		well-formed reply, which is how the host's client gets a session.
+
+		WHY THE MARKER IS ON `c_sleep', AND WHY IT HAD TO GO ON. Until
+		2026-09-02 this fixture's Sleep was a plain `external "C inline"',
+		because the transport it doubled was one too and the assault's job
+		was to reproduce that defect. simple_winhttp 0.1.1 fixed the real
+		one. A fixture that kept the old shape would have gone on failing
+		the restored 25 s poll (1,481 ms, measured) FOR A REASON THAT IS
+		THE FIXTURE'S AND NOT THE PRODUCT'S - a double telling the truth
+		about code that no longer exists. It now waits the way a fixed
+		transport waits, so what the assault measures is EVENT_POLLER.
+		The unmarked shape has not been thrown away: GC_PROBE still holds
+		it, beside the marked one, as the law's own evidence.
 
 		Nothing here is a double for the network: it is a double for THE
 		SHAPE OF THE WAIT, which is the only thing the freeze ever
@@ -113,9 +125,11 @@ feature -- Constants
 feature {NONE} -- Externals
 
 	c_sleep (a_milliseconds: INTEGER)
-			-- Wait inside C, unmarked, exactly as SIMPLE_WINHTTP.c_send does.
+			-- Wait inside C, MARKED `blocking' exactly as SIMPLE_WINHTTP.c_send is
+			-- (0.1.1): the runtime is told this thread has left Eiffel, so a collection
+			-- may run while it waits and no other processor is stopped behind it.
 		external
-			"C inline use <windows.h>"
+			"C blocking inline use <windows.h>"
 		alias
 			"Sleep((DWORD) $a_milliseconds);"
 		end

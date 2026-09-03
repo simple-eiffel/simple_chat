@@ -43,6 +43,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The one-line change that would give the long poll back lives in another
   repository — mark `SIMPLE_WINHTTP.c_send` `blocking` — and
   `EVENT_POLLER.Poll_slice_seconds` says so where the next reader will look.
+  **It has since landed (simple_winhttp 0.1.1), and the slice has been retired —
+  see *The long poll is back*, below.**
+
+### Changed
+
+- **The long poll is back, and the doorbell with it** (`src/client/event_poller.e`,
+  `apps/client/client_app.e`). `SIMPLE_WINHTTP.c_send` is marked
+  `external "C blocking inline"` from simple_winhttp 0.1.1, so the runtime knows
+  the thread has left Eiffel and a collection may run while an exchange is in
+  flight. That removes the whole reason for the slice. `EVENT_POLLER.run` asks
+  for `{CHAT_CLIENT}.Max_wait_seconds` again and `Poll_slice_seconds` is
+  **retired** rather than set to the maximum: a "slice" whose only honest value
+  is the whole is not a knob, and the one knob that survives is the one the class
+  already had — `poll_once`'s own `a_wait_seconds` argument, whose
+  `seconds_in_range` precondition still binds it to `[0, Max_wait_seconds]`. No
+  contract changed; nothing in `src/` or `apps/` lost an assertion tag.
+
+  What comes back is the doorbell. A message into a quiet room arrives on the
+  round trip that carries it instead of up to `Quiet_floor_seconds` later, and a
+  quiet room now costs one request per member per 25 s instead of one per second.
+  What it costs is nothing measurable: with the real 25-second poll held open,
+  the worst allocation on the GUI's processor is **4 ms live, 5 ms headless** on a
+  clean build (25,144 ms against the unmarked library, in the same worktree).
+
+  The law the slice was written for is not retired, only satisfied — it is
+  restated in `EVENT_POLLER`'s class note and in `CLIENT_APP`'s: **no processor
+  may sit inside an UNMARKED C external longer than the GUI can afford to wait
+  for a collection.** A transport swapped in under `HTTP_TRANSPORT` must have its
+  externals read before this window is trusted with it.
+
+- **The freeze assault now measures the product, not the fixture**
+  (`testing/slow_http_transport.e`, `testing/freeze_assault.e`,
+  `testing/wiring_assault.e`). Two defects in the harness, both of which would
+  have lied about the restored poll:
+
+  1. `SLOW_HTTP_TRANSPORT.c_sleep` was a plain `external "C inline"`, because the
+     transport it doubled was one too. Against the restored 25-second poll that
+     failed at **1,481 ms** — a real stall, for a reason that was the fixture's
+     and not the product's. It is now marked `blocking`, mirroring `c_send`'s
+     exact form, so the double tells the truth about the transport that exists.
+     The unmarked shape is not lost: `GC_PROBE` still holds it, beside an Eiffel
+     sleep, as the law's own evidence.
+  2. The allocation probes — `FREEZE_ASSAULT.worst_allocation_burst`, its frame
+     burst, and `WIRING_ASSAULT`'s — allocated 200 × 1 KiB and **kept none of
+     it**, so the collector was only ever provoked by whatever heap pressure the
+     rest of the run happened to supply. Each now allocates 2 MiB a burst and
+     retains 200 KiB of it in a live set that grows for the length of the test,
+     the way simple_winhttp's own `testing/scoop/blocking_probe.e` does. Against
+     the unfixed library that took the measured stall from 21,639 ms to
+     25,144 ms — the whole poll instead of the part of it that happened to
+     coincide with a collection.
+
+  And one correction to the premise this branch opened on, because the
+  measurement refused it. The probe's missing live set was **not** what made this
+  suite report a green against the broken library. **The run location was.**
+  `WIRING_ASSAULT` finds the server exe by a path relative to the project root;
+  from anywhere else the live assault `SKIP`s — and passes on the skip. Same
+  binary, built against simple_winhttp 0.1.0, hardening off:
+
+  - from the **project root** — `FAIL`, worst allocation **21,639 ms**; suite 187 passed, 1 failed
+  - from **`EIFGENs/…/F_code`** — `SKIP`, then `PASS`; suite **188 passed, 0 failed**
+
+  So: **run this suite from the project root.** Nothing in the harness enforces
+  that yet — making the skip fail, or resolving the exe against the executable's
+  own location, would change the assault's contract and was left for a gate.
+  Both libraries' numbers are in `.eiffel-workflow/evidence/phase4-freeze.txt`,
+  PART 2.
+
+  `test_a_blocking_c_call_on_another_processor_stops_the_allocator` is renamed
+  `test_an_unmarked_c_call_…`: now that `blocking` is the name of the *safe*
+  shape, the old name pointed at the wrong one.
 
 ### Added
 
@@ -51,9 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the two probes that name the cause. A real `EVENT_POLLER` on its own SCOOP
   processor over a transport that waits the way the real one waits — inside C —
   while the root allocates, pumps and posts: every call must return inside a
-  frame (red 892 ms, green 1 ms). Beside it, the same wait spent two ways on a
-  bare processor: an Eiffel sleep costs the root 1 ms, an unmarked C call
-  7,931 ms.
+  frame (red 892 ms, green 1 ms — and see *The long poll is back* for what those
+  two numbers became once the probe stopped throwing its allocations away).
+  Beside it, the same wait spent two ways on a bare processor: an Eiffel sleep
+  costs the root 1 ms, an unmarked C call 7,931 ms.
 - **`WIRING_ASSAULT.test_live_gui_latency_through_a_quiet_poll`** — the live
   bar, against the booted server exe: twenty distinct lines posted as fast as a
   composer could send them, then 140 heartbeats through a whole quiet poll, with
