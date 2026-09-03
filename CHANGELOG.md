@@ -7,34 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **An `@claude` checkbox in the installer.** Under “Hosting:”, offering to add
-  the AI member of the room and saying whether Claude Code was found on the PC:
-  it starts **ticked only when a `claude` command is on the PATH of the
-  installing user** (searched across `PATH`, plus `%USERPROFILE%\.local\bin\claude*`
-  and `%APPDATA%\npm\claude.cmd`, the two places Claude Code installs itself that
-  an elevated process does not always inherit). Ticked, it uncomments the
-  `[[participants]]` block at the foot of `server.toml` — **but only when the
-  installer created that file.** An existing config is never modified; that rule
-  is not negotiable for a file the host is told to edit by hand, and it holds
-  here. The work is done by post-processing the installed file in `[Code]`
-  rather than by shipping a second template variant: one template instead of two
-  that have to be kept in step, and the host afterwards reads the same block in
-  the same place, under the same paragraph of explanation.
+## [0.1.2] — 2026-09-03
 
-  Two `[Tasks]` rows share the name `claudemember` behind mutually exclusive
-  `Check` functions, so exactly one is ever shown. That is not a flourish:
-  `WizardSelectTasks` called from `InitializeWizard` was measured to be a no-op
-  (the wizard's task list is not built yet, and `/TASKS` is applied afterwards),
-  so the declarative form is the only one that works.
+The first-run release: a hosting install finishes by creating the first administrator, starting the server and opening the window, in that order; passwords never echo; the door says where the server is; the host can reset a password; every window inherits Vision2's spacing model from simple_widgets 0.4.0. Built against simple_winhttp 0.1.1, simple_process 1.0.1, simple_encryption 2.1.1, simple_shell 1.9.2, simple_widgets 0.4.0 and simple_console 1.1.0.
 
-- **`{app}\server_root.cmd`**, written by `[Code]`: one line naming the room's
-  home folder, read by `create_admin.cmd`, `start_server.cmd` and
-  `run_server.cmd`. It exists because the wizard now runs two of those scripts by
-  itself — without it a `/DVERIFY` build would have created an administrator in,
-  and started a server against, the **real** room, which is the exact collision
-  the verify identity exists to prevent. An environment `SIMPLECHAT_ROOT` wins
-  over it, and the old hard-coded `%ProgramData%\SimpleChat` is still the
-  fallback.
+### Added
+
+- **`server_app_prompts_over_redirected_stdin`**, 191 → **192** assaults
+  (`testing/config_load_assault.e`). It runs the finalized executable as a real
+  child with standard input redirected **from a file** — no console is opened and
+  no keystroke is synthesised — in two halves. First an input file that runs out
+  before the password: the prompts appear, the refusal names the missing password,
+  `ERRORLEVEL` is 1 and there is not even a database file afterwards, because the
+  store is never opened. Then the same file with all three lines: the admin is
+  created under the display name that was *typed*, and `ERRORLEVEL` is 0 — which
+  is what proves the redirected path is intact rather than merely refusing
+  everything. The exit status is read out of `ERRORLEVEL` inside `cmd`, because
+  that is what `create_admin.cmd` and `reset_password.cmd` actually branch on.
+
+  The **real-console** path is not exercised here and is not claimed to be: it
+  needs a real console, which a test runner's redirected standard input is not.
+  It was proven in simple_console itself.
+
+- **`--reset-password <username> [config.toml]`** on the server executable
+  (`apps/server/server_app.e`). A host who forgot the password had exactly one
+  remedy before this: delete `data/simple_chat.db*` and lose every message in
+  the room with it. `CHAT_SERVICE.reset_password` had been implemented,
+  contracted and assaulted since Phase 4 — it was reachable only over HTTP,
+  from an admin session, which is precisely what a locked-out admin does not
+  have.
+
+  The console shape is `--create-admin`'s, minus the display-name prompt: the
+  account already has a name and nothing here renames anybody. The new password
+  is typed twice, under the same `password_minimum` rule. (It was landed behind
+  the same “the password will echo” warning the other two printed; that warning
+  and the echo it warned about are gone — see “Passwords no longer echo” above.)
+  On success it says the password
+  was reset **and that every live session that member held was signed out**,
+  which is `reset_password`'s own `sessions_revoked` postcondition: a password
+  somebody else has learned is taken away, not merely replaced.
+
+  Refused, with a line saying which and **a non-zero exit status**, changing
+  nothing: a configuration that will not load, a store that will not open, a
+  username this room does not know, a username naming a **bot** (a bot holds a
+  token and no password — `CHAT_USER`'s `bots_have_none`), two entries that
+  differ, and an entry below the minimum. The exit status is what lets
+  `reset_password.cmd` tell the host “nothing was changed” instead of assuming a
+  reset it never saw.
+
+  Two new pure queries carry it, both assaulted through `SERVER_APP.make_idle`:
+  `is_resettable_member` (the gate that discharges `reset_password`'s `person`
+  and `stored` preconditions before the call, so a host naming the room's bot
+  gets a sentence rather than a contract violation) and `exit_with_failure`.
+  No existing contract was touched.
+
+- **Installer: “Reset a password”** in the `SimpleChat Server` Start Menu folder
+  (`installer/templates/reset_password.cmd`, staged and registered like
+  `create_user.cmd`). It sets code page 65001, lowercases the typed username in
+  pure batch, refuses to run while `SimpleChatServer.exe` is up — all three
+  store-direct commands do, and for a reset a lost `SQLITE_BUSY` race would
+  leave the old password working and everyone still signed in — and reads the
+  exit status to report what actually happened. The hosting guide gains a
+  “When somebody forgets their password” section — including the case that
+  motivated the whole command, the host who is the only administrator and is
+  the one locked out — and its stop-the-server warning now names all three
+  store-direct commands.
+
+- Three assaults, 188 → **191**: `server_app_reset_password_gate` (the pure
+  gates: a stored person, an unstored one, a bot, and the argv username rules),
+  `password_reset_by_the_host` (the store-direct path — unknown username finds
+  nobody, bot refused, live session revoked, old password dead, new one alive,
+  nobody else touched) and `host_console_reset_kills_a_live_token` (the same
+  reset seen from the HTTP surface: a token issued beforehand answers 401, the
+  old password is refused at `/login`, the new one accepted — with no admin
+  session anywhere in it, unlike the endpoint test beside it).
 
 ### Changed
 
@@ -75,37 +121,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`create_admin.cmd` leaves quietly when the room already has an
   administrator**: it says so and exits 0 rather than walking the host through a
   display name and two passwords on the way to a refusal.
-
-### Fixed
-
-- **Pressing Enter at the username prompt produced gibberish.** `set /p` leaves
-  the variable **undefined** on an empty line, and `!ADMIN:A=a!` on an undefined
-  variable does not expand to nothing — it expands to the literal text `A=a`. The
-  “No username given” guard sat *after* the lowercasing chain and so could never
-  fire: the script printed `Using username: A=a` and then an error about `a-z`
-  and underscores. The guard now runs before the chain, with the old one kept as
-  a second net for an answer of nothing but spaces. This is the first prompt the
-  new finish sequence puts in front of a host.
-
-- **The port was never read out of `server.toml`.** `for /f (' … ')` runs its
-  command through `cmd /c`, and cmd strips the first and last quote of any `/c`
-  string that begins with a quote and holds more than two — so
-  `'"%SYS%\findstr.exe" /r /c:"^ *port *=" "%ROOT%\server.toml"'` arrived as
-  `C:\Windows\System32\findstr.exe" /r /c:" *port`, which is not a command at
-  all. Measured against a config saying `port = 8097`: the shipped form yielded
-  `8090`, the bare-path form `8097`. The same shape defeated the
-  **port-collision** loop in both `start_server.cmd` and `run_server.cmd`, which
-  is worse — quoted, it ran nothing, so a collision was never detected and the
-  server was launched at a door already taken. Both files now leave the
-  executable path bare (System32 has no space in it) and keep the quotes on every
-  argument.
-
-- **`timeout.exe` does not return when stdin is redirected or `NUL`**, which
-  wedged two verification runs. The `/nopause` hold is `ping -n N 127.0.0.1`
-  instead — the batch sleep that has no opinion about stdin.
-
-
-### Changed
 
 - **The sign-in door's refusal line is an ordinary UI label again**
   (`apps/client/login_window.e`). It carried a nominal size of 9.0 as a
@@ -198,79 +213,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a missing build but a missing platform capability, and it never triggers on
   Windows.)
 
-### Added
-
-- **`server_app_prompts_over_redirected_stdin`**, 191 → **192** assaults
-  (`testing/config_load_assault.e`). It runs the finalized executable as a real
-  child with standard input redirected **from a file** — no console is opened and
-  no keystroke is synthesised — in two halves. First an input file that runs out
-  before the password: the prompts appear, the refusal names the missing password,
-  `ERRORLEVEL` is 1 and there is not even a database file afterwards, because the
-  store is never opened. Then the same file with all three lines: the admin is
-  created under the display name that was *typed*, and `ERRORLEVEL` is 0 — which
-  is what proves the redirected path is intact rather than merely refusing
-  everything. The exit status is read out of `ERRORLEVEL` inside `cmd`, because
-  that is what `create_admin.cmd` and `reset_password.cmd` actually branch on.
-
-  The **real-console** path is not exercised here and is not claimed to be: it
-  needs a real console, which a test runner's redirected standard input is not.
-  It was proven in simple_console itself.
-
-- **`--reset-password <username> [config.toml]`** on the server executable
-  (`apps/server/server_app.e`). A host who forgot the password had exactly one
-  remedy before this: delete `data/simple_chat.db*` and lose every message in
-  the room with it. `CHAT_SERVICE.reset_password` had been implemented,
-  contracted and assaulted since Phase 4 — it was reachable only over HTTP,
-  from an admin session, which is precisely what a locked-out admin does not
-  have.
-
-  The console shape is `--create-admin`'s, minus the display-name prompt: the
-  account already has a name and nothing here renames anybody. The new password
-  is typed twice, under the same `password_minimum` rule. (It was landed behind
-  the same “the password will echo” warning the other two printed; that warning
-  and the echo it warned about are gone — see “Passwords no longer echo” above.)
-  On success it says the password
-  was reset **and that every live session that member held was signed out**,
-  which is `reset_password`'s own `sessions_revoked` postcondition: a password
-  somebody else has learned is taken away, not merely replaced.
-
-  Refused, with a line saying which and **a non-zero exit status**, changing
-  nothing: a configuration that will not load, a store that will not open, a
-  username this room does not know, a username naming a **bot** (a bot holds a
-  token and no password — `CHAT_USER`'s `bots_have_none`), two entries that
-  differ, and an entry below the minimum. The exit status is what lets
-  `reset_password.cmd` tell the host “nothing was changed” instead of assuming a
-  reset it never saw.
-
-  Two new pure queries carry it, both assaulted through `SERVER_APP.make_idle`:
-  `is_resettable_member` (the gate that discharges `reset_password`'s `person`
-  and `stored` preconditions before the call, so a host naming the room's bot
-  gets a sentence rather than a contract violation) and `exit_with_failure`.
-  No existing contract was touched.
-
-- **Installer: “Reset a password”** in the `SimpleChat Server` Start Menu folder
-  (`installer/templates/reset_password.cmd`, staged and registered like
-  `create_user.cmd`). It sets code page 65001, lowercases the typed username in
-  pure batch, refuses to run while `SimpleChatServer.exe` is up — all three
-  store-direct commands do, and for a reset a lost `SQLITE_BUSY` race would
-  leave the old password working and everyone still signed in — and reads the
-  exit status to report what actually happened. The hosting guide gains a
-  “When somebody forgets their password” section — including the case that
-  motivated the whole command, the host who is the only administrator and is
-  the one locked out — and its stop-the-server warning now names all three
-  store-direct commands.
-
-- Three assaults, 188 → **191**: `server_app_reset_password_gate` (the pure
-  gates: a stored person, an unstored one, a bot, and the argv username rules),
-  `password_reset_by_the_host` (the store-direct path — unknown username finds
-  nobody, bot refused, live session revoked, old password dead, new one alive,
-  nobody else touched) and `host_console_reset_kills_a_live_token` (the same
-  reset seen from the HTTP surface: a token issued beforehand answers 401, the
-  old password is refused at `/login`, the new one accepted — with no admin
-  session anywhere in it, unlike the endpoint test beside it).
-
-### Changed
-
 - **A sign-in that reaches nothing at all now says what to do about it, instead of
   quoting the transport.** Larry installed the client on a PC with no server
   running and no account yet; the finish page opened the window, he typed a name
@@ -313,6 +255,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Server > Start server, then sign in again. If a friend hosts it: put their
   address in %APPDATA%\simple_chat\client.toml"* across three legible lines, with
   the buttons still on the form.
+
+### Fixed
+
+- **Pressing Enter at the username prompt produced gibberish.** `set /p` leaves
+  the variable **undefined** on an empty line, and `!ADMIN:A=a!` on an undefined
+  variable does not expand to nothing — it expands to the literal text `A=a`. The
+  “No username given” guard sat *after* the lowercasing chain and so could never
+  fire: the script printed `Using username: A=a` and then an error about `a-z`
+  and underscores. The guard now runs before the chain, with the old one kept as
+  a second net for an answer of nothing but spaces. This is the first prompt the
+  new finish sequence puts in front of a host.
+
+- **The port was never read out of `server.toml`.** `for /f (' … ')` runs its
+  command through `cmd /c`, and cmd strips the first and last quote of any `/c`
+  string that begins with a quote and holds more than two — so
+  `'"%SYS%\findstr.exe" /r /c:"^ *port *=" "%ROOT%\server.toml"'` arrived as
+  `C:\Windows\System32\findstr.exe" /r /c:" *port`, which is not a command at
+  all. Measured against a config saying `port = 8097`: the shipped form yielded
+  `8090`, the bare-path form `8097`. The same shape defeated the
+  **port-collision** loop in both `start_server.cmd` and `run_server.cmd`, which
+  is worse — quoted, it ran nothing, so a collision was never detected and the
+  server was launched at a door already taken. Both files now leave the
+  executable path bare (System32 has no space in it) and keep the quotes on every
+  argument.
+
+- **`timeout.exe` does not return when stdin is redirected or `NUL`**, which
+  wedged two verification runs. The `/nopause` hold is `ping -n N 127.0.0.1`
+  instead — the batch sleep that has no opinion about stdin.
 
 ## [0.1.1] — 2026-09-02
 
