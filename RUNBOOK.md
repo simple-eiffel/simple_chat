@@ -9,6 +9,39 @@ Allow about twenty minutes the first time — two builds at three to six minutes
 
 ---
 
+## 0a. If you installed with the installer instead
+
+Steps 0 and 1 below build and mint by hand, from the source tree. **An installed
+copy does both for you.** Since 0.1.2, finishing an install with the hosting box
+ticked runs three things in order, each waiting for the one before it:
+
+1. a console asks you to **create the first administrator** — skipped when this
+   PC already has a room, i.e. when
+   `C:\ProgramData\SimpleChat\data\simple_chat.db` is already there;
+2. the **server starts**, and says whether it answered `/health`, or names the
+   program holding the port;
+3. the **chat window opens**, with the account you just made to sign in with.
+
+The hosting guide opens last, behind the window. Any of the three can be unticked
+on the installer's last page and done afterwards from the Start Menu, under
+**SimpleChat Server**.
+
+So from an installed copy, **skip to §2 (Start the client)** — you already have a
+server and an account. The rest of §0 and §1 are for driving the source tree.
+
+Two things worth knowing while you are in there:
+
+- **`Start server` from the Start Menu pauses at the end; the installer's copy
+  does not.** The installer passes `start_server.cmd /nopause`, which prints the
+  same things and holds the window open long enough to read, then closes itself
+  so the sequence can go on.
+- **`@claude` may already be configured.** If you ticked the `@claude` box and
+  the installer created `server.toml` for you, the `[[participants]]` block is
+  already uncommented — §4 will just work. If you had a `server.toml` before, the
+  installer left it alone on purpose, and §4's block is yours to uncomment.
+
+---
+
 ## 0. Build both halves
 
 ```bash

@@ -77,6 +77,21 @@ delete <span class="path">C:\ProgramData\SimpleChat</span> yourself, on purpose.
 
 <h2>2. First run &mdash; make yourself an account</h2>
 
+<p><strong>The installer normally does this for you.</strong> When you finish an install
+with the hosting box ticked, three things happen in order, each waiting for the one
+before it:</p>
+
+<ol>
+  <li>a console opens and asks you to <strong>create the first administrator</strong>
+      (skipped if this PC already has a room);</li>
+  <li>the <strong>server starts</strong>, and tells you whether it answered;</li>
+  <li>the <strong>chat window opens</strong>, and you sign in with the account you just
+      made.</li>
+</ol>
+
+<p>You can untick any of those on the installer's last page and do them yourself. The
+rest of this section is how to do them by hand.</p>
+
 <p>Before anyone can log in, the room needs its first administrator. There is no default
 account and no default password; you create the only one there will ever be, once.</p>
 
@@ -85,6 +100,10 @@ account and no default password; you create the only one there will ever be, onc
   <li>Type a username (letters, digits and underscore, up to 32 characters).</li>
   <li>Type a password twice when it asks.</li>
 </ol>
+
+<p>Run it again later and it will simply say the room already has its first
+administrator, and change nothing. Use <strong>Create user</strong> for anybody else, and
+<strong>Reset a password</strong> for a member who has forgotten theirs.</p>
 
 <p>The password is shown on screen as you type it &mdash; this version has no
 echo&#8209;hiding on the console. It is never stored: what is kept is a PBKDF2 hash at
@@ -152,6 +171,43 @@ directly. They refuse to run while the server is up, because a write that races 
 running server's can fail on a database lock &mdash; the account would simply not be
 created, or, worse for a reset, the new password would never take effect while the old
 one went on working and nobody was signed out. Stop, do the job, start again.
+</div>
+
+<h2>2c. @claude &mdash; the AI member of the room</h2>
+
+<p>The installer offers a checkbox under &ldquo;Hosting:&rdquo;:</p>
+
+<blockquote><p>Add @claude to the room (uses this PC's Claude Code subscription;
+found on this PC: <strong>yes</strong>/<strong>no</strong>)</p></blockquote>
+
+<p>It starts ticked only if the installer can find a <code>claude</code> command on this
+PC. Ticked, it uncomments this block at the foot of
+<span class="path">C:\ProgramData\SimpleChat\server.toml</span> &mdash; and you can
+uncomment it yourself at any time, which is exactly what you must do if you already had
+a <code>server.toml</code>, because <strong>the installer never edits a config you
+already have</strong>:</p>
+
+<pre>[[participants]]
+handle = "@claude"
+kind = "claude_code"
+engine = "data/participants/claude"
+bot_username = "claude_bot"
+display_name = "Claude"
+requests_per_hour = 5
+max_characters = 1200
+timeout_seconds = 120</pre>
+
+<div class="warn">
+<p style="margin-top:0"><strong>@claude runs on this PC's own Claude Code
+subscription.</strong> The <code>claude</code> command has to be on the PATH of
+<em>whichever account starts the server</em> &mdash; which is not necessarily the account
+that installed it. If you tick &ldquo;Start the chat server when Windows starts&rdquo;,
+the server runs as whoever logs on, so <code>claude</code> must be on that person's
+PATH.</p>
+<p style="margin-bottom:0">Nothing else has to be set up: the server creates the member
+<code>claude_bot</code> on first start, and a sandbox folder of its own under
+<span class="path">data\participants\claude</span>. It answers up to five times an hour
+by default, in at most 1,200 characters.</p>
 </div>
 
 <h2>3. Going public</h2>
