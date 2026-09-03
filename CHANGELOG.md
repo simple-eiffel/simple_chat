@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A wrapping, growing composer** (`apps/client/chat_input_box.e`, `CHAT_INPUT_BOX`). Larry's
+  report from the live room: "The input textbox/field does not wrap within the textbox. That is
+  a problem." The one-line `SW_TEXT_BOX` composer is now multi-line and measured-word-wrapping
+  (`make_wrapping`, alongside the still-available `make_single_line`): text wraps at the box's
+  width, the box grows with its content from one line up to a cap of five lines at the theme's
+  own scaled line height, and past the cap it scrolls internally (`draw` clips to the held
+  rectangle and shifts the parent's own painting up by the overflow) rather than growing the
+  window further. Plain **Return sends** and never leaves a trailing newline in the sent text,
+  even when the last thing typed was a Shift+Return with nothing after it; **Shift+Return**
+  inserts a newline, exactly the way the parent's own multi-line Return always has. Detecting
+  Shift on a Return that only ever arrives at `handle_char` as a bare character code required a
+  small `handle_key` redefinition too: `SW_WINDOW` dispatches the paired `WM_KEYDOWN` — carrying
+  the live Shift flag — immediately before the `WM_CHAR` that reaches `handle_char`, so
+  `handle_key` remembers it a moment early. `SW_CHAT_VIEW` now creates the composer with
+  `make_wrapping` in place of `make_single_line`.
+
+- **`@claude` discoverability** (`CHAT_VIEW.show_hint`/`hint_count`, effected in `SW_CHAT_VIEW` and
+  `MEMORY_CHAT_VIEW`; `CHAT_PRESENTER.bot_members`; `CLIENT_APP.open_room`). Larry's report: "I am
+  unsure how to send questions to the embedded Claude instance." (He then typed "@Claude Who are
+  you?" and it worked — the match was already case-insensitive; the problem was never knowing the
+  convention existed.) `CLIENT_APP.open_room` now shows one system-role bubble the moment a room's
+  roster (already fetched by the existing `load_roster`/`GET /rooms/{id}/members`) lists a bot,
+  naming every bot member actually present by its real `@username` — never a literal `"@claude"`
+  typed into this codebase, so the hint stays true the day a bot is renamed or a second one joins.
+  No hint is shown when the roster carries no bot.
+
+### Testing
+
+- Three new assaults in `testing/window_assault.e` prove the composer directly against the real
+  `SW_CHAT_VIEW`/`CHAT_INPUT_BOX`, calling `preferred_height`/`draw`/`handle_key`/`handle_char` the
+  way a real keypress pair would, entirely offscreen: growth is exactly one `row_height` per line
+  from one line to the five-line cap and then holds flat past it
+  (`test_composer_grows_with_content_then_caps_at_five_lines`); `draw`'s temporary scroll shift of
+  its own `y` is fully restored after painting past the cap
+  (`test_composer_draw_restores_its_own_geometry_after_scrolling`); and Shift+Return inserts a
+  newline while a plain Return after it sends the whole line with none trailing
+  (`test_composer_return_sends_but_shift_return_inserts_a_newline`). Two more prove the hint through
+  the real `CLIENT_APP.open_room`, one roster with a bot and one without
+  (`test_client_app_hints_the_room_when_a_bot_is_in_the_roster`,
+  `test_client_app_shows_no_hint_when_the_roster_has_no_bot`). 196 → **201** assaults.
+
 ## [0.1.2] — 2026-09-03
 
 The first-run release: a hosting install finishes by creating the first administrator, starting the server and opening the window, in that order; passwords never echo; the door says where the server is; the host can reset a password; every window inherits Vision2's spacing model from simple_widgets 0.4.0. Built against simple_winhttp 0.1.1, simple_process 1.0.1, simple_encryption 2.1.1, simple_shell 1.9.2, simple_widgets 0.4.0 and simple_console 1.1.0.

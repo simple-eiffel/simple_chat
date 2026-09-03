@@ -164,7 +164,16 @@ is not this machine) is refused before a byte leaves the PC.
 ## 3. Post
 
 The room pane opens: room name and connection line across the top, bubbles in the
-middle, the composer at the bottom. Type a line and press **Enter** (or click **Send**).
+middle, the composer at the bottom. If a bot is in the room, the first thing in the
+thread is a system bubble naming it — see step 4 below before you go looking for how
+to talk to it.
+
+Type a line and press **Enter** to send. The composer wraps as you type — it is not
+the one-line field it used to be — and grows with what you type, up to five lines;
+past that it scrolls internally instead of growing the window. **Shift+Enter** inserts
+a newline in the message instead of sending it, so a multi-line question stays one
+message. Enter with nothing typed, or with only Shift+Enter'd blank lines, sends
+nothing.
 
 Your own line comes back **through the poller**, not from the composer — that is the
 design, and it is also the proof: if the bubble appears on the right, the whole loop
@@ -174,11 +183,20 @@ design, and it is also the proof: if the bubble appears on the right, the whole 
 
 ## 4. Make `@claude` answer
 
+If the room has a bot member, the pane says so the moment it opens — a system bubble
+at the top of the thread naming the bot's real `@username` from the roster (never a
+name typed into the client), such as "Address the room's assistant by starting a line
+with @claude." That bubble is the whole discoverability fix: before it existed, the
+only way to learn the convention was to be told outside the app.
+
 Type, in the room:
 
 ```
 @claude what is the Hebrew word for "remember"?
 ```
+
+The match is case-insensitive — `@Claude` and `@CLAUDE` work exactly as well as
+`@claude` — so a capitalized start-of-sentence habit does not silently fail.
 
 Two things should happen. First, an ephemeral status line under the thread —
 `Claude is thinking…` — because the participant dispatcher publishes one while the

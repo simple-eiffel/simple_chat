@@ -96,7 +96,7 @@ feature {NONE} -- Initialization
 			create status_label.make_ui ("")
 			status_label.set_muted (True)
 			create error_label.make_ui ("")
-			create input.make_single_line ("")
+			create input.make_wrapping ("")
 			input.set_grow (1.0)
 			create send_button.make_primary (Text_send, Void)
 			create l_header.make
@@ -190,6 +190,9 @@ feature -- Status report
 	is_connected: BOOLEAN
 			-- What the window last said about the server.
 
+	hint_count: INTEGER
+			-- How many `show_hint' bubbles have been added.
+
 feature -- Element change
 
 	set_on_send (a_action: PROCEDURE [READABLE_STRING_GENERAL])
@@ -269,6 +272,18 @@ feature -- Basic operations
 			redraw
 		ensure then
 			endpoint_kept: endpoint = a_endpoint
+		end
+
+	show_hint (a_text: READABLE_STRING_GENERAL)
+			-- A system-role bubble in the thread - the same centred role a real
+			-- system event draws with, but never added to `shown_ids': it named
+			-- nobody's message and carries no server id.
+		do
+			thread.add_message ({SW_CHAT_THREAD}.Role_system, a_text)
+			hint_count := hint_count + 1
+			redraw
+		ensure then
+			bubbled: thread.count = old thread.count + 1
 		end
 
 	run
@@ -441,6 +456,7 @@ feature -- Constants
 invariant
 	model_consistent: shown_model.count = shown_ids.count
 	unread_non_negative: unread >= 0
+	hint_count_non_negative: hint_count >= 0
 	titled: not room_title.is_empty
 	shaped_text_on: attached window.shaping
 

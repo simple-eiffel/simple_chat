@@ -338,6 +338,11 @@ feature -- Basic operations
 			-- poller running, its pane ready. When the server will not say what rooms there
 			-- are, the room stays closed and the reason goes on the pane's error line - the
 			-- window still opens, because a member who is told nothing learns nothing.
+			--
+			-- A member who IS told something still has to know he can talk to it: if the
+			-- roster names a bot, one hint bubble says so, by its real @username - never
+			-- a hard-coded "@claude" that would lie the day a room's assistant is renamed
+			-- or a second one joins.
 		require
 			logged_in: client.is_logged_in
 			closed: not presenter.is_room_open
@@ -349,6 +354,9 @@ feature -- Basic operations
 				room_id := l_list.first.id
 				view.set_room_title (l_list.first.name)
 				presenter.load_roster (room_id)
+				if not presenter.bot_members.is_empty then
+					view.show_hint (bot_hint_text (presenter.bot_members))
+				end
 				start_polling (presenter, room_id, last_seen_id)
 				view.set_unread (presenter.unread)
 			elseif attached l_rooms.error as e then
@@ -359,6 +367,8 @@ feature -- Basic operations
 		ensure
 			room_named_when_open: presenter.is_room_open implies room_id > 0
 			explained_when_not: not presenter.is_room_open implies view.errors.count > old view.errors.count
+			hinted_when_a_bot_is_present: (presenter.is_room_open and then not presenter.bot_members.is_empty)
+				implies view.hint_count >= 1
 		end
 
 	tick
@@ -426,6 +436,41 @@ feature -- Constants
 			-- this window invents its own sentence about an outage.
 		once
 			create Result
+		end
+
+feature {NONE} -- The bot hint
+
+	bot_hint_text (a_bots: ARRAYED_LIST [CHAT_MEMBER]): STRING_32
+			-- "Address the room's assistant by starting a line with @claude." for one
+			-- bot; "...assistants... @claude or @otherbot." for several - always the
+			-- roster's own usernames, never a name typed into this file.
+		require
+			some_bots: not a_bots.is_empty
+		local
+			i: INTEGER
+		do
+			create Result.make (80)
+			Result.append ({STRING_32} "Address the room's assistant")
+			if a_bots.count > 1 then
+				Result.append_character ('s')
+			end
+			Result.append ({STRING_32} " by starting a line with ")
+			from
+				i := 1
+			until
+				i > a_bots.count
+			loop
+				Result.append (a_bots [i].mention)
+				if i < a_bots.count - 1 then
+					Result.append ({STRING_32} ", ")
+				elseif i = a_bots.count - 1 then
+					Result.append ({STRING_32} " or ")
+				end
+				i := i + 1
+			end
+			Result.append_character ('.')
+		ensure
+			named: across a_bots as b all Result.has_substring (b.mention) end
 		end
 
 feature {NONE} -- Processors

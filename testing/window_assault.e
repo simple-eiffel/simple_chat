@@ -157,6 +157,88 @@ feature -- The pane: CHAT_VIEW's contracts over simple_widgets
 			assert ("an ordinary character types, it does not send", sent.count = 1 and v.input.text.count = 6)
 		end
 
+	test_composer_grows_with_content_then_caps_at_five_lines
+			-- One line to five, each an exact `row_height' taller than the last -
+			-- then the cap holds no matter how much more is typed. Explicit
+			-- newlines (what Shift+Return inserts, proven separately below) give an
+			-- exact line count independent of font-measured word wrap, so the cap
+			-- boundary is provable without reading a single pixel.
+		local
+			v: SW_CHAT_VIEW
+			p: SW_PAINTER
+			row, h1, h2, h3, h4, h5, h6, h20: REAL_64
+		do
+			v := pane
+			p := v.window.painter
+			row := v.input.row_height (p)
+			assert ("a real row has real height", row > 0.0)
+			h1 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb")
+			h2 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc")
+			h3 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc%Nd")
+			h4 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc%Nd%Ne")
+			h5 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "a%Nb%Nc%Nd%Ne%Nf")
+			h6 := v.input.preferred_height (p, 300.0)
+			v.input.set_text ({STRING_32} "1%N2%N3%N4%N5%N6%N7%N8%N9%N10%N11%N12%N13%N14%N15%N16%N17%N18%N19%N20")
+			h20 := v.input.preferred_height (p, 300.0)
+			assert ("empty grows toward two lines", h1 < h2)
+			assert ("two grows toward three, by exactly one row", (h3 - h2 - row).abs < 0.01)
+			assert ("three grows toward four, by exactly one row", (h4 - h3 - row).abs < 0.01)
+			assert ("four grows toward five, by exactly one row - the cap", (h5 - h4 - row).abs < 0.01)
+			assert ("a sixth line does not grow the box further", h6 = h5)
+			assert ("nor does a twentieth", h20 = h5)
+		end
+
+	test_composer_draw_restores_its_own_geometry_after_scrolling
+			-- Past the cap, `draw' shifts its own `y' to scroll the tail into view
+			-- and must put it back before returning - the box is asked its
+			-- position by hit-testing and by every sibling in the row, and a
+			-- leaked shift would misplace both.
+		local
+			v: SW_CHAT_VIEW
+			p: SW_PAINTER
+			l_before_x, l_before_y, l_before_w, l_before_h: REAL_64
+		do
+			v := pane
+			p := v.window.painter
+			v.input.set_text ({STRING_32} "1%N2%N3%N4%N5%N6%N7%N8%N9%N10")
+			v.input.set_bounds (12.0, 640.0, 300.0, v.input.preferred_height (p, 300.0))
+			l_before_x := v.input.x
+			l_before_y := v.input.y
+			l_before_w := v.input.width
+			l_before_h := v.input.height
+			v.input.draw (p)
+			assert ("geometry is exactly what it was before painting",
+				v.input.x = l_before_x and v.input.y = l_before_y
+					and v.input.width = l_before_w and v.input.height = l_before_h)
+		end
+
+	test_composer_return_sends_but_shift_return_inserts_a_newline
+			-- `handle_key' sees Shift on the Return keydown that always precedes the
+			-- paired `handle_char'; a headless test drives the same pair by hand.
+		local
+			v: SW_CHAT_VIEW
+		do
+			v := pane
+			sent.wipe_out
+			v.set_on_send (agent record_sent)
+			v.input.set_text ({STRING_32} "line one")
+			v.input.handle_key (13, True)
+			v.input.handle_char (13)
+			assert ("Shift+Return inserted a newline and sent nothing",
+				sent.is_empty and v.input.text.same_string_general ({STRING_32} "line one%N"))
+			v.input.handle_key (13, False)
+			v.input.handle_char (13)
+			assert ("a plain Return after it sent the whole thing and cleared the box",
+				sent.count = 1 and v.input.text.is_empty)
+			assert ("the sent text carries the newline mid-line but none trailing",
+				sent [1].same_string_general ({STRING_32} "line one"))
+		end
+
 feature -- The pane under the presenter
 
 	test_presenter_pumps_pages_into_the_real_pane
@@ -337,6 +419,55 @@ feature -- CLIENT_APP: which door does it take?
 			assert ("and the badge matches the presenter", app.view.unread = app.presenter.unread)
 			app.presenter.close_room
 			assert ("closing the room stops the poller", not app.presenter.is_room_open)
+		end
+
+	test_client_app_hints_the_room_when_a_bot_is_in_the_roster
+			-- Real roster data, never a hard-coded "@claude": the roster names the
+			-- bot, and the pane's one hint bubble names it right back.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			cf: CLIENT_CONFIG
+			app: CLIENT_APP
+			l_why: detachable STRING_32
+		do
+			create t.make
+			cf := scratch_config ("bothint")
+			create app.make_for_test (t, cf)
+			t.script (200, login_reply (Hex_64))
+			l_why := app.attempt_login (Loopback_url, "larry", {STRING_32} "right")
+			assert ("logged in", app.client.is_logged_in and l_why = Void)
+			t.script (200, "[{%"id%":4,%"name%":%"main%"}]")
+			t.script (200, "{%"members%":[" + member_reply + "," + bot_member_reply + "]}")
+			app.open_room
+			assert ("the room opened with one bot in the roster",
+				app.presenter.is_room_open and app.presenter.bot_members.count = 1)
+			assert ("exactly one hint was shown", app.view.hint_count = 1)
+			assert ("as a system-role bubble", app.view.thread.count = 1
+				and app.view.thread.messages [1].role = {SW_CHAT_THREAD}.Role_system)
+			assert ("naming the real bot's own @username, not a literal typed into this file",
+				app.view.thread.messages [1].text.has_substring ({STRING_32} "@claude"))
+		end
+
+	test_client_app_shows_no_hint_when_the_roster_has_no_bot
+			-- The other half of the same law: nobody to address, nothing said.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			cf: CLIENT_CONFIG
+			app: CLIENT_APP
+			l_why: detachable STRING_32
+		do
+			create t.make
+			cf := scratch_config ("nobothint")
+			create app.make_for_test (t, cf)
+			t.script (200, login_reply (Hex_64))
+			l_why := app.attempt_login (Loopback_url, "larry", {STRING_32} "right")
+			assert ("logged in", app.client.is_logged_in and l_why = Void)
+			t.script (200, "[{%"id%":4,%"name%":%"main%"}]")
+			t.script (200, "{%"members%":[" + member_reply + "]}")
+			app.open_room
+			assert ("the room opened with nobody to address",
+				app.presenter.is_room_open and app.presenter.bot_members.is_empty)
+			assert ("so no hint was shown", app.view.hint_count = 0 and app.view.thread.count = 0)
 		end
 
 	test_client_app_reports_a_server_that_lists_no_room
@@ -560,6 +691,12 @@ feature {NONE} -- Fixtures: the wire
 			-- User 5, "larry" - what GET /me answers, and what a roster entry looks like.
 		do
 			Result := "{%"id%":5,%"username%":%"larry%",%"display_name%":%"Larry%",%"is_admin%":true,%"is_bot%":false}"
+		end
+
+	bot_member_reply: STRING_8
+			-- User 9, "claude" - a roster entry for the room's assistant.
+		do
+			Result := "{%"id%":9,%"username%":%"claude%",%"display_name%":%"Claude%",%"is_admin%":false,%"is_bot%":true}"
 		end
 
 	wire_event (a_id, a_room, a_sender: INTEGER_64; a_kind, a_body: STRING_8): STRING_8

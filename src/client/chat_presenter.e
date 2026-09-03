@@ -122,6 +122,21 @@ feature -- Status report
 			Result := members.has (a_sender_id)
 		end
 
+	bot_members: ARRAYED_LIST [CHAT_MEMBER]
+			-- Every bot in the roster, roster order - real data for a host that
+			-- wants to name the room's assistant(s) rather than hard-code one.
+		do
+			create Result.make (4)
+			across members as m loop
+				if m.is_bot then
+					Result.extend (m)
+				end
+			end
+		ensure
+			all_bots: across Result as r all r.is_bot end
+			known_only: across Result as r all knows (r.id) end
+		end
+
 	has_name_twin (a_member_id: INTEGER_64): BOOLEAN
 			-- Does another member in the roster show the same display name (compared without regard to case)?
 		do

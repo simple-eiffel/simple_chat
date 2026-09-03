@@ -201,6 +201,9 @@ feature {NONE} -- Initialization
 			run_test (agent (create {WINDOW_ASSAULT}).test_view_is_never_in_front_without_a_window, "view_is_never_in_front_without_a_window")
 			run_test (agent (create {WINDOW_ASSAULT}).test_view_shaped_text_is_on_and_lays_out_the_acceptance_line, "view_shaped_text_is_on_and_lays_out_the_acceptance_line")
 			run_test (agent (create {WINDOW_ASSAULT}).test_input_box_submits_on_return_and_never_sends_an_empty_line, "input_box_submits_on_return_and_never_sends_an_empty_line")
+			run_test (agent (create {WINDOW_ASSAULT}).test_composer_grows_with_content_then_caps_at_five_lines, "composer_grows_with_content_then_caps_at_five_lines")
+			run_test (agent (create {WINDOW_ASSAULT}).test_composer_draw_restores_its_own_geometry_after_scrolling, "composer_draw_restores_its_own_geometry_after_scrolling")
+			run_test (agent (create {WINDOW_ASSAULT}).test_composer_return_sends_but_shift_return_inserts_a_newline, "composer_return_sends_but_shift_return_inserts_a_newline")
 			run_test (agent (create {WINDOW_ASSAULT}).test_presenter_pumps_pages_into_the_real_pane, "presenter_pumps_pages_into_the_real_pane")
 			run_test (agent (create {WINDOW_ASSAULT}).test_login_window_validates_its_fields, "login_window_validates_its_fields")
 			run_test (agent (create {WINDOW_ASSAULT}).test_login_window_shows_a_refusal_and_accepts_a_success, "login_window_shows_a_refusal_and_accepts_a_success")
@@ -208,6 +211,8 @@ feature {NONE} -- Initialization
 			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_falls_back_to_the_door_and_logs_in, "client_app_falls_back_to_the_door_and_logs_in")
 			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_refuses_to_send_a_password_to_a_plain_http_stranger, "client_app_refuses_to_send_a_password_to_a_plain_http_stranger")
 			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_opens_the_first_room_and_ticks, "client_app_opens_the_first_room_and_ticks")
+			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_hints_the_room_when_a_bot_is_in_the_roster, "client_app_hints_the_room_when_a_bot_is_in_the_roster")
+			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_shows_no_hint_when_the_roster_has_no_bot, "client_app_shows_no_hint_when_the_roster_has_no_bot")
 			run_test (agent (create {WINDOW_ASSAULT}).test_client_app_reports_a_server_that_lists_no_room, "client_app_reports_a_server_that_lists_no_room")
 
 			print ("=== NOTHING ANSWERED AT ALL (phase4/no-server-message) ===%N")
