@@ -84,7 +84,7 @@ that does not start with `--`, so the server would quietly *serve* instead of cr
 anything. There is no password argument either — it prompts for a display name (press
 Enter for the username) and then for the password twice.
 
-**The password does not echo.** It is read with `SIMPLE_CONSOLE.read_hidden_line`
+**The password shows as dots, one per key.** It is read with `SIMPLE_CONSOLE.read_masked_line_default`
 (simple_console 1.1.0), which clears `ENABLE_ECHO_INPUT` for the read and puts the
 console mode back on every exit path; Backspace still edits and Enter still ends the
 line. The display name is **not** hidden — you have to be able to see the name you are
@@ -108,7 +108,7 @@ shape again, and no display name is asked for; the account already has one:
 dist/simple_chat_server.exe --reset-password nick C:/Users/Public/simple_chat/server.toml
 ```
 
-It prompts for the new password twice — not echoing either entry, exactly as the two
+It prompts for the new password twice — showing each entry as dots, exactly as the two
 create flags do — and **signs out every live session that
 member holds** — which is the point: a password somebody else has learned is
 taken away, not merely replaced. A username the room does not know, a username

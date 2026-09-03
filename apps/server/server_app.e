@@ -25,7 +25,7 @@ note
 		prints usage instead of being mistaken for a configuration path.
 
 		NO PASSWORD EVER ECHOES. All three flags read every password - and
-		the %"Again:%" confirmation - through SIMPLE_CONSOLE.read_hidden_line
+		the %"Again:%" confirmation - through SIMPLE_CONSOLE.read_masked_line_default (one dot per key, Backspace erases)
 		(simple_console 1.1.0), which clears ENABLE_ECHO_INPUT for the read
 		and restores the console mode on every exit path. Backspace still
 		edits and Enter still ends the line. When standard input is
@@ -207,7 +207,7 @@ feature -- Commands
 				if not is_acceptable_display_name (l_display) then
 					print ("--create-admin: that display name is refused (1..64 characters, no control or bidi-override characters, and it may not carry the bot marker); nothing was created.%N")
 				else
-					print ("Password (at least " + l_config.password_minimum.out + " characters, and it will not echo): ")
+					print ("Password (at least " + l_config.password_minimum.out + " characters, shown as dots): ")
 					l_first := hidden_line
 					if l_first /= Void then
 						print ("Again: ")
@@ -240,7 +240,7 @@ feature -- Commands
 							print ("--create-admin: the store cannot be opened; nothing was created.%N")
 						end
 					else
-							-- End of input, never a partial line (read_hidden_line's own
+							-- End of input, never a partial line (read_masked_line's own
 							-- rule): a wrapper whose here-document ran short is told so,
 							-- not handed a silent success.
 						print ("--create-admin: no password was given (standard input ended before one arrived); nothing was created.%N")
@@ -307,7 +307,7 @@ feature -- Commands
 					if not is_acceptable_display_name (l_display) then
 						print ("--create-user: that display name is refused (1..64 characters, no control or bidi-override characters, and it may not carry the bot marker); nothing was created.%N")
 					else
-						print ("Password (at least " + l_config.password_minimum.out + " characters, and it will not echo): ")
+						print ("Password (at least " + l_config.password_minimum.out + " characters, shown as dots): ")
 						l_first := hidden_line
 						if l_first /= Void then
 							print ("Again: ")
@@ -412,7 +412,7 @@ feature -- Commands
 							-- is no password here to reset.
 						print ("--reset-password: %"" + a_username + "%" is a bot; a bot has no password, only a token. Revoke and reissue that token instead; nothing was changed.%N")
 					else
-						print ("New password for %"" + a_username + "%" (at least " + l_config.password_minimum.out + " characters, and it will not echo): ")
+						print ("New password for %"" + a_username + "%" (at least " + l_config.password_minimum.out + " characters, shown as dots): ")
 						l_first := hidden_line
 						if l_first /= Void then
 							print ("Again: ")
@@ -470,7 +470,7 @@ feature -- Commands
 			print ("%N")
 			print ("The two create flags ask for a display name, then for the password twice;%N")
 			print ("--reset-password asks for the password twice and for no display name.%N")
-			print ("NO PASSWORD ECHOES: it is read with simple_console.read_hidden_line, which%N")
+			print ("NO PASSWORD ECHOES: it is read with simple_console.read_masked_line, which shows one dot per key and%N")
 			print ("leaves Backspace and Enter working and puts the console mode back. Standard%N")
 			print ("input redirected from a file or a pipe is read the ordinary way, so the%N")
 			print ("shipped scripts still work. The display name is not hidden.%N")
@@ -717,7 +717,7 @@ feature {NONE} -- Implementation
 			l_console: SIMPLE_CONSOLE
 		do
 			create l_console.make
-			Result := l_console.read_hidden_line
+			Result := l_console.read_masked_line_default
 		end
 
 	line_read_text: STRING_32
