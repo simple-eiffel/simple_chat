@@ -176,6 +176,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_display_name_gate, "server_app_display_name_gate")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_reset_password_gate, "server_app_reset_password_gate")
 			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_decodes_utf8_console_bytes, "server_app_decodes_utf8_console_bytes")
+			run_test (agent (create {CONFIG_LOAD_ASSAULT}).test_server_app_prompts_over_redirected_stdin, "server_app_prompts_over_redirected_stdin")
 
 			print ("=== CLIENT WIRING (Phase 4) ===%N")
 			run_test (agent (create {WIRING_ASSAULT}).test_winhttp_transport_refuses_what_cannot_go_on_the_wire, "winhttp_transport_refuses_what_cannot_go_on_the_wire")
@@ -254,8 +255,30 @@ feature {NONE} -- Initialization
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")
 			if failed > 0 then
 				print ("TESTS FAILED%N")
+				name_the_missing_build
 			else
 				print ("ALL TESTS PASSED%N")
+			end
+		end
+
+	name_the_missing_build
+			-- When the finalized server executable is not built, say so and name
+			-- the one command that builds it.
+			--
+			-- The live rounds in WIRING_ASSAULT used to SKIP without it and count
+			-- the skip as a pass; they now FAIL, which is honest but says only
+			-- that three tests failed. This says WHY, once, where the reader is
+			-- already looking - at `Results:'.
+		local
+			l_exe: SERVER_EXE
+		do
+			create l_exe
+			if not l_exe.is_built then
+				print ("%N" + l_exe.Relative_path + " is NOT BUILT, so every live%N")
+				print ("assault above failed for that one reason. Build it FIRST, from the%N")
+				print ("project root:%N")
+				print ("    " + l_exe.Build_command + "%N")
+				print ("then run this runner again.%N")
 			end
 		end
 

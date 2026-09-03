@@ -550,6 +550,150 @@ feature {NONE} -- Assertion support
 			end
 		end
 
+feature -- Tests: the password prompts over REDIRECTED standard input
+
+	test_server_app_prompts_over_redirected_stdin
+			-- THE REDIRECTED PATH, END TO END, through the real executable.
+			--
+			-- Every password the three account flags read now comes through
+			-- SIMPLE_CONSOLE.read_hidden_line. On a real console that clears
+			-- ENABLE_ECHO_INPUT so nothing types back; when standard input is
+			-- REDIRECTED from a file or a pipe it reads the line the ordinary
+			-- way and touches no console mode. This drives the second path -
+			-- the one the shipped .cmd wrappers and the installer's
+			-- verification script take - because it is the one a test runner
+			-- can drive at all. The console path was proven in simple_console
+			-- itself, against a real console; it is NOT re-exercised here, and
+			-- nothing in this file claims it was.
+			--
+			-- Two halves, both against a real child process:
+			--
+			-- 1. An input file that RUNS OUT before the password.
+			--    `read_hidden_line' answers Void on end of input - never a
+			--    partial line - so the command refuses, creates nothing (there
+			--    is no database file at all afterwards, because the store is
+			--    never even opened) and leaves with EXIT STATUS 1. A wrapper
+			--    whose input ran short is told so instead of being handed a
+			--    silent success.
+			--
+			-- 2. The same file with all three lines. The admin IS created and
+			--    the status is 0 - which is what proves the redirected path is
+			--    intact, rather than merely refusing everything.
+		local
+			l_exe: SERVER_EXE
+			l_process: SIMPLE_PROCESS
+			l_directory: DIRECTORY
+			l_file: PLAIN_TEXT_FILE
+			l_db: RAW_FILE
+			l_store: SQLITE_CHAT_STORE
+			l_output: STRING_32
+		do
+			create l_exe
+			if not l_exe.is_built then
+				l_exe.explain_missing
+				assert ("the redirected prompt round needs " + l_exe.Relative_path + ", which is not built", False)
+			else
+					-- A scratch room of its own, wiped first. The paths are ABSOLUTE, so
+					-- the directory this runner was started from cannot change the answer.
+				create l_directory.make (Prompt_scratch_root + "\data")
+				if not l_directory.exists then
+					l_directory.recursive_create_dir
+				end
+				delete_file (Prompt_scratch_db)
+				delete_file (Prompt_scratch_db + {STRING_32} "-wal")
+				delete_file (Prompt_scratch_db + {STRING_32} "-shm")
+				create l_file.make_create_read_write (Prompt_scratch_root + "\server.toml")
+				l_file.put_string ("port = 18219%Ndata_dir = %"" + Prompt_scratch_data_toml + "%"%N")
+				l_file.close
+
+					-- (1) The input ends after the display name: no password ever arrives.
+				create l_file.make_create_read_write (Prompt_scratch_root + "\short.txt")
+				l_file.put_string ("Prompt Tester%N")
+				l_file.close
+				create l_process.make
+				l_output := l_process.command_output (create_admin_command ("short.txt"))
+				assert ("the display name was asked for", l_output.has_substring ({STRING_32} "Display name"))
+				assert ("the password was asked for", l_output.has_substring ({STRING_32} "Password (at least"))
+				assert ("the missing password is named", l_output.has_substring ({STRING_32} "no password was given"))
+				assert ("and nothing was created", l_output.has_substring ({STRING_32} "nothing was created"))
+				assert ("no administrator was announced", not l_output.has_substring ({STRING_32} "administrator %"prompts%" created"))
+				assert ("the old echo warning is gone for good", not l_output.has_substring ({STRING_32} "will echo"))
+				assert ("exit status 1, so a wrapper can tell a refusal from a creation", l_output.has_substring ({STRING_32} "SC_STATUS_1"))
+				create l_db.make_with_name (Prompt_scratch_db)
+				assert ("nothing was created: there is not even a database", not l_db.exists)
+
+					-- (2) The same path, fed all three lines: the admin IS created.
+				create l_file.make_create_read_write (Prompt_scratch_root + "\full.txt")
+				l_file.put_string ("Prompt Tester%Nopen sesame 42%Nopen sesame 42%N")
+				l_file.close
+				create l_process.make
+				l_output := l_process.command_output (create_admin_command ("full.txt"))
+				assert ("the administrator was created", l_output.has_substring ({STRING_32} "administrator %"prompts%" created"))
+				assert ("exit status 0 on success", l_output.has_substring ({STRING_32} "SC_STATUS_0"))
+				create l_store.make (Prompt_scratch_db)
+				l_store.open
+				assert ("the store really holds an admin", l_store.is_open and then l_store.has_admin)
+				assert ("under the display name that was TYPED, not the username from argv",
+					attached l_store.user_by_username ("prompts") as u and then u.display_name.same_string ({STRING_32} "Prompt Tester"))
+				l_store.close
+			end
+		end
+
+feature {NONE} -- The redirected-prompt round
+
+	create_admin_command (a_input_file: STRING_8): STRING_8
+			-- `--create-admin' run with standard input REDIRECTED from
+			-- `a_input_file'. cmd does the redirection, which is the whole point,
+			-- and is exactly what the installer's verification script does.
+			--
+			-- No window is opened and no keystroke is ever synthesised: standard
+			-- input is a FILE. The console path cannot be driven this way, and is
+			-- not claimed to be.
+			--
+			-- THE WHOLE COMMAND IS WRAPPED IN A SECOND PAIR OF QUOTES, and it has
+			-- to be. `cmd /c' strips the first quote and the last quote of what
+			-- follows unless there are exactly two of them with no special
+			-- character between - and `<' is one of those special characters. With
+			-- a single pair, cmd eats the quote that opens the executable's path
+			-- and the one that closes the input file, and answers "The filename,
+			-- directory name, or volume label syntax is incorrect" on standard
+			-- error. The doubled pair is what it strips instead, leaving the
+			-- command intact. (A shell such as PowerShell adds this pair for you,
+			-- which is exactly why a hand check can pass where this would not.)
+		require
+			named: not a_input_file.is_empty
+		local
+			l_exe: SERVER_EXE
+		do
+			create l_exe
+			create Result.make (256)
+			check built: attached l_exe.path as l_exe_path then
+				Result.append ("cmd /c %"%"")
+				Result.append ({UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (l_exe_path.name))
+				Result.append ("%" --create-admin prompts %"" + Prompt_scratch_root + "\server.toml%"")
+				Result.append (" < %"" + Prompt_scratch_root + "\" + a_input_file + "%"")
+					-- What a .cmd wrapper would read out of ERRORLEVEL, said out loud on
+					-- standard output. `reset_password.cmd' and `create_admin.cmd' branch
+					-- on exactly this, so this is the thing under test - not a number in
+					-- this process's memory. `%%errorlevel%%' cannot be used: cmd expands
+					-- it when it PARSES the line, which is before the executable has run.
+				Result.append (" & if errorlevel 2 (echo SC_STATUS_2_OR_MORE) else if errorlevel 1 (echo SC_STATUS_1) else (echo SC_STATUS_0)%"")
+			end
+		ensure
+			redirected: Result.has_substring ("<")
+			status_reported: Result.has_substring ("errorlevel")
+		end
+
+	Prompt_scratch_root: STRING_8 = "C:\Users\Public\sc_prompts_test\assault"
+			-- Its own room, away from testing/config_scratch: an ABSOLUTE path, so
+			-- the directory this runner was started from cannot change the answer.
+
+	Prompt_scratch_db: STRING_32 = "C:\Users\Public\sc_prompts_test\assault\data\simple_chat.db"
+			-- <data_dir>/simple_chat.db, exactly where the server will open it.
+
+	Prompt_scratch_data_toml: STRING_8 = "C:/Users/Public/sc_prompts_test/assault/data"
+			-- Forward slashes: a TOML basic string treats backslash as an escape.
+
 feature {NONE} -- Scratch files
 
 	Scratch_directory: STRING_8 = "testing/config_scratch"

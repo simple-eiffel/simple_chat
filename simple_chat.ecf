@@ -49,6 +49,13 @@
 	<target name="simple_chat_server" extends="simple_chat">
 		<root class="SERVER_APP" feature="make"/>
 		<setting name="console_application" value="true"/>
+		<!-- simple_console 1.1.0 carries `read_hidden_line': the three account flags
+		     (--create-admin, --create-user, --reset-password) read every password through
+		     it, so nothing types back onto a real console. Named on the SERVER target
+		     rather than the parent, the way simple_shell and simple_widgets are named on
+		     the client's: only apps\server\ uses it, and the client must not
+		     grow a dependency it has no call for. -->
+		<library name="simple_console" location="$SIMPLE_EIFFEL/simple_console/simple_console.ecf"/>
 		<cluster name="server" location=".\apps\server\" recursive="true"/>
 	</target>
 	<!-- The thick client (intent-v3, D-015): simple_widgets, no browser. The UI-free client stack
@@ -85,6 +92,9 @@
 		     the SHAPED_LAYOUT the pane's own kit produces for the acceptance line. -->
 		<library name="simple_shell" location="$SIMPLE_EIFFEL/simple_shell/simple_shell.ecf"/>
 		<library name="simple_shaping" location="$SIMPLE_EIFFEL/simple_shaping/simple_shaping.ecf"/>
+		<!-- The tests target compiles apps\server\ too, so it needs what
+		     SERVER_APP needs: simple_console, for the no-echo password reads. -->
+		<library name="simple_console" location="$SIMPLE_EIFFEL/simple_console/simple_console.ecf"/>
 		<library name="simple_widgets" location="$SIMPLE_EIFFEL/simple_widgets/simple_widgets.ecf">
 			<!-- SW_LOCALE.format_number carries an unused local of the library's own; keep this
 			     project's build at zero warnings, as simple_toml is kept. -->

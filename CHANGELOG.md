@@ -7,7 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Passwords no longer echo at the console.** `--create-admin`, `--create-user`
+  and `--reset-password` (`apps/server/server_app.e`) read every password — and
+  every “Again:” confirmation — through `SIMPLE_CONSOLE.read_hidden_line`
+  (simple_console 1.1.0, added to the `simple_chat_server` and `simple_chat_tests`
+  targets). It clears `ENABLE_ECHO_INPUT` for the read and restores the console
+  mode on **every** exit path, keeping Backspace and Enter working. The line
+  `WARNING: the password will echo on this console (no echo suppression in v1).`
+  is gone from all three commands, because it is no longer true.
+
+  The display name stays an ordinary echoing read: a person has to see the name
+  they are giving themselves. The username still arrives from argv.
+
+  **Redirected standard input is untouched.** When stdin is a file or a pipe —
+  which is how the shipped `.cmd` wrappers and `installer/VERIFICATION-2026-09-02.md`
+  feed a password in — the line is read the ordinary way and no console mode is
+  touched. **End of input before a password** is refused, changing nothing, with
+  **exit status 1**: `read_hidden_line` answers Void on end of input and never a
+  partial line, and the exit is taken only *after* the store is closed, which is
+  the discipline `--reset-password` already had. A line ended by pressing Enter
+  alone is still the empty password, refused by `password_minimum` as before.
+
+  Passwords are now decoded as UTF-8 on the way in rather than widened
+  byte-for-byte. An ASCII password hashes to exactly what it hashed to before;
+  a **non-ASCII** one now hashes the bytes that were actually typed instead of a
+  double encoding of them, which is what the HTTP `/login` path always sent. A
+  non-ASCII password created at the console *before* this change will not verify
+  after it — reset it with `--reset-password`. The now-unused `line_read` is
+  deleted; it carried no contract.
+
+- **A missing server executable FAILS the live assaults instead of skipping**
+  (`testing/wiring_assault.e`, new `testing/server_exe.e`, `testing/test_app.e`).
+  This is the one sanctioned contract change of this branch and it is in the
+  assault, not in `src/` or `apps/`.
+
+  Three live rounds — `live_client_stack_round_trip`,
+  `live_client_app_shows_an_event_in_the_real_pane` and
+  `live_gui_latency_through_a_quiet_poll` — printed
+  `SKIP: ... which is not built` and then asserted `True`, so a skip counted as a
+  pass. That hid a real failure three times on 2026-09-02 and 2026-09-03.
+
+  Removed from each of the three (verbatim):
+
+  - `assert ("skipped cleanly without a server exe", True)`
+  - the comment lines `-- Skips, and passes, when the exe is not built.` (and, on
+    the round trip, `-- when the exe is not built - the SKIP line says so out loud.`)
+
+  Added in their place:
+
+  - `assert (a_what + " needs " + l_exe.Relative_path + ", which is not built", False)`
+    in the new `report_unbuilt_server`, so `Results:` shows a failure
+  - the comment lines `-- FAILS when the exe is not built (see `report_unbuilt_server').`
+
+  New contracts (all additions): `SERVER_EXE.is_built`'s
+  `definition: Result = (path /= Void)`, `SERVER_EXE.name`'s
+  `empty_exactly_when_unbuilt: Result.is_empty = not is_built`,
+  `SERVER_EXE.explain_missing`'s `not_built: not is_built`, and
+  `CONFIG_LOAD_ASSAULT.create_admin_command`'s `named`, `redirected` and
+  `status_reported`. `WIRING_ASSAULT.prepare_scratch` keeps its own
+  `room_seeded` and `server_exe_copied` unchanged.
+
+  **The path is no longer resolved against the working directory alone.**
+  `SERVER_EXE` asks the file system twice: the working directory (where
+  `RUNBOOK.md` says to run from — the old answer, kept), and then this running
+  executable's own directory and each ancestor up to eight levels, so a runner
+  started inside `EIFGENs\simple_chat_tests\F_code` walks the three levels to the
+  project root and finds the same file. `{ARGUMENTS_32}.command_name` gives argv[0]
+  and `PATH.absolute_path` resolves it, so a bare or relative argv[0] still lands
+  somewhere real. Running from inside `F_code` no longer changes the answer.
+
+  When it really is not built, each assault prints where the file belongs and
+  `ec.sh test -config simple_chat.ecf -target simple_chat_server`, and `TEST_APP`
+  repeats it once under `Results:` (`name_the_missing_build`). No escape hatch was
+  invented: there was none to keep. Proven red — with the executable renamed the
+  run reports **188 passed, 4 failed**.
+
+  (`window_assault.e`'s `SKIP: no DPAPI on this platform` is left alone. It is not
+  a missing build but a missing platform capability, and it never triggers on
+  Windows.)
+
 ### Added
+
+- **`server_app_prompts_over_redirected_stdin`**, 191 → **192** assaults
+  (`testing/config_load_assault.e`). It runs the finalized executable as a real
+  child with standard input redirected **from a file** — no console is opened and
+  no keystroke is synthesised — in two halves. First an input file that runs out
+  before the password: the prompts appear, the refusal names the missing password,
+  `ERRORLEVEL` is 1 and there is not even a database file afterwards, because the
+  store is never opened. Then the same file with all three lines: the admin is
+  created under the display name that was *typed*, and `ERRORLEVEL` is 0 — which
+  is what proves the redirected path is intact rather than merely refusing
+  everything. The exit status is read out of `ERRORLEVEL` inside `cmd`, because
+  that is what `create_admin.cmd` and `reset_password.cmd` actually branch on.
+
+  The **real-console** path is not exercised here and is not claimed to be: it
+  needs a real console, which a test runner's redirected standard input is not.
+  It was proven in simple_console itself.
 
 - **`--reset-password <username> [config.toml]`** on the server executable
   (`apps/server/server_app.e`). A host who forgot the password had exactly one
@@ -19,9 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The console shape is `--create-admin`'s, minus the display-name prompt: the
   account already has a name and nothing here renames anybody. The new password
-  is typed twice, under the same `password_minimum` rule and behind the same
-  “the password will echo” warning the other two print — there is still no echo
-  suppression in v1 and none was invented here. On success it says the password
+  is typed twice, under the same `password_minimum` rule. (It was landed behind
+  the same “the password will echo” warning the other two printed; that warning
+  and the echo it warned about are gone — see “Passwords no longer echo” above.)
+  On success it says the password
   was reset **and that every live session that member held was signed out**,
   which is `reset_password`'s own `sessions_revoked` postcondition: a password
   somebody else has learned is taken away, not merely replaced.
