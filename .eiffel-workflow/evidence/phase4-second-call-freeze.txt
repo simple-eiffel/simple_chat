@@ -1,0 +1,270 @@
+================================================================================
+PHASE 4 - THE SECOND-CALL FREEZE
+branch phase4/second-call-freeze, from main cbcabb4
+2026-09-03
+================================================================================
+
+The symptom, as the mention agent handed it over: with one @claude participant
+configured, the FIRST addressed message of a server run is answered and the
+SECOND is never answered. No child process is started, nothing is logged, the
+rest of the server keeps serving HTTP. Reproduced on main's own binary with two
+leading @claude turns, with the context window off, and with a SECOND
+participant's FIRST call - so it is neither --resume nor the context window nor
+the addressing rule. Its own evidence sits at C:\Users\Public\sc_mention_test;
+the room there reads:
+
+  #1 13:17:21 larry  hello @Claude what is 2+2
+  #2 13:17:24 BOT    (robot) 4
+  #3 13:17:24 larry  and times 3? @claudetwo        <- never answered
+
+Everything below was run in the worktree D:/prod/simple_chat_wt_dispatch,
+against scratch servers under C:\Users\Public\sc_dispatch_test and
+C:\Users\Public\sc_dispatch_live, hidden processes with redirected stdio.
+Larry's own C:\ProgramData\SimpleChat and %APPDATA%\simple_chat were never
+touched.
+
+
+--------------------------------------------------------------------------------
+1. THE REPRODUCTION, WITH A FAKE ENGINE, IN ONE RUN
+--------------------------------------------------------------------------------
+
+The `claude -p' child is not needed to see this, and a defect that needs a
+subscription to reproduce is a defect nobody can regression-test. A
+`bible_tool' participant whose engine is C:\Windows\System32\PING.EXE is a real
+child process on the real dispatcher path with no AI in it: a request shaped
+like a verse reference ("127.0.0.1" passes `is_reference_shape') runs the child
+and the room gets an answer.
+
+  server.toml: port 18311, data_dir under the scratch root, one entry
+    handle = "@fake", kind = "bible_tool", engine = ".../PING.EXE"
+
+Three messages posted back to back (2 ms apart), main's own `ec.sh test' binary:
+
+  13:43:52.297 POST turn 1  -> event 1
+  13:43:52.320 POST turn 2  -> event 2
+  13:43:52.337 POST turn 3  -> event 4
+  [1] larry  @fake 127.0.0.1
+  [2] larry  @fake 127.0.0.2
+  [3] BOT    Sorry - no answer: the tool produced no output   <- answers #1
+  [4] larry  @fake 127.0.0.3
+  ... 120 s later, still nothing. /health answers. /events answers. POST answers.
+
+Then the control that killed the timing hypothesis outright - the same three
+messages FOUR SECONDS apart:
+
+  13:46:11 POST turn 1 -> event 1
+  13:46:11 BOT  answers event 1                     (event 2)
+  13:46:15 POST turn 2 -> event 3                   <- never answered
+  13:46:19 POST turn 3 -> event 4                   <- never answered
+
+IT IS NOT A RACE. Back-to-back is not the trigger; it only made the first
+report look like one. The dispatcher answers exactly ONE request per server
+run, whatever the spacing, and is deaf from then on.
+
+
+--------------------------------------------------------------------------------
+2. WHERE IT STOPS - MEASURED, NOT REASONED
+--------------------------------------------------------------------------------
+
+PARTICIPANT_DISPATCHER and CHAT_API were instrumented with timestamped
+log lines at every step of a drain (temporary; reverted). One run, 3 s gap:
+
+  TRACE wake in room=1 n=1 dispatching=False
+  TRACE drain begin pending=1
+  TRACE pull room=1 since=0
+  TRACE handle_page ENTRY room=1 pending=0            <- the frame opens
+  TRACE page room=1 events=1 cursor=0
+  TRACE event id=1 ... target=True
+  TRACE asking id=1
+  TRACE asked id=1 success=False
+  TRACE posting room=1
+  TRACE post_reply calling api
+  TRACE api dispatcher_post in
+  TRACE wake in room=1 n=2 dispatching=True           <- THE RING COMES BACK
+  TRACE wake out room=1 n=2 pending=1                    IN, MID-DRAIN
+  post message event=2 room=1 sender=2
+  TRACE api dispatcher_post out 201
+  TRACE post_reply api returned 201
+  TRACE posted room=1 status=201
+  TRACE handle_event body end id=1
+  TRACE handle_event returned id=1
+  TRACE cursor forced id=1
+  TRACE handle_page body end room=1 pending=1         <- the frame closes: 0 -> 1
+  <nothing, ever again>
+  13:49:56 TRACE wake in room=1 n=3 dispatching=True  <- every later wake
+  13:50:00 TRACE wake in room=1 n=4 dispatching=True     only queues
+
+The last body statement of `handle_page' runs and the drain never continues.
+`is_dispatching' is True in every later wake and never goes down again.
+
+A rescue added to `dispatch_pending' named the raise exactly:
+
+  ERROR TRACE drain RAISED: POSTCONDITION_VIOLATION: nothing_queued
+  PARTICIPANT_DISPATCHER  handle_page @23   nothing_queued:
+                                            Postcondition violated.   Fail
+
+and the same source finalized WITHOUT contracts (`ec.sh release', lean binary)
+answers every turn and keeps draining for ever:
+
+  TRACE drain end floor=6 / wake in n=5 dispatching=False / drain begin ...
+
+Two facts, and they settle it: the freeze is an ASSERTION, and it fires on
+EVERY answer.
+
+
+--------------------------------------------------------------------------------
+3. THE ROOT CAUSE
+--------------------------------------------------------------------------------
+
+Answering POSTS. `PARTICIPANT_DISPATCHER.post_reply' calls
+`CHAT_API.dispatcher_post (id, room, a_text)', and `a_text' is the dispatcher's
+OWN string - a non-separate reference in a separate call, which is ISE SCOOP's
+definition of a lock-passing call. So the API executes that post while holding
+the DISPATCHER'S lock. Inside it, `CHAT_SERVICE.post_message' rings the bus,
+`EVENT_BUS.ring' calls `wake_one (subscriber, room)', the dispatcher is one of
+those subscribers - and because the API already holds its lock, that `wake' is
+not queued for the dispatcher's own turn. It runs THERE AND THEN, on the API's
+thread, by impersonation, while `dispatch_pending' is mid-drain.
+
+That re-entrant wake does two lawful things and both are fatal to the frame it
+lands in:
+
+  - it queues its room, and `handle_page' promises
+        nothing_queued: pending_rooms_model |=| old pending_rooms_model
+  - it counts itself, and `dispatch_pending' promises
+        wakes_untouched: wake_count = old wake_count
+
+`handle_page' fires first. The violation unwinds `handle_page' into
+`dispatch_pending' (no rescue) into `wake' - an ASYNCHRONOUS separate call,
+whose caller is long gone, so the exception is discarded in silence: nothing on
+stderr, nothing in the log. And `is_dispatching := False', the last statement
+of `dispatch_pending', is never reached. From that instant every `wake' takes
+the `if not is_dispatching' branch, queues its room and returns. No engine
+call, no log line, the rest of the server serving normally.
+
+  first turn answered, every turn after it silent, for the life of the process.
+
+The two contracts are RIGHT: a drain is not touched under its own feet. It was
+the wiring that was wrong. Both are frozen and both are untouched by this
+branch.
+
+The project had met the same shape once before and written it down:
+DISPATCHER_HOST.launch already says "the API's reach-back meets a dispatcher
+already blocked reserving the API for population: a mutual deadlock that froze
+the whole server", and fixed THAT instance by ordering. This is the same
+reach-back on the answering path, and it needed the general rule.
+
+
+--------------------------------------------------------------------------------
+4. THE FIX
+--------------------------------------------------------------------------------
+
+NOBODY IS RUNG FOR THEIR OWN POST.
+
+  EVENT_BUS      `subscribe' notes the dispatcher's ticket by the name it
+                 gives (`Dispatcher_subscriber_name' = "dispatcher", which is
+                 PARTICIPANT_DISPATCHER.subscriber_name - the bus never holds a
+                 subscriber's type, and no contract here may touch another
+                 processor). `mute_dispatcher' / `unmute' set `muted_ticket',
+                 and `ring' passes that one subscription over. Everyone else -
+                 every long-poll waiter - is rung exactly as before, and the
+                 ring is still counted.
+
+  CHAT_API       `dispatcher_post' mutes for the length of its own post and
+                 unmutes after, in the body and in a rescue, with
+                 `nobody_left_muted' added to its postcondition.
+
+  PARTICIPANT_DISPATCHER
+                 `dispatch_pending' gains a rescue that puts `is_dispatching'
+                 down and LOGS the raise before it propagates. That is not the
+                 fix; it is the reason the fix was needed for three weeks
+                 without anyone seeing a line about it. Whatever the next such
+                 raise turns out to be, the dispatcher will drain again on the
+                 next wake and will have said so.
+
+Nothing is lost to the silence. A bot's own answer is an event the dispatcher
+ignores anyway (`target_of' returns Void for a bot-authored message), and news
+from anyone ELSE arrives on its own poster's turn, where no lock is passed, the
+wake is a plain asynchronous call, and it waits behind the drain instead of
+cutting into it.
+
+Contracts frozen: the diff adds contract clauses and removes none. No existing
+require, ensure or invariant was edited.
+
+
+--------------------------------------------------------------------------------
+5. WHAT IS PROVEN
+--------------------------------------------------------------------------------
+
+RED, with the mute disabled (one line, `if True then'), same tests, same build:
+
+  FAIL: dispatcher_post_does_not_ring_the_dispatcher_back
+        PARTICIPANT_DISPATCHER  handle_event @29  accounted:
+                                Postcondition violated.  Fail
+        PARTICIPANT_DISPATCHER  handle_event @40  cursors_unchanged:
+                                Postcondition violated.  Fail
+  FAIL: bus_mutes_one_ticket_and_only_for_that_post
+  Results: 217 passed, 2 failed
+
+The re-entrant wake nests a WHOLE DRAIN under the frame that is answering, so
+`handle_event' breaks on its own books before `handle_page' is even reached -
+the same family of raise the server showed, a clause earlier.
+
+GREEN, mute restored:  Results: 219 passed, 0 failed, zero SKIP lines
+                       (main's 214 + 5), doorbell 6 passed / 0 failed,
+                       `ec.sh release -target simple_chat_server' finalizes
+                       from a deleted EIFGENs with no warning but the standing
+                       obsolete-call notice.
+
+The regression test is `dispatcher_post_does_not_ring_the_dispatcher_back',
+driven through `handle_event' rather than through a drain so that the only ring
+on the stack is the answer's own. That distinction matters here and nowhere
+else: on ONE processor a bus wake is a plain call, so a drain STARTED BY a ring
+would post from inside that ring's own frame and break `EVENT_BUS.ring.counted'
+- something the server never does, because there the wake is asynchronous and
+`ring' returns long before the dispatcher moves. So the fixture subscribes
+deliberately rather than by default, and the cross-processor case is what the
+live proof below is for.
+
+END TO END, the fake engine, three messages 2 ms apart, the fixed binary:
+
+  14:36:19.516 POST 1 -> event 1
+  14:36:19.536 POST 2 -> event 2
+  14:36:19.554 POST 3 -> event 4
+  events 3, 5 and 6 are the three answers.  ALL 3 ANSWERED.
+
+LIVE, the real `claude -p' on Larry's subscription, three back-to-back turns,
+run against the DBC binary (contracts ON - the build the freeze lived in):
+
+  14:38:58  #1 larry  @claude what is 2+2? answer with just the number
+  14:38:58  #2 larry  @claude name one primary color, one word only
+  14:38:58  #3 larry  @claude what is the capital of France? one word
+  14:39:00  #4 BOT    4
+  14:39:02  #5 BOT    Red
+  14:39:05  #6 BOT    Paris
+  health after: {"store":true,"last_event_id":6}
+
+
+--------------------------------------------------------------------------------
+6. LEFT STANDING
+--------------------------------------------------------------------------------
+
+`CHAT_API.dispatcher_try_ask' is the other lock-passing call on the answering
+path (its `a_key' is the dispatcher's own STRING_8), and its postcondition
+re-reads that separate string at exit:
+
+  granted_when_allowed: Result = old service.limits.is_allowed (local_8 (a_key))
+  recorded: Result implies service.limits.total (local_8 (a_key)) = ...
+
+That is precisely the pattern `dispatcher_post' carries a comment about having
+already fixed once - "ISE SCOOP evaluates a lock-passed call's postcondition
+after the caller's locks are returned, and that late reach into the caller's
+string surfaced as a phantom raise at the caller's next synchronization point".
+It did not fire in any run on this branch. It is a FROZEN contract, so it was
+not touched; it is reported here so the next cycle can decide whether to
+re-state both clauses over a local copy the way `dispatcher_post' did.
+
+The bots' answers in the fake-engine runs read "Sorry - no answer: the tool
+produced no output" because PING.EXE's output is not what BIBLE_TOOL_PARTICIPANT
+parses. That is the fake engine being a fake engine; the ask, the child, the
+post and the ring are all real, which is all this reproduction needs.

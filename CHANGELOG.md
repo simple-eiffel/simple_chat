@@ -174,6 +174,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`test_client_app_hints_the_room_when_a_bot_is_in_the_roster`,
   `test_client_app_shows_no_hint_when_the_roster_has_no_bot`). 196 → **201** assaults.
 
+### Fixed
+
+- **The dispatcher answers the second question of a server run, and the third.**
+  It answered the first and then went deaf for the life of the process: no child
+  started, nothing logged, the rest of the server serving normally. Reproduced
+  here with a fake engine (a `bible_tool` entry whose engine is `PING.EXE` — a
+  real child on the real dispatcher path, no subscription needed) in one run, and
+  then with the three messages **four seconds apart**, which is what killed the
+  timing story the first report carried: back-to-back was never the trigger.
+
+  Answering **posts**, and the post rang the dispatcher back into itself.
+  `PARTICIPANT_DISPATCHER.post_reply` hands `CHAT_API.dispatcher_post` the
+  dispatcher's own string, which under ISE SCOOP passes the dispatcher's lock to
+  the API for the length of the call; the post rings the bus, the bus wakes its
+  subscribers, and because the API already held that lock the dispatcher's `wake`
+  did not queue for its own turn — it ran there and then, on the API's thread, by
+  impersonation, **inside `handle_page`, inside the drain**. It queued a room and
+  counted a wake under a frame that promises neither
+  (`handle_page.nothing_queued`, `dispatch_pending.wakes_untouched`). The
+  postcondition raised, unwound `dispatch_pending` into an *asynchronous* `wake`
+  whose caller was long gone — so the exception went nowhere and printed nothing —
+  and left `is_dispatching` **True**. Every later wake queued its room and
+  returned. Measured with timestamped traces and settled two ways: a rescue named
+  the clause (`POSTCONDITION_VIOLATION: nothing_queued`, `handle_page @23`), and
+  the same source finalized **without contracts** answered every turn and drained
+  for ever. Full record in
+  `.eiffel-workflow/evidence/phase4-second-call-freeze.txt`.
+
+  The rule now is **nobody is rung for their own post**. `EVENT_BUS` notes the
+  dispatcher's ticket when it subscribes — by the name the subscriber gives, since
+  the bus never holds a subscriber's type and no contract there may touch another
+  processor — and `mute_dispatcher` / `unmute` make `ring` pass that one
+  subscription over. `CHAT_API.dispatcher_post` mutes for the length of its own
+  post and unmutes in the body and in a rescue. Nothing is lost to the silence: a
+  bot's own answer is an event the dispatcher ignores anyway, and news from
+  anyone *else* rings on its own poster's turn, where no lock is passed, the wake
+  is a plain asynchronous call, and it waits behind the drain instead of cutting
+  into it.
+
+  The two contracts were right and are untouched — the diff adds clauses and
+  removes none. What was wrong was the wiring.
+
+- **A raise inside the drain no longer latches the dispatcher off in silence.**
+  `dispatch_pending` gains a rescue that puts `is_dispatching` down and **logs**
+  the raise before it propagates. That is not the fix above; it is the reason the
+  fix took three weeks to become visible — an exception in an asynchronous SCOOP
+  call has no caller left to tell, so the dispatcher went quiet without a single
+  line anywhere. Whatever the next such raise turns out to be, the next wake will
+  drain again and the log will say what happened.
+
+### Added
+
+- **Five assaults, 214 → 219** (`testing/participants_assault.e`).
+
+  `dispatcher_post_does_not_ring_the_dispatcher_back` is the regression test, at
+  the seam where the defect was made: a member's post rings the room **and wakes
+  the dispatcher**, which is the whole point of the doorbell; the dispatcher's own
+  answer rings the room and **does not** wake it; and the next member's message
+  wakes it again, so the doorbell is not left switched off. It is driven through
+  `handle_event`, not through a drain, so the only ring on the stack is the
+  answer's own — on **one** processor a bus wake is a plain call, so a drain
+  *started by* a ring would post from inside that ring's own frame and break
+  `EVENT_BUS.ring.counted`, which the server never does (there the wake is
+  asynchronous and `ring` returns long before the dispatcher moves). That
+  asymmetry is why the fixture subscribes deliberately rather than by default.
+
+  Around it: `dispatcher_answers_the_second_and_third_request_of_a_run` (what the
+  freeze actually cost), `dispatcher_answers_two_requests_that_arrive_together`
+  (both sitting on one page before the drain begins — the shape Larry hit),
+  `dispatcher_two_bots_answer_the_same_room` (the second bot's *first* call, which
+  the freeze took just as surely, because it was never about the participant), and
+  `bus_mutes_one_ticket_and_only_for_that_post`, which also pins
+  `EVENT_BUS.Dispatcher_subscriber_name` to
+  `PARTICIPANT_DISPATCHER.subscriber_name`, since the mute is keyed on it.
+
+  Proven red before green: with the mute disabled the regression test dies on
+  `handle_event`'s own `accounted` and `cursors_unchanged`, because the re-entrant
+  wake nests a whole drain under the frame that is answering.
+
+### Known
+
+- `CHAT_API.dispatcher_try_ask` is the other lock-passing call on the answering
+  path, and its postcondition re-reads the caller's separate string at exit
+  (`local_8 (a_key)`) — the same pattern `dispatcher_post` carries a comment about
+  having fixed once, and which surfaces as a phantom raise at the caller's next
+  synchronization point. It did not fire in any run on this branch. It is a frozen
+  contract and was **not** touched; the next cycle should decide whether to
+  re-state both clauses over a local copy as `dispatcher_post` did.
+
 ## [0.1.2] — 2026-09-03
 
 The first-run release: a hosting install finishes by creating the first administrator, starting the server and opening the window, in that order; passwords never echo; the door says where the server is; the host can reset a password; every window inherits Vision2's spacing model from simple_widgets 0.4.0. Built against simple_winhttp 0.1.1, simple_process 1.0.1, simple_encryption 2.1.1, simple_shell 1.9.2, simple_widgets 0.4.0 and simple_console 1.1.0.

@@ -636,6 +636,163 @@ feature -- Dispatcher
 			assert ("engine asked again", attached last_mock as m4 and then m4.calls = 1)
 		end
 
+	test_dispatcher_post_does_not_ring_the_dispatcher_back
+			-- THE SECOND-CALL FREEZE (phase4/second-call-freeze), at the seam
+			-- where it was made. A member's post rings the bus and wakes the
+			-- dispatcher, which is the whole point of the doorbell. The
+			-- dispatcher's OWN post must ring the room and wake everybody else
+			-- and NOT wake the dispatcher - because that call carries the
+			-- dispatcher's own lock (`a_text' is its string), so in the server
+			-- the wake did not queue for the dispatcher's turn: it ran there and
+			-- then, on the API's thread, by SCOOP impersonation, inside
+			-- `handle_page', inside the drain. It queued a room and counted a
+			-- wake under a frame that promises neither, the postcondition
+			-- raised, `dispatch_pending' unwound with `is_dispatching' left
+			-- True, and the bot never answered again - no child, no log line,
+			-- the rest of the server serving normally. Measured in
+			-- .eiffel-workflow/evidence/phase4-second-call-freeze.txt.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_wakes, l_rings: INTEGER
+			l_posted: CHAT_RESULT [CHAT_EVENT]
+		do
+			d := posting_dispatcher (0)
+			if attached last_bus as b then
+				b.subscribe (d)
+				assert ("the bus knows the dispatcher by the name it gives", b.dispatcher_ticket = b.last_ticket)
+			end
+				-- A member's post: rings, and wakes the dispatcher.
+			if attached last_bus as b and attached last_service as sv and attached last_room as r and attached last_nick as n then
+				l_wakes := d.wake_count
+				l_rings := b.ring_count
+				l_posted := sv.post_message (n, r, {STRING_32} "just talking, nobody addressed")
+				assert ("the member's message landed", l_posted.is_success)
+				assert ("it rang the room", b.ring_count = l_rings + 1)
+				assert ("and it woke the dispatcher - the doorbell works", d.wake_count = l_wakes + 1)
+			end
+				-- The dispatcher's own post: rings, and wakes everybody but it.
+				-- Driven through `handle_event' rather than a drain, so the only
+				-- ring on the stack is the answer's own - which is the one under
+				-- test. (On ONE processor a bus wake is a plain call, so a drain
+				-- started BY a ring would post from inside that ring's own frame,
+				-- something the server never does: there the wake is asynchronous
+				-- and `ring' returns long before the dispatcher moves.)
+			if attached last_bus as b then
+				l_wakes := d.wake_count
+				l_rings := b.ring_count
+				d.handle_event (message (500, 1, 7, {STRING_32} "@mock answer me", False))
+				assert ("the request was asked and answered", d.asks = 1 and d.answers_posted = 1)
+				assert ("the answer rang the room, as every post does", b.ring_count = l_rings + 1)
+				assert ("but it did NOT wake the dispatcher: this is the freeze", d.wake_count = l_wakes)
+				assert ("and the mute did not outlive the post", b.muted_ticket = 0 and not b.is_muted (b.dispatcher_ticket))
+			end
+				-- And the bell comes straight back for the next member's message.
+			if attached last_service as sv and attached last_room as r and attached last_nick as n then
+				l_wakes := d.wake_count
+				l_posted := sv.post_message (n, r, {STRING_32} "and one more, still nobody addressed")
+				assert ("the doorbell is not left switched off", d.wake_count = l_wakes + 1)
+			end
+		end
+
+	test_dispatcher_answers_the_second_and_third_request_of_a_run
+			-- What the freeze actually cost: the FIRST request of a server run
+			-- was answered and every one after it was not, for the life of the
+			-- process - reproduced on main's own binary with two `@claude'
+			-- turns four seconds apart, so it was never a race. Three
+			-- requests, three answers, one dispatcher.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_reason: STRING_32
+		do
+			d := posting_dispatcher (0)
+			l_reason := say_reason (d, {STRING_32} "@mock one")
+			assert ("the first turn was clean - " + l_reason.to_string_8, l_reason.is_empty)
+			assert ("first request answered", d.asks = 1)
+			l_reason := say_reason (d, {STRING_32} "@mock two")
+			assert ("the second turn was clean - " + l_reason.to_string_8, l_reason.is_empty)
+			assert ("SECOND request answered - the one the freeze took", d.asks = 2 and d.requests_seen = 2)
+			l_reason := say_reason (d, {STRING_32} "@mock three")
+			assert ("the third turn was clean - " + l_reason.to_string_8, l_reason.is_empty)
+			assert ("third request answered", d.asks = 3 and d.requests_seen = 3)
+			assert ("the engine was asked three times", attached last_mock as m and then m.calls = 3)
+			assert ("every one accounted, none lost", d.answers_posted + d.answer_failures = 3)
+			assert ("the cursor walked past all six events", d.cursor_of (1) >= 3)
+		end
+
+	test_dispatcher_answers_two_requests_that_arrive_together
+			-- Back to back, on ONE page: the first answer's post lands while
+			-- the page holding the second request is still being handled. That
+			-- is the shape Larry hit - a request arriving while the previous
+			-- answer is being written - and both must be answered.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_reason: STRING_32
+		do
+			d := posting_dispatcher (0)
+			append_ask ({STRING_32} "@mock one")
+			append_ask ({STRING_32} "@mock two")
+			l_reason := drain_reason (d, 1)
+			assert ("the drain was clean - " + l_reason.to_string_8, l_reason.is_empty)
+			assert ("both requests of one page answered", d.requests_seen = 2 and d.asks = 2)
+			assert ("the engine was asked twice", attached last_mock as m and then m.calls = 2)
+			assert ("nothing left pending", not d.has_pending)
+		end
+
+	test_dispatcher_two_bots_answer_the_same_room
+			-- Two participants, one room, one run: "@mock" answers, then
+			-- "@tool" answers. The freeze took the second bot's FIRST call as
+			-- surely as it took one bot's second, because it was never about
+			-- the participant.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_reason: STRING_32
+		do
+			d := posting_dispatcher (0)
+			l_reason := say_reason (d, {STRING_32} "@mock hello")
+			assert ("the first bot's turn was clean - " + l_reason.to_string_8, l_reason.is_empty)
+			assert ("the first bot answered", attached last_mock as m and then m.calls = 1)
+			l_reason := say_reason (d, {STRING_32} "@tool Gen 1:1")
+			assert ("the second bot's FIRST call was reached - " + l_reason.to_string_8, l_reason.is_empty)
+			assert ("the second bot ran", attached last_tool as t and then t.runs = 1)
+			assert ("both accounted", d.requests_seen = 2 and d.asks = 2 and d.answers_posted + d.answer_failures = 2)
+		end
+
+	test_bus_mutes_one_ticket_and_only_for_that_post
+			-- The mute is one subscriber wide and one post long: everybody
+			-- else is rung through it, the ring is still counted, and
+			-- `unmute' gives the muted one its bell back.
+		local
+			l_bus: EVENT_BUS
+			l_waiter: POLL_WAITER
+			d: PARTICIPANT_DISPATCHER
+			l_ticket_d, l_ticket_w: INTEGER
+		do
+			create l_bus.make
+			d := dispatcher (0)
+			create l_waiter.make (1)
+			assert ("the bus knows no dispatcher yet", l_bus.dispatcher_ticket = 0)
+			l_bus.subscribe (l_waiter)
+			l_ticket_w := l_bus.last_ticket
+			assert ("a long-poll is not the dispatcher", l_bus.dispatcher_ticket = 0)
+			l_bus.subscribe (d)
+			l_ticket_d := l_bus.last_ticket
+			assert ("the name is the pin: PARTICIPANT_DISPATCHER gives it", d.subscriber_name.same_string ({EVENT_BUS}.Dispatcher_subscriber_name))
+			assert ("and the bus noted its ticket", l_bus.dispatcher_ticket = l_ticket_d)
+			assert ("nobody muted to begin with", l_bus.muted_ticket = 0 and not l_bus.is_muted (l_ticket_d))
+			l_bus.ring (1)
+			assert ("both woken", l_waiter.wake_count = 1 and d.wake_count = 1 and l_bus.ring_count = 1)
+			l_bus.mute_dispatcher
+			assert ("the dispatcher, and only it, is muted", l_bus.is_muted (l_ticket_d) and not l_bus.is_muted (l_ticket_w))
+			l_bus.ring (1)
+			assert ("the muted one was passed over", d.wake_count = 1)
+			assert ("everybody else was rung as ever", l_waiter.wake_count = 2)
+			assert ("the ring was still counted", l_bus.ring_count = 2)
+			l_bus.unmute
+			assert ("nobody muted again", l_bus.muted_ticket = 0 and not l_bus.is_muted (l_ticket_d))
+			l_bus.ring (1)
+			assert ("the bell came back", d.wake_count = 2 and l_waiter.wake_count = 3 and l_bus.ring_count = 3)
+		end
+
 	test_dispatcher_prunes_answered
 			-- NEW-6: taken ids at or below the lowest room cursor are pruned
 			-- after a drain, and ids at or below the floor are never retaken.
@@ -972,6 +1129,115 @@ feature -- Memory (Phase 4)
 
 feature {NONE} -- Fixtures
 
+	last_bus: detachable EVENT_BUS
+			-- The latest `posting_dispatcher''s bus - the one its API rings.
+			-- Nothing subscribes to it unless a test asks: on ONE processor a
+			-- bus wake is a plain call, so a subscribed dispatcher would answer
+			-- and post from inside `EVENT_BUS.ring', ringing it again under its
+			-- own frame. The server never does that - there the wake is
+			-- asynchronous and `ring' returns long before the dispatcher moves.
+
+	last_api: detachable CHAT_API
+			-- That fixture's API, so a test can call `dispatcher_post' itself.
+
+	append_ask (a_body: STRING_32)
+			-- Put `a_body' in the store as Nick WITHOUT ringing anybody, so two
+			-- requests can be sitting on one page before any drain begins.
+			-- `say_reason' is the ordinary path; this one exists to build the
+			-- shape Larry hit - a request already waiting while the previous
+			-- answer is being written.
+		require
+			room_built: last_service /= Void and last_nick /= Void
+			given: not a_body.is_empty
+		local
+			l_payload: SIMPLE_JSON_OBJECT
+		do
+			if attached last_service as s and attached last_nick as n then
+				create l_payload.make
+				if attached s.store.append_event (create {CHAT_EVENT_DRAFT}.make (1, n.id, {CHAT_EVENT_KINDS}.Kind_message, a_body, Void, l_payload, False)) as e then
+					check appended: e.id > 0 and e.room_id = 1 end
+				end
+			end
+		end
+
+	drain_reason (a_dispatcher: PARTICIPANT_DISPATCHER; a_room_id: INTEGER_64): STRING_32
+			-- Empty when `wake' drained `a_room_id' without raising; the
+			-- exception's type and description otherwise. `wake' is what the
+			-- bus calls, so this is the production entry point, and a raise
+			-- inside it is exactly what the server swallowed in silence.
+		require
+			positive_room: a_room_id > 0
+		local
+			l_failed: BOOLEAN
+		do
+			create Result.make_empty
+			if not l_failed then
+				a_dispatcher.wake (a_room_id)
+			else
+				Result.append ({STRING_32} "the drain RAISED")
+				if attached (create {EXCEPTION_MANAGER}).last_exception as l_x then
+					if attached l_x.original as l_o then
+						Result.append ({STRING_32} " ")
+						Result.append (l_o.generating_type.name_32)
+						if attached l_o.description as l_d then
+							Result.append ({STRING_32} ": ")
+							Result.append (l_d.to_string_32)
+						end
+					end
+				end
+			end
+		rescue
+			if not l_failed then
+				l_failed := True
+				retry
+			end
+		end
+
+	say_reason (a_dispatcher: PARTICIPANT_DISPATCHER; a_body: STRING_32): STRING_32
+			-- Empty when Nick could say `a_body' into the fixture's room and
+			-- everything it set off came back without raising; the exception's
+			-- type and description otherwise.
+			--
+			-- Post as a member, then drain - which is what the bus's wake does
+			-- in the server - with the raise caught and named, so a test can say
+			-- WHICH clause broke instead of dying at its first line.
+		require
+			room_built: last_service /= Void and last_room /= Void and last_nick /= Void
+			given: not a_body.is_empty
+		local
+			l_failed: BOOLEAN
+			l_posted: CHAT_RESULT [CHAT_EVENT]
+		do
+			create Result.make_empty
+			if not l_failed then
+				if attached last_service as s and attached last_room as r and attached last_nick as n then
+					l_posted := s.post_message (n, r, a_body)
+					if l_posted.is_success then
+						a_dispatcher.wake (r.id)
+					else
+						Result.append ({STRING_32} "the room refused the message")
+					end
+				end
+			else
+				Result.append ({STRING_32} "it RAISED")
+				if attached (create {EXCEPTION_MANAGER}).last_exception as l_x then
+					if attached l_x.original as l_o then
+						Result.append ({STRING_32} " ")
+						Result.append (l_o.generating_type.name_32)
+						if attached l_o.description as l_d then
+							Result.append ({STRING_32} ": ")
+							Result.append (l_d.to_string_32)
+						end
+					end
+				end
+			end
+		rescue
+			if not l_failed then
+				l_failed := True
+				retry
+			end
+		end
+
 	last_mock: detachable MOCK_PARTICIPANT
 			-- The "@mock" participant of the latest `dispatcher' / `posting_dispatcher'.
 
@@ -1098,6 +1364,8 @@ feature {NONE} -- Fixtures
 			last_service := l_service
 			last_room := l_store.room (l_store.default_room_id)
 			last_nick := l_nick
+			last_bus := l_bus
+			last_api := l_api
 			create Result.make (l_api, a_start_after)
 			Result.registry.register (l_mock)
 			Result.registry.register (l_tool)
