@@ -263,6 +263,18 @@ the context window alone.
 > so it is neither `--resume` nor the context window nor the addressing rule. Until it is
 > fixed (it is below simple_chat, in the process/engine path), an on-going conversation
 > cannot be demonstrated end to end — restarting the server restores one answer.
+**Then ask it two more things, one straight after the other.** Until
+`phase4/second-call-freeze` the dispatcher answered the *first* question of a
+server run and never answered another — no child process, nothing in the log, the
+rest of the server serving normally, so the only symptom was a bot that had
+stopped talking. It was the answer's own post ringing the dispatcher back into
+itself mid-drain; the bus no longer rings anyone for their own post. Three
+questions in a row is the check, and spacing them out does **not** substitute for
+it: the old defect fired on every answer, four seconds apart or two milliseconds.
+
+If a bot ever does go quiet again, the log will now say so — `dispatcher: the
+drain raised; the flag is cleared so the next wake drains again`, with the reason.
+Silence used to be the whole of the evidence.
 
 ---
 

@@ -512,6 +512,21 @@ feature -- Basic operations
 			floor_current: pruned_floor = minimum_cursor
 			kept_above_floor: across answered as ic all @ic.key > pruned_floor end
 			wakes_untouched: wake_count = old wake_count
+		rescue
+				-- A raise anywhere in the drain must never latch the dispatcher
+				-- OFF, and it did. `wakes_untouched' above and
+				-- `handle_page.nothing_queued' were both broken on every answer
+				-- by the ring the answer's own post sent back through the lock
+				-- the post passes (now muted at the bus, EVENT_BUS.muted_ticket)
+				-- - and the violation unwound this routine with `is_dispatching'
+				-- still True, so every later `wake' queued its room and
+				-- returned: no engine call, no log line, the rest of the server
+				-- serving normally, for the life of the process. Whatever the
+				-- next such raise turns out to be, the flag goes down and it is
+				-- said out loud.
+			is_dispatching := False
+			log.error ({STRING_32} "dispatcher: the drain raised; the flag is cleared so the next wake drains again"
+				+ (if attached current_raise_reason as r then {STRING_32} " - " + r else {STRING_32} "" end))
 		end
 
 	handle_page (a_room_id: INTEGER_64; a_bytes: READABLE_STRING_8)

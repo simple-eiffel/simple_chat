@@ -823,8 +823,18 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 		local
 			l_text: STRING_32
 			l_result: CHAT_RESULT [CHAT_EVENT]
+			l_muted: BOOLEAN
 		do
 			l_text := local_32 (a_text)
+				-- The dispatcher is not rung for its OWN answer. This call
+				-- carries the dispatcher's lock (`a_text' is the dispatcher's
+				-- own string), so the ring inside the post below would re-enter
+				-- `wake' on THIS thread while the dispatcher sits mid-drain -
+				-- and a drain woken under its own feet breaks the frame it
+				-- promises, unwinds with `is_dispatching' still True, and never
+				-- answers again. Everyone else is rung exactly as before.
+			service.bus.mute_dispatcher
+			l_muted := True
 			if attached service.store.user (a_bot_user_id) as u and then u.is_stored and then u.is_bot and then u.is_active
 				and then attached service.store.room (a_room_id) as r and then r.is_stored and then service.store.is_member (u.id, r.id)
 			then
@@ -845,6 +855,10 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 			else
 				Result := 403
 			end
+			if l_muted then
+				service.bus.unmute
+				l_muted := False
+			end
 			request_count := request_count + 1
 		ensure
 			counted: request_count = old request_count + 1
@@ -857,6 +871,13 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 				-- ISE SCOOP evaluates a lock-passed call's postcondition after the caller's locks are
 				-- returned, and that late reach into the caller's string surfaced as a phantom raise
 				-- at the caller's next synchronization point (the answer posted, then "raised").
+			nobody_left_muted: service.bus.muted_ticket = 0
+		rescue
+				-- A raise inside the post must not leave the dispatcher deaf.
+			if l_muted then
+				service.bus.unmute
+				l_muted := False
+			end
 		end
 
 	dispatcher_display_name (a_user_id: INTEGER_64): STRING_32

@@ -56,6 +56,34 @@ feature -- Access
 	last_ticket: INTEGER
 			-- The ticket the latest `subscribe' issued; 0 before any.
 
+	dispatcher_ticket: INTEGER
+			-- The participant dispatcher's own subscription, noted by
+			-- `subscribe' from the subscriber's name; 0 while it has none.
+
+	muted_ticket: INTEGER
+			-- The one subscription `ring' passes over, or 0 for none.
+			--
+			-- NOBODY IS RUNG FOR THEIR OWN POST. The participant dispatcher
+			-- answers by posting through the API, and that post's ring came
+			-- straight back into the dispatcher - not later, on the
+			-- dispatcher's own turn, but THERE AND THEN, on the API's
+			-- thread, through the lock the post passes it (ISE SCOOP
+			-- impersonation), while `dispatch_pending' was still draining.
+			-- That re-entrant `wake' queued a room and counted itself under
+			-- a frame that promises neither
+			-- (`PARTICIPANT_DISPATCHER.handle_page.nothing_queued',
+			-- `dispatch_pending.wakes_untouched'); the violation unwound the
+			-- drain with `is_dispatching' left True, and the dispatcher
+			-- answered nothing again for the rest of the run - first turn
+			-- answered, every turn after it silent, the server still
+			-- serving. Measured, not reasoned:
+			-- .eiffel-workflow/evidence/phase4-second-call-freeze.txt.
+			--
+			-- Nothing is lost to the silence: a bot's own answer is an event
+			-- it would ignore anyway, and news from anyone ELSE rings on its
+			-- own poster's turn, where no lock is passed and the wake is a
+			-- plain asynchronous call that waits its turn.
+
 	subscriber_count: INTEGER
 		do
 			Result := subscribers.count
@@ -70,6 +98,15 @@ feature -- Status report
 			definition: Result = subscribers_model.domain.has (a_ticket)
 		end
 
+	is_muted (a_ticket: INTEGER): BOOLEAN
+			-- Is `a_ticket' the subscription `ring' passes over?
+		do
+			Result := a_ticket > 0 and then a_ticket = muted_ticket
+		ensure
+			definition: Result = (a_ticket > 0 and a_ticket = muted_ticket)
+			never_when_none_muted: muted_ticket = 0 implies not Result
+		end
+
 feature -- Element change
 
 	subscribe (a_subscriber: separate EVENT_SUBSCRIBER)
@@ -78,6 +115,9 @@ feature -- Element change
 			last_ticket := last_ticket + 1
 			subscribers.force (a_subscriber, last_ticket)
 			names.force (name_of (a_subscriber), last_ticket)
+			if name_of (a_subscriber).same_string (Dispatcher_subscriber_name) then
+				dispatcher_ticket := last_ticket
+			end
 		ensure
 			fresh: not (old subscribers_model).domain.has (last_ticket)
 			issued: last_ticket = old last_ticket + 1
@@ -104,11 +144,36 @@ feature -- Basic operations
 		do
 			ring_count := ring_count + 1
 			across subscribers as ic loop
-				wake_one (ic, a_room_id)
+				if not is_muted (@ic.key) then
+					wake_one (ic, a_room_id)
+				end
 			end
 		ensure
 			counted: ring_count = old ring_count + 1
 			subscribers_unchanged: subscribers_model |=| old subscribers_model
+		end
+
+	mute_dispatcher
+			-- Pass the participant dispatcher's own subscription over in
+			-- every `ring' until `unmute'. For the length of ONE post - the
+			-- dispatcher's own answer - and no longer. Nothing happens when
+			-- no dispatcher is subscribed.
+		do
+			muted_ticket := dispatcher_ticket
+		ensure
+			muted: muted_ticket = dispatcher_ticket
+			subscribers_unchanged: subscribers_model |=| old subscribers_model
+			counts_unchanged: ring_count = old ring_count and status_count = old status_count
+		end
+
+	unmute
+			-- Ring everybody again.
+		do
+			muted_ticket := 0
+		ensure
+			none_muted: muted_ticket = 0
+			subscribers_unchanged: subscribers_model |=| old subscribers_model
+			counts_unchanged: ring_count = old ring_count and status_count = old status_count
 		end
 
 	ring_status (a_status: CHAT_STATUS)
@@ -133,6 +198,16 @@ feature -- Access (contract support)
 			given: not Result.is_empty
 		end
 
+feature -- Constants
+
+	Dispatcher_subscriber_name: STRING_8 = "dispatcher"
+			-- `PARTICIPANT_DISPATCHER.subscriber_name'. The bus never holds a
+			-- subscriber's type - a subscription is a ticket, not an object
+			-- identity, and no contract here may touch another processor - so
+			-- the one subscriber that answers by POSTING is known by the name
+			-- it gives, copied on the way in. PARTICIPANTS_ASSAULT pins the
+			-- two together.
+
 feature {NONE} -- Implementation
 
 	subscribers: HASH_TABLE [separate EVENT_SUBSCRIBER, INTEGER]
@@ -155,6 +230,8 @@ feature {NONE} -- Implementation
 
 invariant
 	counts_non_negative: ring_count >= 0 and status_count >= 0 and last_ticket >= 0
+	dispatcher_ticket_issued: dispatcher_ticket >= 0 and dispatcher_ticket <= last_ticket
+	mute_is_the_dispatcher_or_none: muted_ticket = 0 or muted_ticket = dispatcher_ticket
 	tickets_in_range: across subscribers as ic all @ic.key > 0 and @ic.key <= last_ticket end
 	names_match: names.count = subscribers.count
 	model_consistent: subscribers_model.count = subscribers.count
