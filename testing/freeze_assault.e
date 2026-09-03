@@ -272,12 +272,14 @@ feature {NONE} -- The root's own allocator
 			positive: a_bursts > 0 and a_gap_ms > 0
 		local
 			l_env: EXECUTION_ENVIRONMENT
+			l_mem: MEMORY
 			l_live: ARRAYED_LIST [STRING_8]
 			l_junk: ARRAYED_LIST [STRING_8]
 			i, k: INTEGER
 			t0, l_span: INTEGER_64
 		do
 			create l_env
+			create l_mem
 			create l_live.make (a_bursts * Burst_kept)
 			from
 				i := 1
@@ -302,6 +304,12 @@ feature {NONE} -- The root's own allocator
 				variant
 					Burst_strings + 1 - k
 				end
+					-- A collection FORCED inside the timed span: without it the runtime
+					-- may simply not collect during a short burst, and a probe that
+					-- never collects cannot see a collector that waits - the false
+					-- green simple_encryption's and simple_widgets' probes both met
+					-- (about one run in four) before they forced one.
+				l_mem.full_collect
 				l_span := now_ms - t0
 				if l_span > Result then
 					Result := l_span
