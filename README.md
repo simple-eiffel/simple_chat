@@ -36,6 +36,17 @@ inserts one. And since Larry could type but not discover the `@claude` conventio
 opens with a system bubble naming any bot in the roster by its real `@username` — never a literal
 typed into this codebase — the moment the room's membership says one is there.
 
+And it grows *when* it wraps. A row measures a wrapping child at the whole row's width while
+arranging it at its share of that width, so the composer was measured 120 px wider than it was
+drawn — the Send button plus one theme gap — and the second line painted below the box until
+the text was long enough to wrap at the wider width too; `COMPOSER_ROW` measures the way the row
+allocates. The band under the thread went the same way: an empty `SW_LABEL` still reserves a
+font-derived row (47 px at 2x) and a column still charges a gap for it, which was 142 px of nothing
+between the last bubble and the box. `STATUS_LINE` makes silence free and `COLLAPSING_COLUMN` stops
+buying a gap for a flat child, so the thread sits one 16 px theme gap above the composer and the
+line comes back the instant there is something to say. Offscreen at 2x, before and after:
+`.eiffel-workflow/evidence/gap-before.png`, `gap-after.png`.
+
 What no headless assault can prove is that the **pixels** are right; that is `RUNBOOK.md`, and it is
 the one thing still owed. Two limits are stated rather than hidden: an image event is shown as a
 named, sized attachment line and not as a picture (no WIC decoder is linked into this client), and

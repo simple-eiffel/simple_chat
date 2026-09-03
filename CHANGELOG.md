@@ -35,7 +35,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typed into this codebase, so the hint stays true the day a bot is renamed or a second one joins.
   No hint is shown when the roster carries no bot.
 
+### Fixed
+
+- **The composer grows on the frame the wrap happens** (`apps/client/composer_row.e`,
+  `COMPOSER_ROW`; `SW_CHAT_VIEW`). Larry, typing into the live room at 2x: "The new wrap-of-text
+  will start below the textbox area until I get to about 1/3-1/2 of the way left-to-right and only
+  then does the text box grow in size." Nothing was stale and nothing was deferred: `SW_WINDOW`
+  re-lays the whole tree out on every frame — `after_input` runs `render`, and `render` runs
+  `arrange` then `draw` — so the box is measured and painted inside the same frame as the
+  keystroke that changed it. The disagreement was a WIDTH. `SW_ROW.arrange_line` hands each child
+  its share of the row (the non-growers keep their natural widths, the growers split what is left),
+  but `SW_ROW.preferred_height` asks every child for its height at the WHOLE row width, as if the
+  child were alone on it. For a label or a button that is harmless — their heights do not depend
+  on width. For a wrapping `SW_TEXT_BOX` it meant the composer was measured **120 px wider than it
+  was drawn** — the `Send` button's 104 px plus one 16 px theme gap — so the paint wrapped to
+  a second line while the measurement still said one, the column gave the row a one-line height, and
+  the second line landed BELOW the box until the text was long enough to wrap at the wider measuring
+  width too. That surplus is exactly how far across the second line got before the box finally grew.
+  Measured offscreen at 2x: the box is 732 px wide inside an 852 px row, and the first frame that
+  painted outside the box came at character 48 of an 80-character sentence — seven such frames in
+  all. `COMPOSER_ROW` measures the way `arrange_line` allocates, so the measured width and the
+  painted width are the same number; the bad-frame count is now zero.
+
+- **Empty status and error lines take no vertical space** (`apps/client/status_line.e`,
+  `STATUS_LINE`; `apps/client/collapsing_column.e`, `COLLAPSING_COLUMN`; `SW_CHAT_VIEW`). Larry:
+  "What remains is a rather large space between the bottom of the text area (above) and the top of
+  this textbox/field below. The space isn't huge, but remains fixed-space between the two." Measured
+  offscreen at 2x it was **142 px**, and every pixel of it is accounted for: since simple_widgets
+  0.4.0 an `SW_LABEL` measures its height from the FONT whether or not it has any text, so the empty
+  status line and the empty error line reserved **47 px each**, and `SW_COLUMN` charges a theme gap
+  for every join whether or not the child has any height — **16 + 47 + 16 + 47 + 16 = 142**.
+  `STATUS_LINE` asks for zero height (and paints nothing) while its text is empty;
+  `COLLAPSING_COLUMN` treats a flat child as ABSENT, so it costs no row and no join. The thread now
+  sits exactly **one theme gap — 16 px** above the composer (thread bottom 528, composer top
+  544), and a line gets its row back on the very next frame the instant there is something to say:
+  nothing is added to or removed from the tree and there is no flag to get out of step, because the
+  column re-asks every frame. The gap stays 16 px as the composer grows, which is what Larry already
+  observed of the old one. Both rules belong in simple_widgets — an empty label should be free,
+  and a zero-height child should not buy a gap — and are written here only because simple_widgets
+  is checked out on `fix/chat-thread-scrolling` this week. Evidence:
+  `.eiffel-workflow/evidence/gap-before.png` and `gap-after.png`, rendered offscreen at the room's
+  real 2x scale.
+
 ### Testing
+
+- Three more assaults in `testing/window_assault.e`, **201 — 204**, all offscreen at the room's
+  real 2x scale and driving whole frames through `SW_WINDOW.request_render` — the same `render`
+  (arrange, then draw) a keystroke triggers.
+  `test_composer_grows_on_the_frame_the_wrap_happens` types an 80-character sentence one
+  `handle_char` at a time and, after EVERY frame, requires the height the box was given to equal the
+  height its own wrapped text needs AT THE WIDTH IT WAS GIVEN — zero bad frames now, seven
+  before, the first at character 48 — names the number the two halves have to agree on,
+  requiring `COMPOSER_ROW.allotted_width` for the box to equal the box's own `width`, and requires
+  the grown box to be a whole number of rows
+  plus its own inset (132 px = 2 x 60 + 12; the EMPTY box is not one row but 80 px, floored at the
+  painter's `min_control_height`, which is why the law is stated of the grown box).
+  `test_empty_status_rows_cost_nothing_and_a_spoken_one_costs_its_row` requires both empty lines to
+  ask for zero height and to be given none, the thread to sit one theme gap above the composer, and
+  a line that speaks to get its natural `line_step` back with the pane giving up exactly that row
+  plus its one new gap. `test_the_gap_holds_while_the_composer_grows` requires the gap to be one
+  theme gap with an empty composer AND unchanged with a paragraph in it, prints the whole vertical
+  accounting, and writes `.eiffel-workflow/evidence/gap-after.png` from that very state.
 
 - Three new assaults in `testing/window_assault.e` prove the composer directly against the real
   `SW_CHAT_VIEW`/`CHAT_INPUT_BOX`, calling `preferred_height`/`draw`/`handle_key`/`handle_char` the
