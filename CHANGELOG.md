@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Password prompts show one dot per keystroke** (`apps/server/server_app.e`,
+  all three account commands). 0.1.2 read passwords with
+  `SIMPLE_CONSOLE.read_hidden_line`, which shows nothing at all; Larry, at the
+  installer's console: "I was surprised by not even have dots for pw chars.
+  That meant that I didn't know whether my keystrokes were being registered."
+  The prompts now use `read_masked_line_default` from simple_console 1.2.0 -
+  a dot per accepted character, Backspace erases one, Enter ends, nothing of
+  the password itself on screen. Redirected input (the verification scripts)
+  reads a plain line exactly as before.
+
 ### Added
 
 - **A participant is addressed by its handle anywhere in a message**, not only at the
