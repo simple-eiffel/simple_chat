@@ -31,6 +31,23 @@ the setup executable are gitignored — the payload is built, never committed.
 shipping build). The `_dbc` pair that the same `release` produces stays in
 `F_code` for chasing defects and is deliberately not packaged.
 
+### Scripted (silent) installs of a HOST
+
+A silent install takes the installer's DEFAULT type, which is *client only*.
+A host scripted with plain `/VERYSILENT` therefore gets a chat window and no
+server, no `start_server.cmd`, no hosting guide - and the first sign-in looks
+exactly like a server that is down. Name the type:
+
+```powershell
+Start-Process .\SimpleChat-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TYPE=host','/COMPONENTS=client,server' -Wait
+```
+
+Silent installs also skip every post-install step (they are `skipifsilent` by
+design): no first administrator is created, the server is not started and no
+window opens. After a silent host install run `create_admin.cmd` (first
+install only) and `start_server.cmd` yourself. Found 2026-09-04 when an agent
+scripted a reinstall for the host and got a client-only tree.
+
 ### Never drive the installer from Git Bash
 
 MSYS rewrites leading-slash arguments into Windows paths. `/VERYSILENT` becomes
