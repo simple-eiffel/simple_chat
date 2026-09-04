@@ -505,6 +505,34 @@ feature -- SUMMARY_ASK: a summary request, or just a message
 			assert ("a year is capped at a day", s.minutes_of ({STRING_32} "@claude sum 999999 minutes") = 1440)
 		end
 
+feature -- What a bubble can actually draw
+
+	test_a_bubble_never_carries_a_line_break
+			-- The empty boxes Larry saw in the assistant's replies. SW_CHAT_THREAD
+			-- wraps by splitting on the SPACE character alone, so a newline is
+			-- never a break: it stays inside a "word" and is drawn as a glyph.
+			-- His own messages are single lines and looked right; the
+			-- assistant's are not, and every line break in them became a box.
+			-- Not emoji (the Noto artwork resolves) and not CRLF on the wire
+			-- (the store holds what was sent) - the wrap, and only the wrap.
+		local
+			b: BUBBLE_TEXT
+		do
+			create b
+			assert ("a newline becomes a space", b.one_line ({STRING_32} "one%Ntwo").same_string ({STRING_32} "one two"))
+			assert ("CRLF becomes ONE space", b.one_line ({STRING_32} "one%R%Ntwo").same_string ({STRING_32} "one two"))
+			assert ("a blank line does not become two spaces", b.one_line ({STRING_32} "one%N%Ntwo").same_string ({STRING_32} "one two"))
+			assert ("a tab is a blank too", b.one_line ({STRING_32} "one%Ttwo").same_string ({STRING_32} "one two"))
+			assert ("leading and trailing breaks are dropped", b.one_line ({STRING_32} "%N one %N").same_string ({STRING_32} "one"))
+			assert ("ordinary text is untouched", b.one_line ({STRING_32} "the roof job starts Monday").same_string ({STRING_32} "the roof job starts Monday"))
+			assert ("empty stays empty", b.one_line ({STRING_32} "").is_empty)
+			assert ("nothing that can be drawn as a box survives",
+				not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%N')
+				and not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%R')
+				and not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%T'))
+			assert ("BMP characters Larry checked are kept", b.one_line ({STRING_32} "em dash %U2014 and %U2122").has_substring ({STRING_32} "%U2014"))
+		end
+
 feature -- Help > About: what version am I running
 
 	test_about_names_the_version_the_build_and_the_fleet

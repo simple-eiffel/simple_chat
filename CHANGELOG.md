@@ -62,7 +62,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the focused widget and `handle_key` carries no Ctrl flag, so a global
   `Ctrl+M` needs a simple_widgets change on its own branch.
 
-- **Ten assaults**, 219 → **229**, zero skips. Among them:
+- **The empty boxes in the assistant's replies were the bubble WRAP, not emoji and
+  not CRLF.** `SW_CHAT_THREAD` wraps by splitting on the space character alone, so a
+  newline is never a break — it stays inside a "word" and is drawn as a glyph.
+  Larry's own messages are single lines and looked right; the assistant's are not,
+  and every line break in them became a box. The Noto artwork resolves correctly
+  (`emoji_u1f916.png` is present) and the store holds exactly what was sent, so both
+  of the theories on offer were wrong; his own instinct — the display's line
+  handling — was right.
+
+  `BUBBLE_TEXT.one_line` collapses breaks and blanks before drawing. **The structure
+  is the cost**: a numbered list arrives as one flowing paragraph. It is a WORKAROUND
+  and it names its own retirement condition — simple_widgets'
+  `feature/thread-lines-keys-selection`, which makes the thread break on newlines and
+  lay out the lines it is given. Once that lands this class is not merely
+  unnecessary but harmful, and both call sites come out.
+
+- **"Room > Summarize the room now" was a dead menu item.** The two lines wiring the
+  menu to its actions were never in the file — an earlier patch reported success
+  having applied only half of itself — so `on_summary` stayed Void, which builds the
+  items DISABLED. Larry clicked a dead item while the typed `@claude sum` worked,
+  because the typed path does not go through that wiring.
+
+### Known — needs simple_widgets, not simple_chat
+
+- **No Alt/Alt+F, and no mnemonic underlines on the menu bar.** `SW_WINDOW` routes
+  keys only to the focused widget and `handle_key` carries neither a Ctrl nor an Alt
+  flag; there is no accelerator or mnemonic mechanism in the library at all.
+- **The chat display cannot be selected or copied.** The thread is drawn bubbles with
+  no selection model; only the composer is a real text box.
+
+  Both are on simple_widgets' `feature/thread-lines-keys-selection` with the newline
+  fix. When it lands, the accelerators get registered and Copy gets wired here.
+
+- **Eleven assaults**, 219 → **230**, zero skips. Among them:
   `the_window_keeps_its_heartbeat_while_a_summary_runs` times every collect while a
   **3-second** summary is in flight and fails if the worst exceeds one frame;
   `summary_is_never_a_room_event` pins the law the design hangs on;

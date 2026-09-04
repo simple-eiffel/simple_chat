@@ -355,6 +355,11 @@ feature -- Basic operations
 				view.set_room_title (l_list.first.name)
 				presenter.load_roster (room_id)
 				load_handles
+					-- The Room menu does by click what the composer does by verb.
+					-- Without these the items build DISABLED (their action is Void)
+					-- and a click does nothing at all, which is what Larry hit.
+				view.set_on_summary (agent ask_summary (0, 0, 0))
+				view.set_on_catch_up (agent catch_up_now)
 				if not presenter.bot_members.is_empty then
 					view.show_hint (addressing_hint (presenter.bot_members))
 				end

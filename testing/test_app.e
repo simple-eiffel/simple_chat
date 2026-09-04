@@ -258,6 +258,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_a_reply_carrying_tool_markup_never_reaches_the_room, "a_reply_carrying_tool_markup_never_reaches_the_room")
 			run_test (agent (create {CLIENT_ASSAULT}).test_the_window_keeps_its_heartbeat_while_a_summary_runs, "the_window_keeps_its_heartbeat_while_a_summary_runs")
 			run_test (agent (create {CLIENT_ASSAULT}).test_about_names_the_version_the_build_and_the_fleet, "about_names_the_version_the_build_and_the_fleet")
+			run_test (agent (create {CLIENT_ASSAULT}).test_a_bubble_never_carries_a_line_break, "a_bubble_never_carries_a_line_break")
 			run_test (agent (create {CLIENT_ASSAULT}).test_summary_ask_needs_a_verb_at_the_front, "summary_ask_needs_a_verb_at_the_front")
 			run_test (agent (create {CLIENT_ASSAULT}).test_summary_ask_reads_the_window_it_names, "summary_ask_reads_the_window_it_names")
 			run_test (agent (create {WIRING_ASSAULT}).test_client_config_keeps_the_catch_up_thresholds, "client_config_keeps_the_catch_up_thresholds")

@@ -273,7 +273,7 @@ feature -- Basic operations
 	show_event (a_event: CHAT_EVENT; a_sender_name: READABLE_STRING_GENERAL; a_mine: BOOLEAN)
 			-- One bubble, attributed; `a_mine' places it right, sender 0 centres it.
 		do
-			thread.add_message (role_for (a_event, a_mine), bubble_text (a_event, a_sender_name))
+			thread.add_message (role_for (a_event, a_mine), bubble_rules.one_line (bubble_text (a_event, a_sender_name)))
 			shown_ids.extend (a_event.id)
 			redraw
 		ensure then
@@ -317,7 +317,7 @@ feature -- Basic operations
 			-- system event draws with, but never added to `shown_ids': it named
 			-- nobody's message and carries no server id.
 		do
-			thread.add_message ({SW_CHAT_THREAD}.Role_system, a_text)
+			thread.add_message ({SW_CHAT_THREAD}.Role_system, bubble_rules.one_line (a_text))
 			hint_count := hint_count + 1
 			redraw
 		ensure then
@@ -383,6 +383,16 @@ feature -- Conversion (contract support)
 			attributed: Result.starts_with_general (a_sender_name)
 			body_carried: (not a_event.is_image and not a_event.body.is_empty) implies Result.has_substring (a_event.body)
 			named_file: (a_event.is_image and attached a_event.attachment as a) implies Result.has_substring (a.original_name)
+		end
+
+feature {NONE} -- What a bubble can actually draw
+
+	bubble_rules: BUBBLE_TEXT
+			-- The newline workaround, in its own class so it can be assaulted
+			-- without a window. Retired when simple_widgets'
+			-- `feature/thread-lines-keys-selection' lands - see BUBBLE_TEXT.
+		once
+			create Result
 		end
 
 feature -- Constants
