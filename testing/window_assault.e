@@ -901,7 +901,7 @@ feature -- Accelerators, and the routing rule that makes them safe
 			v: SW_CHAT_VIEW
 		do
 			v := pane
-			assert ("six keys, and no more", v.window.accelerators.count = 6)
+			assert ("ten keys: six Ctrl and the four Alt pads", v.window.accelerators.count = 10)
 			assert ("Ctrl+X", v.window.accelerator_for (v.Vk_x, True, False, False) > 0)
 			assert ("Ctrl+C", v.window.accelerator_for (v.Vk_c, True, False, False) > 0)
 			assert ("Ctrl+V", v.window.accelerator_for (v.Vk_v, True, False, False) > 0)
@@ -1087,6 +1087,44 @@ feature -- Accelerators, and the routing rule that makes them safe
 			v.window.give_focus (v.thread)
 			assert ("the pane now owns the keys", v.thread_has_focus)
 			assert ("so Copy would take the bubble, not the composer", not v.can_paste)
+		end
+
+	test_alt_and_a_letter_opens_that_pad_end_to_end
+			-- THE LAST MILE, and it needed closing here. simple_shell 1.9.3
+			-- delivers Alt+letter as the ORDINARY key-down event 4 (virtual key,
+			-- `alt_down' True) and SWALLOWS the WM_SYSCHAR behind it, so
+			-- DefWindowProc cannot open the system menu behind the application's
+			-- back. simple_widgets tries only its ACCELERATOR TABLE on event 4;
+			-- `activate_mnemonic' lives on the WM_CHAR door, which is exactly the
+			-- message the shell now swallows - so the gesture would arrive at the
+			-- table and die there. Four Alt accelerators close it, which is what
+			-- the library's README invites a host to do. This drives the table the
+			-- way the shell drives it: `fire_accelerator', no keystroke, no window.
+		local
+			v: SW_CHAT_VIEW
+		do
+			v := pane
+			assert ("Alt+F is claimed", v.window.accelerator_for (v.Vk_f, False, True, False) > 0)
+			assert ("Alt+E too", v.window.accelerator_for (v.Vk_e, False, True, False) > 0)
+			assert ("Alt+R too", v.window.accelerator_for (v.Vk_r, False, True, False) > 0)
+			assert ("Alt+H too", v.window.accelerator_for (v.Vk_h, False, True, False) > 0)
+			assert ("and Alt+Z is nobody's", v.window.accelerator_for (90, False, True, False) = 0)
+			assert ("Ctrl+F is a DIFFERENT key and is not claimed",
+				v.window.accelerator_for (v.Vk_f, True, False, False) = 0)
+			assert ("nothing is open yet", v.window.open_popup = Void)
+			assert ("Alt+F is consumed", v.window.fire_accelerator (v.Vk_f, False, True, False))
+			check attached v.window.open_popup as pm then
+				assert ("and it opened FILE - Close is its one item",
+					pm.items.count = 1 and then pm.items [1].label.same_string ({STRING_32} "Close"))
+			end
+			assert ("Alt+H is consumed", v.window.fire_accelerator (v.Vk_h, False, True, False))
+			check attached v.window.open_popup as pm then
+				assert ("and it opened HELP - two items and a rule", pm.items.count = 3)
+				assert ("with About last", pm.items [3].label.same_string ({STRING_32} "About simple_chat"))
+					-- and the second half of the gesture, which has always worked:
+					-- a bare letter while the menu is open picks the item
+				assert ("A picks About", pm.item_for_mnemonic ({CHARACTER_32} 'a') = 3)
+			end
 		end
 
 	room_asks: ARRAYED_LIST [STRING_32]

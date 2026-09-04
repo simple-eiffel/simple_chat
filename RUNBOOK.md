@@ -336,10 +336,11 @@ selection lives inside ONE bubble by design — a range spanning three speakers 
 text to hand the clipboard. With a bubble in focus, `Ctrl+A` takes the whole of that one
 message.
 
-**Alt+F does not open the File menu yet, and that is not this client's doing.** simple_shell
-forwards `WM_SYSKEYDOWN` for the OEM plus/minus pair alone, so no Alt+letter reaches this
-window at all. The underlines are real and the mnemonics answer the moment that shell
-release lands; the Ctrl accelerators above work end to end today.
+**`Alt+F` opens File.** So do `Alt+E`, `Alt+R` and `Alt+H` — and once a menu is open, a bare
+letter picks the item that underlines it (`Alt+F`, then `C` closes the room). Press `Esc` to
+close a menu without picking anything. This needed simple_shell **1.9.3**, which delivers
+Alt+letter at last; `Alt+F4` still closes the window and `Alt+Space` still opens the system
+menu, because the shell deliberately leaves those to Windows.
 
 **Check the lines while you are here.** Ask `@claude` for a numbered list — "@claude give me
 three steps for laying a course of block" — and look at the bubble. The steps must be on

@@ -59,8 +59,11 @@ underlined, and `Ctrl+X` / `C` / `V` / `A` plus the room's own `Ctrl+M` (summari
 widget, so every editing key ROUTES: Copy takes the composer's selection when the composer has the
 caret and the bubble's when a bubble does, and the Edit menu calls the very same agents, so there is
 one meaning of Copy and two ways to reach it. Offscreen at 2x:
-`.eiffel-workflow/evidence/thread-lines-client-2x.png`. Alt+letter *delivery* is still a simple_shell
-gap and is named as one.
+`.eiffel-workflow/evidence/thread-lines-client-2x.png`. **And `Alt+F` opens File.** simple_shell 1.9.3
+delivers Alt+letter as the ordinary key-down event and swallows the `WM_SYSCHAR` behind it, which is
+the door `SW_WINDOW.activate_mnemonic` was listening at — so the pane registers four Alt accelerators
+of its own, one per pad, exactly as the library's README invites a host to. If simple_widgets later
+routes an unclaimed Alt+letter to `activate_mnemonic` itself, those four come back out.
 
 What no headless assault can prove is that the **pixels** are right; that is `RUNBOOK.md`, and it is
 the one thing still owed. Two limits are stated rather than hidden: an image event is shown as a

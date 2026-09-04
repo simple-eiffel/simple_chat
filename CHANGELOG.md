@@ -29,10 +29,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label sees the marker, and `SW_WINDOW.set_menu_bar` is called with the bar — which bar
   owns Alt is TOLD, never discovered.
 
-- **Six window-wide accelerators.** `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Ctrl+A` for editing,
-  and `Ctrl+M` (*Summarize the room now*) and `Ctrl+U` (*Catch me up on what I missed*)
-  for the room. Both room keys are stated in the menu itself, in the hint column that used
-  to carry the typed form; the typed forms did not go away, they moved into
+- **Alt+F opens File, and closing that last mile took a finding.** simple_shell **1.9.3**
+  landed mid-branch and delivers Alt+letter at last — as the ORDINARY key-down event 4,
+  with the virtual key, swallowing the `WM_SYSCHAR` behind it so `DefWindowProc` cannot
+  open the system menu behind the application's back. But simple_widgets tries only its
+  **accelerator table** on event 4; `SW_WINDOW.activate_mnemonic` — the feature that
+  opens a pad — sits on the `WM_CHAR` door, which is precisely the message the shell now
+  swallows. So the gesture reaches the table and dies there. The library's README names
+  the way out ("a host can drive it from an accelerator or a click today") and that is
+  what `open_menu_pad` is: four Alt accelerators, one per pad, each opening the menu that
+  underlines its letter. `Alt+F` / `Alt+E` / `Alt+R` / `Alt+H` work end to end now, and
+  the second half of the gesture — a bare letter picking the item while the menu is open —
+  always did. **If simple_widgets later routes an unclaimed event-4 Alt+letter to
+  `activate_mnemonic` itself, these four registrations become redundant and come out.**
+  They take nothing from any widget: an Alt+letter reaching a text box does nothing.
+
+- **Ten window-wide accelerators.** `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Ctrl+A` for editing,
+  and `Ctrl+M` (*Summarize the room now*), `Ctrl+U` (*Catch me up on what I missed*) and
+  the four `Alt` pads above. Both room keys are stated in the menu itself, in the hint
+  column that used to carry the typed form; the typed forms did not go away, they moved into
   **Help > How to address the assistant**, which is where a sentence belongs and a hint
   column is not.
 
@@ -61,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both focus cases are assaulted through the clipboard the feature really writes to
   (whatever was on it is put back at the end of the test).
 
-- **Eight assaults, 230 → 238, zero skips**, and one retired: the old
+- **Nine assaults, 230 → 239, zero skips**, and one retired: the old
   `a_bubble_never_carries_a_line_break` — which pinned the workaround — is replaced by
   `a_bubble_keeps_the_line_breaks_it_was_given`, which pins the law that made the
   workaround removable. The new eight cover the lines reaching the thread and the frame
@@ -69,9 +84,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys; the accelerator table including the keys deliberately left unclaimed; Copy
   routing to whichever widget has focus; Cut/Paste/Select All routing the same way;
   the Edit menu greying for both focus cases; and a press on a bubble being what gives
-  the pane the keys.
+  the pane the keys; and Alt+letter opening that pad end to end, driven through
+  `fire_accelerator` the way the shell drives it — no keystroke, no window.
 
-### Found while adopting — a simple_widgets 0.6.0 defect, NOT fixed here
+### Found while adopting — two simple_widgets 0.6.0 seams, NEITHER fixed here
+
+- **`SW_WINDOW` never routes an event-4 Alt+letter to `activate_mnemonic`.** With
+  simple_shell 1.9.3 an Alt+letter now arrives as event 4 by virtual key and its
+  `WM_SYSCHAR` is swallowed, so the WM_CHAR door `char_accelerator_fired` reads — the
+  only door that calls `activate_mnemonic` — is never knocked on for that gesture.
+  `dispatch_plain`'s event-4 arm should, when the accelerator table declines a key and
+  `alt_down` is true, try `activate_mnemonic` before handing the key to the focused
+  widget. Until it does, every host must register its own Alt accelerators, as this one
+  now does.
 
 - **`SW_CHAT_THREAD` cannot be given a message after it has drawn a shaped frame.** Its
   invariant `spans_match_when_present` requires `layout_spans.count = messages.count`
@@ -173,13 +198,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot be selected or copied.**~~ Both were waiting on simple_widgets'
   `feature/thread-lines-keys-selection`. It merged as 0.6.0 and this branch adopts it —
   see *simple_widgets 0.6.0 adopted* at the top of Unreleased.
-- **Still open: Alt+letter DELIVERY, and it is not simple_widgets' to close either.**
-  simple_shell answers `WM_SYSKEYDOWN` for the OEM plus/minus pair alone and lets every
-  other syskey fall through to `DefWindowProc`, so `Alt+F` opens the SYSTEM menu and not
-  File. The mnemonics here are parsed, drawn underlined and answered —
-  `SW_WINDOW.activate_mnemonic` is knocked on directly by the assault, exactly as the
-  shell will knock on it — so **Alt delivery follows the simple_shell release**, with no
-  further change in this repository. The Ctrl accelerators work end to end today.
+- ~~**Alt+letter delivery.**~~ **CLOSED during this branch.** simple_shell 1.9.3 shipped
+  the Alt door on 2026-09-03 and this branch closed the remaining seam above it — see
+  *Alt+F opens File* at the top of Unreleased. `Alt+F` / `Alt+E` / `Alt+R` / `Alt+H` open
+  their pads; a bare letter then picks the item.
 
 - **Eleven assaults**, 219 → **230**, zero skips. Among them:
   `the_window_keeps_its_heartbeat_while_a_summary_runs` times every collect while a

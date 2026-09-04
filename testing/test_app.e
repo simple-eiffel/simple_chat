@@ -211,6 +211,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {WINDOW_ASSAULT}).test_the_menu_bar_declares_its_mnemonics_and_owns_the_alt_key, "the_menu_bar_declares_its_mnemonics_and_owns_the_alt_key")
 			run_test (agent (create {WINDOW_ASSAULT}).test_the_room_menu_states_the_keys_it_now_answers_to, "the_room_menu_states_the_keys_it_now_answers_to")
 			run_test (agent (create {WINDOW_ASSAULT}).test_the_ctrl_keys_are_claimed_window_wide_and_undo_is_not, "the_ctrl_keys_are_claimed_window_wide_and_undo_is_not")
+			run_test (agent (create {WINDOW_ASSAULT}).test_alt_and_a_letter_opens_that_pad_end_to_end, "alt_and_a_letter_opens_that_pad_end_to_end")
 			run_test (agent (create {WINDOW_ASSAULT}).test_copy_goes_to_whichever_widget_has_the_focus, "copy_goes_to_whichever_widget_has_the_focus")
 			run_test (agent (create {WINDOW_ASSAULT}).test_cut_paste_and_select_all_route_the_same_way, "cut_paste_and_select_all_route_the_same_way")
 			run_test (agent (create {WINDOW_ASSAULT}).test_the_edit_menu_greys_for_both_focus_cases, "the_edit_menu_greys_for_both_focus_cases")

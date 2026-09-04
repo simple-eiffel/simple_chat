@@ -80,10 +80,22 @@ note
 		therefore ROUTES - `route_copy' copies the pane's selection when the
 		pane has focus and the composer's when the composer has - and the
 		Edit menu calls the very same agents, so there is ONE meaning of
-		Copy in this window and two ways to reach it. Alt+letter DELIVERY is
-		a simple_shell gap (it forwards no WM_SYSKEYDOWN for letters yet);
-		the mnemonics draw and answer today and the Alt keystroke arrives
-		with that shell release.
+		Copy in this window and two ways to reach it.
+
+		AND ALT+F OPENS FILE, which took closing a seam. simple_shell 1.9.3
+		delivers Alt+letter at last - as the ORDINARY key-down event 4, with
+		the virtual key, swallowing the WM_SYSCHAR behind it so DefWindowProc
+		cannot open the system menu behind our back. But simple_widgets tries
+		only its ACCELERATOR TABLE on event 4; `activate_mnemonic' - the
+		feature that opens a pad - sits on the WM_CHAR door, which is the
+		very message the shell now swallows. So the gesture would still not
+		arrive. The library's own README names the way out ("a host can drive
+		it from an accelerator or a click today"), and that is what
+		`open_menu_pad' is: four Alt accelerators, one per pad, each opening
+		the menu that underlines its letter. If simple_widgets later routes
+		an unclaimed Alt+letter to `activate_mnemonic' itself, these four
+		registrations become redundant and come out - they take nothing from
+		any widget, since an Alt+letter reaching a text box does nothing.
 	]"
 	author: "Larry Rix"
 
@@ -539,14 +551,22 @@ feature -- Keyboard routing
 			end
 		end
 
+	open_menu_pad (a_letter: CHARACTER_32)
+			-- Alt+`a_letter': drop the menu bar pad that underlines that letter,
+			-- under the pad itself. The oldest gesture on the platform, and the
+			-- last mile of it is wired HERE - see the class note.
+		do
+			if window.activate_mnemonic (a_letter) then
+				redraw
+			end
+		end
+
 feature {NONE} -- The keyboard, registered
 
 	register_keys
-			-- The window-wide table. A modifier is required by the library and
-			-- every one of these is Ctrl; Alt is registered for nothing, because
-			-- no Alt keystroke reaches this window until simple_shell forwards
-			-- WM_SYSKEYDOWN for letters. The mnemonics are wired anyway: they
-			-- draw underlined today and answer the moment that shell ships.
+			-- The window-wide table: six Ctrl keys for what they do, and four
+			-- Alt keys for the menu bar. See the class note for why the four
+			-- are here and not in the library.
 		do
 			window.register_accelerator (Vk_x, True, False, False, agent route_cut)
 			window.register_accelerator (Vk_c, True, False, False, agent route_copy)
@@ -554,6 +574,10 @@ feature {NONE} -- The keyboard, registered
 			window.register_accelerator (Vk_a, True, False, False, agent route_select_all)
 			window.register_accelerator (Vk_m, True, False, False, agent run_summary)
 			window.register_accelerator (Vk_u, True, False, False, agent run_catch_up)
+			window.register_accelerator (Vk_f, False, True, False, agent open_menu_pad ({CHARACTER_32} 'f'))
+			window.register_accelerator (Vk_e, False, True, False, agent open_menu_pad ({CHARACTER_32} 'e'))
+			window.register_accelerator (Vk_r, False, True, False, agent open_menu_pad ({CHARACTER_32} 'r'))
+			window.register_accelerator (Vk_h, False, True, False, agent open_menu_pad ({CHARACTER_32} 'h'))
 		end
 
 feature -- Constants
@@ -770,7 +794,11 @@ feature -- Constants
 			-- control code back to (code + 64), so one number serves both
 			-- of the doors the library tries.
 	Vk_c: INTEGER = 67
+	Vk_e: INTEGER = 69
+	Vk_f: INTEGER = 70
+	Vk_h: INTEGER = 72
 	Vk_m: INTEGER = 77
+	Vk_r: INTEGER = 82
 	Vk_u: INTEGER = 85
 	Vk_v: INTEGER = 86
 	Vk_x: INTEGER = 88
