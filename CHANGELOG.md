@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-09-04
+
+The uninstaller release: every stop is scoped to its own install folder, a silent upgrade restarts the server it stopped, the Room menu answers to Alt+M, and a summary is a private ask that never touches the room's engine session.
+
 ### Fixed
 
 - **Uninstalling ANY install of SimpleChat stopped EVERY SimpleChat server on
