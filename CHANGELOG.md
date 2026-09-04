@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Edit, delete, reply and react — the server half.** Four things you can do to a
+  message that already exists, built the way everything else in this room is built:
+  as EVENTS. Nothing is ever rewritten and nothing is ever removed. An edit, a
+  delete and a reaction are new events that NAME the message they act on, and one
+  pass folds them into what a reader should see.
+
+  `MESSAGE_FOLD` is that pass, and it holds the rules that are easy to get subtly
+  wrong, written down in one place:
+
+  - **Order is the arbiter.** Events fold oldest first, so the last edit wins.
+  - **A delete is final.** An edit arriving after a tombstone changes nothing a
+    reader sees. An author who withdrew their words does not get them resurrected
+    by a stray event.
+  - **Reactions dedupe per person per emoji**, last word wins — so the same person
+    clicking twice ends with it off, and two people are two.
+  - **A fold event never draws.** `standalone` is what a client turns into bubbles.
+  - **Anything malformed is dropped in silence** — a bad payload, a target outside
+    the page. A room must render whatever the log holds, never raise on it.
+
+  A **reply is not a kind of its own**: it is an ordinary message carrying a parent
+  id, so every rule a message already obeys it obeys too, and nothing folds it away.
+
+- **The permission rule, as Larry set it.** The author may edit their own; the
+  author **or an administrator** may delete. **Nobody may edit anyone else's words,
+  an administrator included** — removing someone's words is moderation, but
+  rewriting them under their own name is putting words in their mouth, and no role
+  here carries that.
+
+- **Four endpoints** — `POST /rooms/{id}/messages/{eid}/edit`, `/delete`,
+  `/reactions`, `/replies` — and **five assaults**, 239 → **244**, zero skips.
+
+### Fixed
+
+- **`CHAT_EVENT` carried a second copy of the list of valid event kinds.** The
+  moment three kinds were added to the shared `CHAT_EVENT_KINDS`, the two
+  disagreed: the shared list accepted them, the private copy refused, and every
+  event of a new kind died on `CHAT_EVENT`'s own precondition — three assaults red
+  on exactly that. The duplicate is gone rather than extended: `is_known_kind` now
+  delegates, so there is ONE definition. A list written twice is a list that will
+  drift, and this one already had.
+
+### Known
+
+- **Nothing of this is visible yet.** The client cannot show an edit, a tombstone
+  or a reaction until `SW_CHAT_THREAD` can CHANGE a drawn bubble — today its public
+  model is `add_message` and `append_to_last` and nothing else. That is stage 2, in
+  simple_widgets (`set_message` with a revision bump, tombstone rendering, a
+  reaction row, `message_at`); stage 3 wires the menu here once it lands.
+
+
 ## [0.1.5] — 2026-09-04
 
 The keyboard release: an open menu answers the arrow keys, Home, End, Enter and Escape, and Left and Right walk the menu bar. Rebuilt against simple_widgets 0.6.2; no chat source changed.

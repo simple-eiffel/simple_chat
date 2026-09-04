@@ -42,6 +42,10 @@ feature {NONE} -- Setup
 			routes.on_post ("/rooms/{id}/messages", agent handle_post_message)
 			routes.on_post ("/rooms/{id}/images", agent handle_post_image)
 			routes.on_post ("/rooms/{id}/summary", agent handle_summary)
+			routes.on_post ("/rooms/{id}/messages/{eid}/edit", agent handle_edit_message)
+			routes.on_post ("/rooms/{id}/messages/{eid}/delete", agent handle_delete_message)
+			routes.on_post ("/rooms/{id}/messages/{eid}/reactions", agent handle_react)
+			routes.on_post ("/rooms/{id}/messages/{eid}/replies", agent handle_reply)
 			routes.on_get ("/attachments/{id}", agent handle_attachment)
 			routes.on_get ("/me", agent handle_me)
 			routes.on_post ("/me/password", agent handle_change_password)
@@ -201,7 +205,7 @@ feature -- Request reading (contract support)
 
 feature -- Constants
 
-	Route_count: INTEGER = 21
+	Route_count: INTEGER = 25
 	Token_length: INTEGER = 64
 	Bearer_prefix: STRING_8 = "Bearer "
 	Loopback: STRING_8 = "127.0.0.1"
@@ -500,6 +504,54 @@ feature {NONE} -- Handlers
 			end
 		end
 
+	handle_edit_message (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
+			-- Only the author may change the words; the original is never
+			-- rewritten, an edit is appended naming it.
+		do
+			if attached bearer_token (a_request) as t then
+				reply (a_response, api_edit_message (shared_api, t, room_id_of (a_request), event_id_of (a_request),
+					json_string (json_body (a_request), "body")))
+			else
+				reply (a_response, unauthorized_reply)
+			end
+		end
+
+	handle_delete_message (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
+			-- The author, or an administrator. A tombstone, never a removal.
+		do
+			if attached bearer_token (a_request) as t then
+				reply (a_response, api_delete_message (shared_api, t, room_id_of (a_request), event_id_of (a_request)))
+			else
+				reply (a_response, unauthorized_reply)
+			end
+		end
+
+	handle_react (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
+			-- One person's emoji, on or off. `on' absent means ON: a client
+			-- that posts a bare emoji is adding it, which is the common case.
+		local
+			l_body: detachable SIMPLE_JSON_OBJECT
+		do
+			if attached bearer_token (a_request) as t then
+				l_body := json_body (a_request)
+				reply (a_response, api_react (shared_api, t, room_id_of (a_request), event_id_of (a_request),
+					json_string (l_body, "emoji"), json_flag (l_body, "on", True)))
+			else
+				reply (a_response, unauthorized_reply)
+			end
+		end
+
+	handle_reply (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
+			-- A reply is an ordinary message naming its parent.
+		do
+			if attached bearer_token (a_request) as t then
+				reply (a_response, api_post_reply (shared_api, t, room_id_of (a_request), event_id_of (a_request),
+					json_string (json_body (a_request), "body")))
+			else
+				reply (a_response, unauthorized_reply)
+			end
+		end
+
 	handle_post_message (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
 		do
 			if attached bearer_token (a_request) as t then
@@ -776,6 +828,48 @@ feature {NONE} -- The API's processor (each routine holds the API only for its c
 
 	Key_summary: STRING_32 = "summary"
 			-- The one field of a summary reply.
+
+	api_edit_message (a_api: separate CHAT_API; a_token: STRING_8; a_room_id, a_event_id: INTEGER_64; a_body: STRING_32): CHAT_REPLY
+		do
+			create Result.make_from_separate (a_api.edit_message (a_token, a_room_id, a_event_id, a_body))
+		end
+
+	api_delete_message (a_api: separate CHAT_API; a_token: STRING_8; a_room_id, a_event_id: INTEGER_64): CHAT_REPLY
+		do
+			create Result.make_from_separate (a_api.delete_message (a_token, a_room_id, a_event_id))
+		end
+
+	api_react (a_api: separate CHAT_API; a_token: STRING_8; a_room_id, a_event_id: INTEGER_64; a_emoji: STRING_32; a_on: BOOLEAN): CHAT_REPLY
+		do
+			create Result.make_from_separate (a_api.react_to_message (a_token, a_room_id, a_event_id, a_emoji, a_on))
+		end
+
+	api_post_reply (a_api: separate CHAT_API; a_token: STRING_8; a_room_id, a_parent_id: INTEGER_64; a_body: STRING_32): CHAT_REPLY
+		do
+			create Result.make_from_separate (a_api.post_reply (a_token, a_room_id, a_parent_id, a_body))
+		end
+
+	event_id_of (a_request: SIMPLE_WEB_SERVER_REQUEST): INTEGER_64
+			-- The {eid} of the path; 0 when it is missing or not a positive
+			-- number, which every caller turns into a 404 rather than a raise.
+		do
+			if attached a_request.path_parameter ("eid") as p and then p.is_integer_64 and then p.to_integer_64 > 0 then
+				Result := p.to_integer_64
+			end
+		ensure
+			non_negative: Result >= 0
+		end
+
+	json_flag (a_object: detachable SIMPLE_JSON_OBJECT; a_key: STRING_32; a_default: BOOLEAN): BOOLEAN
+			-- The boolean under `a_key', or `a_default' when it is missing or
+			-- of the wrong type (D6: a hostile body takes the default).
+		do
+			if attached a_object as o and then attached o.boolean_item (a_key) as b then
+				Result := b.item
+			else
+				Result := a_default
+			end
+		end
 
 	api_post_message (a_api: separate CHAT_API; a_token: STRING_8; a_room_id: INTEGER_64; a_body: STRING_32): CHAT_REPLY
 		do

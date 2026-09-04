@@ -384,6 +384,134 @@ feature -- Answers: summary
 			nothing_stored: service.store.last_event_id = old service.store.last_event_id
 		end
 
+feature -- Answers: acting on a message
+
+	edit_message (a_token: separate READABLE_STRING_8; a_room_id, a_event_id: INTEGER_64; a_body: separate READABLE_STRING_32): CHAT_REPLY
+			-- 201 with the edit event. The original is never rewritten - the
+			-- log is the record - so this appends an edit naming it.
+		local
+			l_body: STRING_32
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			l_body := local_32 (a_body)
+			if not attached user_for (local_8 (a_token)) as l_user then
+				Result := answered (unauthorized)
+			elseif not attached member_room (l_user, a_room_id) as l_room then
+				Result := answered (forbidden)
+			elseif not attached target_message (a_event_id, a_room_id) as l_target then
+				Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such message.", 404)))
+			elseif l_body.is_empty or l_body.count > config.message_characters then
+				Result := answered (error_reply (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_too_long, "message too long", 400)))
+			else
+				l_result := service.edit_message (l_user, l_room, l_target, l_body)
+				if l_result.is_success and then attached l_result.value as e then
+					Result := answered (create {CHAT_REPLY}.make_json (201, e.to_json, 1))
+				else
+					Result := answered (error_reply (l_result.error))
+				end
+			end
+		ensure
+			counted: request_count = old request_count + 1
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
+			appended_on_success: Result.status = 201 implies service.store.last_event_id = old service.store.last_event_id + 1
+			nothing_on_failure: Result.status /= 201 implies service.store.last_event_id = old service.store.last_event_id
+		end
+
+	delete_message (a_token: separate READABLE_STRING_8; a_room_id, a_event_id: INTEGER_64): CHAT_REPLY
+			-- 201 with the tombstone event. Nothing leaves the log: the
+			-- bubble will read "message deleted" rather than vanish.
+		local
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			if not attached user_for (local_8 (a_token)) as l_user then
+				Result := answered (unauthorized)
+			elseif not attached member_room (l_user, a_room_id) as l_room then
+				Result := answered (forbidden)
+			elseif not attached target_message (a_event_id, a_room_id) as l_target then
+				Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such message.", 404)))
+			else
+				l_result := service.delete_message (l_user, l_room, l_target)
+				if l_result.is_success and then attached l_result.value as e then
+					Result := answered (create {CHAT_REPLY}.make_json (201, e.to_json, 1))
+				else
+					Result := answered (error_reply (l_result.error))
+				end
+			end
+		ensure
+			counted: request_count = old request_count + 1
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
+			nothing_removed: service.store.event (a_event_id) = old service.store.event (a_event_id)
+		end
+
+	react_to_message (a_token: separate READABLE_STRING_8; a_room_id, a_event_id: INTEGER_64; a_emoji: separate READABLE_STRING_32; a_on: BOOLEAN): CHAT_REPLY
+			-- 201 with the reaction event: one person's emoji, on or off.
+		local
+			l_emoji: STRING_32
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			l_emoji := local_32 (a_emoji)
+			if not attached user_for (local_8 (a_token)) as l_user then
+				Result := answered (unauthorized)
+			elseif not attached member_room (l_user, a_room_id) as l_room then
+				Result := answered (forbidden)
+			elseif not attached target_message (a_event_id, a_room_id) as l_target then
+				Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such message.", 404)))
+			elseif l_emoji.is_empty or l_emoji.count > {CHAT_SERVICE}.Reaction_maximum then
+				Result := answered (bad_request ("emoji"))
+			else
+				l_result := service.react_to_message (l_user, l_room, l_target, l_emoji, a_on)
+				if l_result.is_success and then attached l_result.value as e then
+					Result := answered (create {CHAT_REPLY}.make_json (201, e.to_json, 1))
+				else
+					Result := answered (error_reply (l_result.error))
+				end
+			end
+		ensure
+			counted: request_count = old request_count + 1
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
+		end
+
+	post_reply (a_token: separate READABLE_STRING_8; a_room_id, a_parent_id: INTEGER_64; a_body: separate READABLE_STRING_32): CHAT_REPLY
+			-- 201 with the reply: an ordinary message that names its parent.
+		local
+			l_body: STRING_32
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			l_body := local_32 (a_body)
+			if not attached user_for (local_8 (a_token)) as l_user then
+				Result := answered (unauthorized)
+			elseif not attached member_room (l_user, a_room_id) as l_room then
+				Result := answered (forbidden)
+			elseif not attached target_message (a_parent_id, a_room_id) as l_parent then
+				Result := answered (create {CHAT_REPLY}.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "No such message.", 404)))
+			elseif l_body.is_empty or l_body.count > config.message_characters then
+				Result := answered (error_reply (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_too_long, "message too long", 400)))
+			else
+				l_result := service.post_reply (l_user, l_room, l_parent, l_body)
+				if l_result.is_success and then attached l_result.value as e then
+					Result := answered (create {CHAT_REPLY}.make_json (201, e.to_json, 1))
+				else
+					Result := answered (error_reply (l_result.error))
+				end
+			end
+		ensure
+			counted: request_count = old request_count + 1
+			needs_session: old (user_for (local_8 (a_token)) = Void) implies Result.status = 401
+		end
+
+	target_message (a_event_id, a_room_id: INTEGER_64): detachable CHAT_EVENT
+			-- The MESSAGE `a_event_id' in `a_room_id', or Void. A fold event
+			-- is never a target: you cannot edit an edit, and a reaction on a
+			-- reaction is nonsense the fold would silently drop anyway.
+		do
+			if attached service.store.event (a_event_id) as e and then e.room_id = a_room_id and then e.is_message then
+				Result := e
+			end
+		ensure
+			messages_only: attached Result as r implies r.is_message
+			same_room: attached Result as r implies r.room_id = a_room_id
+		end
+
 feature -- Answers: posting
 
 	post_message (a_token: separate READABLE_STRING_8; a_room_id: INTEGER_64; a_body: separate READABLE_STRING_32): CHAT_REPLY

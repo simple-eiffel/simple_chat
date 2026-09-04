@@ -178,8 +178,16 @@ feature -- Duplication
 feature -- Validation (contract support)
 
 	is_known_kind (a_kind: READABLE_STRING_8): BOOLEAN
+			-- ONE definition, and it is CHAT_EVENT_KINDS'. This class used to
+			-- carry a second copy of the list, and the moment three kinds
+			-- were added for edit, delete and reaction the two disagreed: the
+			-- shared one accepted them and this one refused, so every event
+			-- of a new kind died on this class's own precondition. A list
+			-- written twice is a list that will drift.
 		do
-			Result := a_kind.same_string (Kind_message) or a_kind.same_string (Kind_image) or a_kind.same_string (Kind_system)
+			Result := (create {CHAT_EVENT_KINDS}).is_known_kind (a_kind)
+		ensure
+			definition: Result = (create {CHAT_EVENT_KINDS}).is_known_kind (a_kind)
 		end
 
 feature -- Constants

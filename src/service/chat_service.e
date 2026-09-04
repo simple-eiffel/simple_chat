@@ -182,6 +182,186 @@ feature -- Authentication
 
 feature -- Posting
 
+	may_edit (a_who: CHAT_USER; a_event: CHAT_EVENT): BOOLEAN
+			-- May `a_who' change the words of `a_event'? ONLY ITS AUTHOR, and
+			-- never an administrator: removing someone's words is moderation,
+			-- but rewriting them under their name is putting words in their
+			-- mouth, and no role here carries that.
+		do
+			Result := a_event.is_message and then not a_event.is_bot_authored
+				and then a_who.is_active and then a_event.sender_id = a_who.id
+		ensure
+			author_only: Result implies a_event.sender_id = a_who.id
+			messages_only: Result implies a_event.is_message
+		end
+
+	may_delete (a_who: CHAT_USER; a_event: CHAT_EVENT): BOOLEAN
+			-- May `a_who' tombstone `a_event'? Its author, or an
+			-- administrator - moderation is a real need and the tombstone
+			-- keeps the record honest either way.
+		do
+			Result := a_event.is_message and then a_who.is_active
+				and then (a_event.sender_id = a_who.id or a_who.is_admin)
+		ensure
+			author_or_admin: Result implies (a_event.sender_id = a_who.id or a_who.is_admin)
+			messages_only: Result implies a_event.is_message
+		end
+
+	edit_message (a_sender: CHAT_USER; a_room: CHAT_ROOM; a_target: CHAT_EVENT; a_body: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
+			-- Append an EDIT naming `a_target'. The original is untouched:
+			-- the log is the record and this supersedes it, which is the only
+			-- way the room can honestly say a message was edited.
+		require
+			active_sender: a_sender.is_active
+			sender_stored: a_sender.is_stored
+			room_known: store.has_room (a_room.id)
+			member: store.is_member (a_sender.id, a_room.id)
+			same_room: a_target.room_id = a_room.id
+			body_given: not a_body.is_empty
+			within_limit: a_body.count <= config.message_characters
+		local
+			l_event: CHAT_EVENT
+		do
+			if not may_edit (a_sender, a_target) then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "Only the author may edit a message.", 403))
+			elseif not limits.is_allowed (post_key (a_sender.id)) then
+				create Result.make_error (rate_limited_error)
+			else
+				l_event := store.append_event (create {CHAT_EVENT_DRAFT}.make (a_room.id, a_sender.id,
+					{CHAT_EVENT_KINDS}.Kind_edit, a_body, Void, payload_naming (a_target.id), False))
+				limits.record (post_key (a_sender.id))
+				bus.ring (a_room.id)
+				log.info ("edit event=" + l_event.id.out + " target=" + a_target.id.out + " sender=" + a_sender.id.out)
+				create Result.make_success (l_event)
+			end
+		ensure
+			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
+			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
+			original_untouched: attached store.event (a_target.id) as o implies o.body.same_string (a_target.body)
+			refused_unless_author: (not old may_edit (a_sender, a_target)) implies not Result.is_success
+			rung_on_success: Result.is_success implies bus.ring_count = old bus.ring_count + 1
+		end
+
+	delete_message (a_sender: CHAT_USER; a_room: CHAT_ROOM; a_target: CHAT_EVENT): CHAT_RESULT [CHAT_EVENT]
+			-- Append a TOMBSTONE naming `a_target'. Nothing is removed from
+			-- the log: the bubble will read "message deleted" rather than
+			-- vanish, so a conversation that answered it still makes sense.
+		require
+			active_sender: a_sender.is_active
+			sender_stored: a_sender.is_stored
+			room_known: store.has_room (a_room.id)
+			member: store.is_member (a_sender.id, a_room.id)
+			same_room: a_target.room_id = a_room.id
+		local
+			l_event: CHAT_EVENT
+		do
+			if not may_delete (a_sender, a_target) then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "Only the author or an administrator may delete a message.", 403))
+			else
+				l_event := store.append_event (create {CHAT_EVENT_DRAFT}.make (a_room.id, a_sender.id,
+					{CHAT_EVENT_KINDS}.Kind_delete, "", Void, payload_naming (a_target.id), False))
+				bus.ring (a_room.id)
+				log.info ("delete event=" + l_event.id.out + " target=" + a_target.id.out + " sender=" + a_sender.id.out)
+				create Result.make_success (l_event)
+			end
+		ensure
+			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
+			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
+			original_still_there: store.event (a_target.id) /= Void
+			refused_unless_allowed: (not old may_delete (a_sender, a_target)) implies not Result.is_success
+		end
+
+	react_to_message (a_sender: CHAT_USER; a_room: CHAT_ROOM; a_target: CHAT_EVENT; a_emoji: READABLE_STRING_GENERAL; a_on: BOOLEAN): CHAT_RESULT [CHAT_EVENT]
+			-- Append one person's emoji on `a_target', on or off. Any member
+			-- may react to any message, including a bot's; the fold keeps the
+			-- last word per person per emoji, so clicking twice ends with it
+			-- off and nothing needs a table of its own.
+		require
+			active_sender: a_sender.is_active
+			sender_stored: a_sender.is_stored
+			room_known: store.has_room (a_room.id)
+			member: store.is_member (a_sender.id, a_room.id)
+			same_room: a_target.room_id = a_room.id
+			emoji_given: not a_emoji.is_empty
+			emoji_bounded: a_emoji.count <= Reaction_maximum
+		local
+			l_event: CHAT_EVENT
+			l_payload: SIMPLE_JSON_OBJECT
+		do
+			if not a_target.is_message then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "Only a message can carry a reaction.", 403))
+			elseif not limits.is_allowed (post_key (a_sender.id)) then
+				create Result.make_error (rate_limited_error)
+			else
+				l_payload := payload_naming (a_target.id)
+				l_payload.put_string (a_emoji.to_string_32, {CHAT_EVENT_KINDS}.Key_emoji).do_nothing
+				l_payload.put_boolean (a_on, {CHAT_EVENT_KINDS}.Key_on).do_nothing
+				l_event := store.append_event (create {CHAT_EVENT_DRAFT}.make (a_room.id, a_sender.id,
+					{CHAT_EVENT_KINDS}.Kind_reaction, "", Void, l_payload, False))
+				limits.record (post_key (a_sender.id))
+				bus.ring (a_room.id)
+				create Result.make_success (l_event)
+			end
+		ensure
+			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
+			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
+			messages_only: (not a_target.is_message) implies not Result.is_success
+		end
+
+	post_reply (a_sender: CHAT_USER; a_room: CHAT_ROOM; a_parent: CHAT_EVENT; a_body: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
+			-- An ordinary message that names the one it answers. A reply is
+			-- NOT a kind of its own - it is a message with a parent in its
+			-- payload - so every rule a message already obeys it obeys too,
+			-- and nothing folds it away.
+		require
+			active_sender: a_sender.is_active
+			sender_stored: a_sender.is_stored
+			room_known: store.has_room (a_room.id)
+			member: store.is_member (a_sender.id, a_room.id)
+			same_room: a_parent.room_id = a_room.id
+			body_given: not a_body.is_empty
+			within_limit: a_body.count <= config.message_characters
+		local
+			l_event: CHAT_EVENT
+			l_payload: SIMPLE_JSON_OBJECT
+			l_body: STRING_32
+		do
+			if not limits.is_allowed (post_key (a_sender.id)) then
+				create Result.make_error (rate_limited_error)
+			elseif not a_sender.is_bot and then a_body.to_string_32.starts_with ({CHAT_EVENT_KINDS}.Bot_marker) then
+				create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "The bot marker is reserved for bot messages.", 403))
+			else
+				l_body := a_body.to_string_32
+				if a_sender.is_bot and then not l_body.starts_with ({CHAT_EVENT_KINDS}.Bot_marker) then
+					l_body := {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " " + l_body
+				end
+				create l_payload.make
+				l_payload.put_integer (a_parent.id, {CHAT_EVENT_KINDS}.Key_reply_to).do_nothing
+				l_event := store.append_event (create {CHAT_EVENT_DRAFT}.make (a_room.id, a_sender.id,
+					{CHAT_EVENT_KINDS}.Kind_message, l_body, Void, l_payload, a_sender.is_bot))
+				limits.record (post_key (a_sender.id))
+				bus.ring (a_room.id)
+				create Result.make_success (l_event)
+			end
+		ensure
+			appended_on_success: Result.is_success implies store.last_event_id = old store.last_event_id + 1
+			nothing_on_failure: not Result.is_success implies store.last_event_id = old store.last_event_id
+			still_a_message: (Result.is_success and then attached Result.value as v) implies v.is_message
+		end
+
+	payload_naming (a_target_id: INTEGER_64): SIMPLE_JSON_OBJECT
+			-- A payload that names the message a fold event acts on.
+		require
+			positive: a_target_id > 0
+		do
+			create Result.make
+			Result.put_integer (a_target_id, {CHAT_EVENT_KINDS}.Key_target).do_nothing
+		end
+
+	Reaction_maximum: INTEGER = 16
+			-- An emoji is a handful of code points, never a sentence: the cap
+			-- stops a reaction being used as a second message channel.
+
 	post_message (a_sender: CHAT_USER; a_room: CHAT_ROOM; a_body: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
 			-- Append a text message and ring the room.
 		require
