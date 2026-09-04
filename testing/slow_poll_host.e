@@ -72,6 +72,15 @@ feature -- Basic operations
 			set: inbox = a_inbox
 		end
 
+	set_done_flag (a_flag: separate POLL_DONE_FLAG)
+			-- The flag to raise when `poll' returns, so an assault can watch
+			-- for the end of the loop without joining this processor.
+		do
+			done_flag := a_flag
+		ensure
+			set: done_flag = a_flag
+		end
+
 	poll (a_room_id, a_since_id: INTEGER_64)
 			-- The REAL loop, on this processor, until the inbox is stopped.
 		require
@@ -87,8 +96,19 @@ feature -- Basic operations
 				poller := l_poller
 				l_poller.run
 			end
+			if attached done_flag as f then
+				raise (f)
+			end
 		ensure
 			ran: attached poller
+		end
+
+feature {NONE} -- The flag's processor (one short, separate call)
+
+	raise (a_flag: separate POLL_DONE_FLAG)
+			-- Say the loop has returned.
+		do
+			a_flag.note_done
 		end
 
 feature -- Constants
@@ -101,5 +121,8 @@ feature {NONE} -- Implementation
 	endpoint: CHAT_ENDPOINT
 
 	inbox: detachable separate EVENT_INBOX
+
+	done_flag: detachable separate POLL_DONE_FLAG
+			-- Raised when `poll' returns; Void when nobody is watching.
 
 end

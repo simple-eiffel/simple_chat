@@ -20,6 +20,23 @@ note
 		SW_SHAPING kit produces for the acceptance line - and looked at, on
 		a screen, by a human. simple_widgets already proves the paint half
 		on pixels (evidence/shaped-d015.png).
+
+		EVERY ROOM THIS ASSAULT OPENS MUST BE CLOSED AGAIN. Not for
+		tidiness: `CLIENT_APP.open_room' puts EVENT_POLLER.run on a SCOOP
+		processor of its own, over a WINHTTP transport of that processor's
+		own - a real one, whatever transport the app itself was given -
+		and that loop ends on exactly two conditions, a stopped inbox or a
+		401. A failing poll is not one of them: it is retried for ever,
+		backing off to thirty seconds. Under SCOOP the root region is not
+		finished when TEST_APP's `make' returns; the runtime waits for
+		every other processor too. So one unclosed room is a runner that
+		prints "ALL TESTS PASSED" and then never exits - which is what two
+		tests in this class did until 2026-09-04, leaving three runners
+		alive on Larry's machine in one afternoon and two sockets a minute
+		knocking on whatever answers on 127.0.0.1:8080. The fixtures
+		`room_app' and `room_app_with_bot' are closed by `feed'; a test
+		that opens a room and does not `feed' must call
+		`presenter.close_room' itself.
 	]"
 	author: "Larry Rix"
 
@@ -429,6 +446,12 @@ feature -- CLIENT_APP: which door does it take?
 	test_client_app_hints_the_room_when_a_bot_is_in_the_roster
 			-- Real roster data, never a hard-coded "@claude": the roster names the
 			-- bot, and the pane's one hint bubble names it right back.
+			--
+			-- CLOSES THE ROOM AT THE END, and that is not tidiness. See the
+			-- class note: `open_room' starts EVENT_POLLER.run on a SCOOP
+			-- processor of its own, the loop ends only when the inbox is
+			-- stopped, and until 2026-09-04 this test left it running - which
+			-- hung the whole runner after its last line.
 		local
 			t: MEMORY_HTTP_TRANSPORT
 			cf: CLIENT_CONFIG
@@ -451,10 +474,17 @@ feature -- CLIENT_APP: which door does it take?
 				and app.view.thread.messages [1].role = {SW_CHAT_THREAD}.Role_system)
 			assert ("naming the real bot's own @username, not a literal typed into this file",
 				app.view.thread.messages [1].text.has_substring ({STRING_32} "@claude"))
+			app.presenter.close_room
+			assert ("and the room this test opened was closed again, so its poller's processor ends with it",
+				not app.presenter.is_room_open)
 		end
 
 	test_client_app_shows_no_hint_when_the_roster_has_no_bot
 			-- The other half of the same law: nobody to address, nothing said.
+			--
+			-- CLOSES THE ROOM AT THE END, for the reason given above and in
+			-- the class note: an unclosed room is a processor that never
+			-- finishes, and a runner that never exits.
 		local
 			t: MEMORY_HTTP_TRANSPORT
 			cf: CLIENT_CONFIG
@@ -473,6 +503,9 @@ feature -- CLIENT_APP: which door does it take?
 			assert ("the room opened with nobody to address",
 				app.presenter.is_room_open and app.presenter.bot_members.is_empty)
 			assert ("so no hint was shown", app.view.hint_count = 0 and app.view.thread.count = 0)
+			app.presenter.close_room
+			assert ("and the room this test opened was closed again, so its poller's processor ends with it",
+				not app.presenter.is_room_open)
 		end
 
 	test_client_app_reports_a_server_that_lists_no_room
