@@ -1465,7 +1465,12 @@ feature -- The menu bar: mnemonics, and who owns the Alt key
 			assert ("the declaration survives", mb.raw_labels [1].same_string ({STRING_32} "&File"))
 			assert ("F is the letter File underlines", mb.pad_underline_index (1) = 1)
 			assert ("E finds Edit", mb.menu_for_mnemonic ({CHARACTER_32} 'e') = 2)
-			assert ("R finds Room, whatever the case", mb.menu_for_mnemonic ({CHARACTER_32} 'R') = 3)
+			assert ("M finds Room, whatever the case", mb.menu_for_mnemonic ({CHARACTER_32} 'M') = 3)
+			assert ("and R finds NOTHING - a global overlay hotkey owns Alt+R, so no pad claims it",
+				mb.menu_for_mnemonic ({CHARACTER_32} 'r') = 0)
+			assert ("Room declares the m, not the initial", mb.raw_labels [3].same_string ({STRING_32} "Roo&m"))
+			assert ("so the underline sits under the M - the FOURTH character of 'Room'",
+				mb.pad_underline_index (3) = 4)
 			assert ("H finds Help", mb.menu_for_mnemonic ({CHARACTER_32} 'h') = 4)
 			assert ("and Z finds nothing", mb.menu_for_mnemonic ({CHARACTER_32} 'z') = 0)
 				-- the gesture, end to end, minus the keystroke the shell cannot
@@ -1497,7 +1502,7 @@ feature -- The menu bar: mnemonics, and who owns the Alt key
 			v := pane
 			v.set_on_summary (agent record_room_ask ({STRING_32} "summary"))
 			v.set_on_catch_up (agent record_room_ask ({STRING_32} "catch up"))
-			assert ("Alt+R opens the Room menu", v.window.activate_mnemonic ({CHARACTER_32} 'r'))
+			assert ("Alt+M opens the Room menu", v.window.activate_mnemonic ({CHARACTER_32} 'm'))
 			check attached v.window.open_popup as pm then m := pm end
 			assert ("two asks", m.items.count = 2)
 			assert ("Summarize says Ctrl+M", m.items [1].hint.same_string ({STRING_32} "Ctrl+M"))
@@ -1729,9 +1734,17 @@ feature -- Accelerators, and the routing rule that makes them safe
 			v := pane
 			assert ("Alt+F is claimed", v.window.accelerator_for (v.Vk_f, False, True, False) > 0)
 			assert ("Alt+E too", v.window.accelerator_for (v.Vk_e, False, True, False) > 0)
-			assert ("Alt+R too", v.window.accelerator_for (v.Vk_r, False, True, False) > 0)
+			assert ("Alt+M too - the Room pad, whose mnemonic moved off the R",
+				v.window.accelerator_for (v.Vk_m, False, True, False) > 0)
 			assert ("Alt+H too", v.window.accelerator_for (v.Vk_h, False, True, False) > 0)
 			assert ("and Alt+Z is nobody's", v.window.accelerator_for (90, False, True, False) = 0)
+				-- THE REGRESSION THIS RELEASE EXISTS FOR. Alt+R must be
+				-- claimed by NOTHING here: the NVIDIA overlay owns it as a
+				-- global hotkey, so a pad that answered to it would draw an
+				-- underline promising a gesture the application can never
+				-- receive. Registering it again would put the lie back.
+			assert ("and Alt+R is nobody's - a global hotkey owns it, so we do not promise it",
+				v.window.accelerator_for (v.Vk_r, False, True, False) = 0)
 			assert ("Ctrl+F is a DIFFERENT key and is not claimed",
 				v.window.accelerator_for (v.Vk_f, True, False, False) = 0)
 			assert ("nothing is open yet", v.window.open_popup = Void)

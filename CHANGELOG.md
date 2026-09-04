@@ -71,6 +71,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CloseApplications=yes` is now stated rather than defaulted, with the reason:
   it stays on for the chat *window*, and the server is deliberately not left to
   it.
+- **`Alt+R` never opened the Room menu, and never could.** Larry, in the room
+  itself: he found a HUD on his screen reading `FPS N/A | GPU 24% | CPU 2% |
+  LAT N/A` and recognised it - the NVIDIA overlay registers `Alt+R` as a
+  **global** hotkey, and a global hook is consulted before any window's own
+  accelerator table. The keystroke never reached this application at all.
+
+  **simple_widgets was measured and cleared before a line was changed here.**
+  Headless, at 2x, with this client's exact four pads and its real Room menu:
+  `menu_for_mnemonic('r')` finds pad 3, `activate_mnemonic` returns True, and
+  the popup opens with both items - identical to `f`, `e` and `h`. There are
+  also two independent paths into it (the accelerator, then
+  `key_down_mnemonic_fired` as a fallback), and both work. Two working paths
+  failing together is what says the key never arrived.
+
+  The mnemonic moves to the **m**: `Text_menu_room` is `"Roo&m"`, and the Alt
+  accelerator is registered on `Vk_m` instead of `Vk_r`. **The label is
+  unchanged** - it still reads "Room" - because underlining a non-initial
+  letter is ordinary Windows practice, the same shape as `E&xit`. Renaming the
+  pad to "Options" to buy a free initial letter was the alternative and was
+  declined: it would have cost the reader a word he already knows.
+
+  `Ctrl+M` (Summarize) is untouched and does not collide - the accelerator
+  table matches the modifier state exactly, so `Alt+M` and `Ctrl+M` are two
+  different keys.
+
+  The assault now asserts the negative as well as the positive: `Alt+M` opens
+  Room, and **`Alt+R` is claimed by nothing**. A pad that answered to `Alt+R`
+  would draw an underline promising a gesture the application can never
+  receive, which is the defect this release exists for.
 
 ## [0.2.2] — 2026-09-04
 
