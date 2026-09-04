@@ -69,6 +69,11 @@ feature -- Basic operations
 				-- population: a mutual deadlock that froze the whole server.
 			l_settled := a_api.dispatcher_start_after
 			populate_later (l_dispatcher)
+				-- The API keeps the reference so a REQUEST handler can ask this
+				-- dispatcher for a summary from its own processor. The API never
+				-- calls it: an engine call takes seconds and the API's processor
+				-- serves every request in the process.
+			a_api.dispatcher_register (l_dispatcher)
 			dispatcher := l_dispatcher
 		ensure
 			launched: is_launched

@@ -62,6 +62,10 @@ feature {NONE} -- Initialization
 			limits.set_limit (Login_ip_prefix, config.login_failures_per_10_minutes, Ten_minutes_seconds)
 			across config.participants as p loop
 				limits.set_limit (participant_prefix (p.handle), p.requests_per_hour, Hour_seconds)
+					-- A summary is charged to its OWN budget, never to the
+					-- participant's answers: catching up on what was missed must
+					-- not cost a member the right to ask a question.
+				limits.set_limit (summary_prefix (p.handle), config.summaries_per_hour, Hour_seconds)
 			end
 		ensure
 			rules: limits.has_rule_for (post_key (1)) and limits.has_rule_for (login_user_key ("x")) and limits.has_rule_for (login_ip_key ("0"))
@@ -583,6 +587,18 @@ feature -- Access (contract support)
 			Result := "p:" + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_handle) + ":"
 		ensure
 			shape: Result.starts_with ("p:") and Result.ends_with (":")
+		end
+
+	summary_prefix (a_handle: READABLE_STRING_GENERAL): STRING_8
+			-- The limiter prefix of every asker's SUMMARY key for the
+			-- participant `a_handle' (PARTICIPANT.summary_limit_key). A
+			-- separate prefix, so a summary and an answer never spend each
+			-- other's budget.
+		do
+			Result := "s:" + {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (a_handle) + ":"
+		ensure
+			shape: Result.starts_with ("s:") and Result.ends_with (":")
+			never_an_answer_key: not Result.starts_with ("p:")
 		end
 
 	is_known_person (a_username: READABLE_STRING_GENERAL): BOOLEAN

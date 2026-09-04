@@ -793,6 +793,110 @@ feature -- Dispatcher
 			assert ("the bell came back", d.wake_count = 2 and l_waiter.wake_count = 3 and l_bus.ring_count = 3)
 		end
 
+	test_summary_is_never_a_room_event
+			-- THE LAW A SUMMARY LIVES UNDER. It is an engine reply to the one
+			-- member who asked, drawn in their own window - so it leaves no
+			-- trace whatever in the room: nothing posted, nothing rung, no
+			-- cursor moved, no id marked answered, no queue slot taken. Events
+			-- are never per-person, which is exactly why a summary must not be
+			-- one.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_text: STRING_32
+			l_before: INTEGER_64
+		do
+			d := posting_dispatcher (0)
+			append_ask ({STRING_32} "the roof is finished")
+			append_ask ({STRING_32} "and the gutters go on Friday")
+			if attached last_service as sv then
+				l_before := sv.store.last_event_id
+			end
+			l_text := d.summary_of (1, 0, 0, last_nick_id, 0)
+			assert ("the engine answered", d.last_summary_status = {PARTICIPANT_DISPATCHER}.Summary_ok and not l_text.is_empty)
+			assert ("asked and given, on the summary account", d.summaries_asked = 1 and d.summaries_given = 1)
+			assert ("NOTHING WAS POSTED", attached last_service as sv2 and then sv2.store.last_event_id = l_before)
+			assert ("the room was never rung", attached last_bus as b and then b.ring_count = 0)
+			assert ("no request taken, no answer accounted", d.requests_seen = 0 and d.asks = 0 and d.answers_posted = 0 and d.answer_failures = 0)
+			assert ("no cursor moved, nothing marked answered", d.cursors_model.is_empty and d.answered_model.is_empty)
+			assert ("the dispatcher was not woken", d.wake_count = 0 and not d.has_pending)
+		end
+
+	test_summary_spends_its_own_budget
+			-- A summary is charged under "s:", an answer under "p:". Catching up
+			-- on what was missed must never cost a member the right to ask a
+			-- question - which is the whole reason the budgets are two.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_text: STRING_32
+		do
+			d := posting_dispatcher (0)
+			append_ask ({STRING_32} "something was said")
+			if attached last_limits as ll then
+				ll.set_limit ("s:@mock:", 1, 3600)
+			end
+			l_text := d.summary_of (1, 0, 0, last_nick_id, 0)
+			assert ("the first summary is given", d.last_summary_status = {PARTICIPANT_DISPATCHER}.Summary_ok and not l_text.is_empty)
+			assert ("charged to the summary key", d.last_summary_key.same_string ("s:@mock:" + last_nick_id.out))
+			l_text := d.summary_of (1, 0, 0, last_nick_id, 0)
+			assert ("the second is refused by the SUMMARY budget", d.last_summary_status = {PARTICIPANT_DISPATCHER}.Summary_budget_spent and l_text.is_empty)
+			assert ("and the engine was asked only once", d.summaries_asked = 1)
+			d.handle_event (message (900, 1, last_nick_id, {STRING_32} "@mock and a question", False))
+			assert ("the ANSWER budget was never spent by a summary", d.last_ask_granted and d.asks = 1)
+			assert ("two different keys entirely", not d.last_ask_key.same_string (d.last_summary_key))
+		end
+
+	test_summary_says_when_there_is_nothing_to_say
+			-- An empty gap is not an engine call. Nothing to summarise costs
+			-- nothing and spends no budget.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_text: STRING_32
+		do
+			d := posting_dispatcher (0)
+			l_text := d.summary_of (1, 0, 0, last_nick_id, 0)
+			assert ("nothing to say, and said so", d.last_summary_status = {PARTICIPANT_DISPATCHER}.Summary_nothing_to_say and l_text.is_empty)
+			assert ("the engine was never asked", d.summaries_asked = 0 and attached last_mock as m and then m.calls = 0)
+		end
+
+	test_summary_gate_refuses_a_stranger
+			-- The gate answers 0 for a token that names nobody, and says nothing
+			-- about which rooms exist while it does.
+		local
+			d: PARTICIPANT_DISPATCHER
+		do
+			d := posting_dispatcher (0)
+			assert ("a stranger is refused", attached last_api as a and then a.summary_gate ("not-a-token", 1) = 0)
+			assert ("an unknown room is refused the same way", attached last_api as a2 and then a2.summary_gate ("not-a-token", 9999) = 0)
+		end
+
+	test_a_reply_carrying_tool_markup_never_reaches_the_room
+			-- Asked whether it could see Larry's drive, the participant answered
+			-- with an <invoke> block and a directory listing - and the listing
+			-- was INVENTED: not one of the folders it named exists. The sandbox
+			-- held and nothing was read, but the room was shown a transcript of
+			-- work that never happened, which is worse than a refusal. A reply
+			-- carrying tool-call markup is not an answer this participant could
+			-- have produced honestly, so it never reaches the room.
+		local
+			p: CLAUDE_CODE_PARTICIPANT
+		do
+			p := claude_participant
+			assert ("an invoke block is refused", p.has_tool_markup ({STRING_32} "sure<invoke name=Bash>ls /c/Users</invoke>"))
+			assert ("a parameter block is refused", p.has_tool_markup ({STRING_32} "<parameter name=command>ls</parameter>"))
+			assert ("a function_calls block is refused", p.has_tool_markup ({STRING_32} "<function_calls>x</function_calls>"))
+			assert ("the case does not matter", p.has_tool_markup ({STRING_32} "<INVOKE NAME=Bash>"))
+			assert ("ordinary prose is untouched", not p.has_tool_markup ({STRING_32} "I cannot see your drive from here."))
+			assert ("arithmetic is not markup: 5 < 10 stays", not p.has_tool_markup ({STRING_32} "5 < 10 and 10 > 5"))
+			assert ("what the room gets instead tells the truth",
+				p.scrubbed ({STRING_32} "<invoke name=Bash>ls</invoke>").has_substring ({STRING_32} "no tools"))
+			assert ("a clean answer passes through unchanged",
+				p.scrubbed ({STRING_32} "Gen 1:1 in the beginning").same_string ({STRING_32} "Gen 1:1 in the beginning"))
+			assert ("the persona tells the model it has no tools",
+				p.persona_of (request_wide ({STRING_32} "hello", 400)).has_substring ({STRING_32} "NO TOOLS"))
+			assert ("and tells it to say so when asked",
+				p.persona_of (request_wide ({STRING_32} "hello", 400)).has_substring ({STRING_32} "say plainly that you cannot"))
+		end
+
 	test_dispatcher_prunes_answered
 			-- NEW-6: taken ids at or below the lowest room cursor are pruned
 			-- after a drain, and ids at or below the floor are never retaken.
@@ -1136,6 +1240,14 @@ feature {NONE} -- Fixtures
 			-- and post from inside `EVENT_BUS.ring', ringing it again under its
 			-- own frame. The server never does that - there the wake is
 			-- asynchronous and `ring' returns long before the dispatcher moves.
+
+	last_nick_id: INTEGER_64
+			-- The fixture's human member, whose id the store assigned.
+		do
+			if attached last_nick as n then
+				Result := n.id
+			end
+		end
 
 	last_api: detachable CHAT_API
 			-- That fixture's API, so a test can call `dispatcher_post' itself.

@@ -41,6 +41,7 @@ feature {NONE} -- Setup
 			routes.on_get ("/rooms/{id}/members", agent handle_members)
 			routes.on_post ("/rooms/{id}/messages", agent handle_post_message)
 			routes.on_post ("/rooms/{id}/images", agent handle_post_image)
+			routes.on_post ("/rooms/{id}/summary", agent handle_summary)
 			routes.on_get ("/attachments/{id}", agent handle_attachment)
 			routes.on_get ("/me", agent handle_me)
 			routes.on_post ("/me/password", agent handle_change_password)
@@ -200,7 +201,7 @@ feature -- Request reading (contract support)
 
 feature -- Constants
 
-	Route_count: INTEGER = 20
+	Route_count: INTEGER = 21
 	Token_length: INTEGER = 64
 	Bearer_prefix: STRING_8 = "Bearer "
 	Loopback: STRING_8 = "127.0.0.1"
@@ -451,6 +452,54 @@ feature {NONE} -- Handlers
 			end
 		end
 
+	handle_summary (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
+			-- A summary of the room between `since' and `until', for the
+			-- member who asked and for nobody else. The engine runs on the
+			-- dispatcher's processor and THIS request's processor waits for
+			-- it - never the API's, which serves every request in the
+			-- process; the long-poll above blocks the same way for the same
+			-- reason. The answer goes back in this reply and is stored
+			-- nowhere: a summary is not a room event, because events are
+			-- never per-person.
+		local
+			l_room, l_since, l_until, l_asker: INTEGER_64
+			l_body: detachable SIMPLE_JSON_OBJECT
+			l_text: STRING_32
+			l_json: SIMPLE_JSON_OBJECT
+		do
+			l_room := room_id_of (a_request)
+			if not attached bearer_token (a_request) as t then
+				reply (a_response, unauthorized_reply)
+			elseif l_room = 0 then
+				reply (a_response, bad_request_reply ("room id"))
+			else
+				l_asker := api_summary_gate (shared_api, t, l_room)
+				if l_asker = 0 then
+					reply (a_response, unauthorized_reply)
+				elseif not attached api_dispatcher (shared_api) as l_dispatcher then
+					reply (a_response, summary_error_reply (503, "This room has no assistant to summarise it."))
+				else
+					l_body := json_body (a_request)
+					l_since := json_natural (l_body, "since")
+					l_until := json_natural (l_body, "until")
+					l_text := summary_through (l_dispatcher, l_room, l_since, l_until, l_asker, json_natural (l_body, "minutes").to_integer_32.max (0))
+					if last_summary_http = 200 and then not l_text.is_empty then
+						create l_json.make
+						l_json.put_string (l_text, Key_summary).do_nothing
+						reply (a_response, create {CHAT_REPLY}.make_json (200, l_json, 0))
+					elseif last_summary_http = 204 then
+						reply (a_response, summary_error_reply (404, "There is nothing new to summarise."))
+					elseif last_summary_http = 429 then
+						reply (a_response, summary_error_reply (429, "You have reached your summary limit for now - please try again later."))
+					elseif last_summary_http = 503 then
+						reply (a_response, summary_error_reply (503, "This room has no assistant to summarise it."))
+					else
+						reply (a_response, summary_error_reply (502, "The assistant could not summarise just now."))
+					end
+				end
+			end
+		end
+
 	handle_post_message (a_request: SIMPLE_WEB_SERVER_REQUEST; a_response: SIMPLE_WEB_SERVER_RESPONSE)
 		do
 			if attached bearer_token (a_request) as t then
@@ -674,6 +723,60 @@ feature {NONE} -- The API's processor (each routine holds the API only for its c
 			create Result.make_from_separate (a_api.attachment (a_token, a_attachment_id))
 		end
 
+	api_summary_gate (a_api: separate CHAT_API; a_token: READABLE_STRING_8; a_room_id: INTEGER_64): INTEGER_64
+			-- The asker's id when this token may summarise this room; 0 otherwise.
+		do
+			Result := a_api.summary_gate (a_token, a_room_id)
+		ensure
+			non_negative: Result >= 0
+		end
+
+	api_dispatcher (a_api: separate CHAT_API): detachable separate PARTICIPANT_DISPATCHER
+			-- The dispatcher the host registered, or Void in a server with no
+			-- participants. A reference only - it is never called from the
+			-- API's processor.
+		do
+			Result := a_api.participant_dispatcher
+		end
+
+	summary_through (a_dispatcher: separate PARTICIPANT_DISPATCHER; a_room_id, a_since_id, a_until_id, a_asker_id: INTEGER_64; a_minutes: INTEGER): STRING_32
+			-- The summary, copied here, with `last_summary_http' left holding
+			-- the status THAT call produced. Both are read inside this one
+			-- routine, which reserves the dispatcher's processor for its whole
+			-- body: another request's summary therefore cannot land between a
+			-- text and its status.
+		require
+			positive_room: a_room_id > 0
+			since_non_negative: a_since_id >= 0
+			until_non_negative: a_until_id >= 0
+			positive_asker: a_asker_id > 0
+			minutes_non_negative: a_minutes >= 0
+		do
+			create Result.make_from_separate (a_dispatcher.summary_of (a_room_id, a_since_id, a_until_id, a_asker_id, a_minutes))
+			last_summary_http := a_dispatcher.last_summary_status
+		ensure
+			status_read: last_summary_http > 0
+			text_only_when_ok: (not Result.is_empty) implies last_summary_http = 200
+		end
+
+	last_summary_http: INTEGER
+			-- The status the latest `summary_through' brought back.
+
+	json_natural (a_object: detachable SIMPLE_JSON_OBJECT; a_key: STRING_32): INTEGER_64
+			-- The non-negative integer under `a_key', or 0 - for anything
+			-- missing, of the wrong type, or negative (D6: a hostile body
+			-- yields the default, never a refusal and never an exception).
+		do
+			if attached a_object as o and then attached o.integer_item (a_key) as n and then n.item > 0 then
+				Result := n.item
+			end
+		ensure
+			non_negative: Result >= 0
+		end
+
+	Key_summary: STRING_32 = "summary"
+			-- The one field of a summary reply.
+
 	api_post_message (a_api: separate CHAT_API; a_token: STRING_8; a_room_id: INTEGER_64; a_body: STRING_32): CHAT_REPLY
 		do
 			create Result.make_from_separate (a_api.post_message (a_token, a_room_id, a_body))
@@ -745,6 +848,19 @@ feature {NONE} -- Replies
 			given: not a_what.is_empty
 		do
 			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_refused, "missing or invalid " + a_what, 400))
+		end
+
+	summary_error_reply (a_status: INTEGER; a_message: READABLE_STRING_8): CHAT_REPLY
+			-- A refusal the asker reads in their OWN reply. Nothing is stored
+			-- and nothing reaches the room: a summary, refused or given, is
+			-- never a room event.
+		require
+			http_status: a_status >= 200 and a_status <= 599
+			said: not a_message.is_empty
+		do
+			create Result.make_error (create {CHAT_ERROR}.make ({CHAT_ERROR}.Code_unavailable, a_message, a_status))
+		ensure
+			same_status: Result.status = a_status
 		end
 
 	failed_reply: CHAT_REPLY

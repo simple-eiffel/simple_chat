@@ -41,6 +41,8 @@ feature {NONE} -- Initialization
 			server_urls.compare_objects
 			prefers_local := True
 			local_port := 8080
+			catch_up_away_seconds := 300
+			catch_up_minimum_messages := 5
 			window_x := 100
 			window_y := 100
 			window_width := 900
@@ -84,6 +86,17 @@ feature -- Access
 		end
 
 	local_port: INTEGER
+
+	catch_up_away_seconds: INTEGER
+			-- How long the window must have been out of the foreground before
+			-- coming back to it is worth a catch-up. Zero switches catch-up
+			-- off entirely - the member can still ask for a summary by hand.
+
+	catch_up_minimum_messages: INTEGER
+			-- How many messages must have arrived while away before a
+			-- catch-up is worth an engine call. Both thresholds must be
+			-- passed: a long lunch during which nobody spoke is not a gap,
+			-- and three messages while you fetched coffee are not an absence.
 			-- Where a local service would listen.
 
 	window_x, window_y, window_width, window_height: INTEGER
@@ -209,6 +222,28 @@ feature -- Element change
 			servers_kept: servers_model |=| old servers_model
 		end
 
+	set_catch_up_away_seconds (a_seconds: INTEGER)
+			-- Wait `a_seconds' of absence before a return is worth catching up on.
+		require
+			in_range: a_seconds >= 0 and a_seconds <= 86400
+		do
+			catch_up_away_seconds := a_seconds
+		ensure
+			set: catch_up_away_seconds = a_seconds
+			servers_kept: servers_model |=| old servers_model
+		end
+
+	set_catch_up_minimum_messages (a_count: INTEGER)
+			-- Wait for `a_count' missed messages before catching up is worth an engine call.
+		require
+			in_range: a_count >= 0 and a_count <= 1000
+		do
+			catch_up_minimum_messages := a_count
+		ensure
+			set: catch_up_minimum_messages = a_count
+			servers_kept: servers_model |=| old servers_model
+		end
+
 	set_local_port (a_port: INTEGER)
 		require
 			in_range: a_port >= 1 and a_port <= 65535
@@ -290,6 +325,8 @@ feature -- Element change
 			l_root.put (l_urls, Key_server_urls)
 			l_root.put (create {TOML_BOOLEAN}.make (prefers_local), Key_prefers_local)
 			l_root.put (create {TOML_INTEGER}.make (local_port), Key_local_port)
+			l_root.put (create {TOML_INTEGER}.make (catch_up_away_seconds), Key_catch_up_away_seconds)
+			l_root.put (create {TOML_INTEGER}.make (catch_up_minimum_messages), Key_catch_up_minimum_messages)
 			l_root.put (create {TOML_INTEGER}.make (window_x), Key_window_x)
 			l_root.put (create {TOML_INTEGER}.make (window_y), Key_window_y)
 			l_root.put (create {TOML_INTEGER}.make (window_width), Key_window_width)
@@ -410,6 +447,8 @@ feature -- Constants
 	Key_window_width: STRING_32 = "window_width"
 	Key_window_height: STRING_32 = "window_height"
 	Key_session: STRING_32 = "session"
+	Key_catch_up_away_seconds: STRING_32 = "catch_up_away_seconds"
+	Key_catch_up_minimum_messages: STRING_32 = "catch_up_minimum_messages"
 
 	Session_entropy: STRING_8 = "simple_chat"
 			-- What binds the DPAPI blob to this application; `dpapi_unprotect'
@@ -444,7 +483,10 @@ feature {NONE} -- File loading (simple_toml; D6: every read is validated, no set
 		end
 
 	load_preferences (a_root: TOML_TABLE)
-			-- `Key_prefers_local' (a boolean) and `Key_local_port' (1..65535).
+			-- `Key_prefers_local' (a boolean), `Key_local_port' (1..65535) and
+			-- the two catch-up thresholds. Each is checked for type AND range
+			-- here, so a hostile file keeps the defaults instead of reaching a
+			-- setter's precondition (D6).
 		do
 			if attached a_root.item (Key_prefers_local) as l_flag and then l_flag.is_boolean then
 				set_prefers_local (l_flag.as_boolean)
@@ -453,6 +495,16 @@ feature {NONE} -- File loading (simple_toml; D6: every read is validated, no set
 				and then l_port.as_integer >= 1 and then l_port.as_integer <= 65535
 			then
 				set_local_port (l_port.as_integer.to_integer_32)
+			end
+			if attached a_root.item (Key_catch_up_away_seconds) as l_away and then l_away.is_integer
+				and then l_away.as_integer >= 0 and then l_away.as_integer <= 86400
+			then
+				set_catch_up_away_seconds (l_away.as_integer.to_integer_32)
+			end
+			if attached a_root.item (Key_catch_up_minimum_messages) as l_min and then l_min.is_integer
+				and then l_min.as_integer >= 0 and then l_min.as_integer <= 1000
+			then
+				set_catch_up_minimum_messages (l_min.as_integer.to_integer_32)
 			end
 		end
 
@@ -547,6 +599,8 @@ feature {NONE} -- File loading (simple_toml; D6: every read is validated, no set
 invariant
 	sized: window_width > 0 and window_height > 0
 	port_in_range: local_port >= 1 and local_port <= 65535
+	catch_up_away_in_range: catch_up_away_seconds >= 0 and catch_up_away_seconds <= 86400
+	catch_up_minimum_in_range: catch_up_minimum_messages >= 0 and catch_up_minimum_messages <= 1000
 	servers_acceptable: across server_urls as ic all is_acceptable_url (ic) end
 	servers_distinct: not has_duplicate_url
 	model_consistent: servers_model.count = server_urls.count

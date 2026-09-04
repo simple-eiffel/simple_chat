@@ -60,6 +60,21 @@ feature -- Access
 			definition: Result.same_string ("p:" + handle.to_string_8 + ":" + a_asker_id.out)
 		end
 
+	summary_limit_key (a_asker_id: INTEGER_64): STRING_8
+			-- The rate-limit key for `a_asker_id' asking this participant for a
+			-- SUMMARY. Its own prefix: a summary is an engine call, but it is
+			-- not an answer to the room, and catching up on what was missed
+			-- must not spend the right to ask a question.
+		require
+			positive: a_asker_id > 0
+		do
+			Result := "s:" + handle.to_string_8 + ":" + a_asker_id.out
+		ensure
+			prefixed: Result.starts_with ("s:")
+			definition: Result.same_string ("s:" + handle.to_string_8 + ":" + a_asker_id.out)
+			never_the_answer_key: not Result.same_string (limit_key (a_asker_id))
+		end
+
 feature -- Element change
 
 	set_context_messages (a_count: INTEGER)

@@ -315,7 +315,7 @@ feature -- Basic operations
 			elseif last_timed_out then
 				create Result.make_error (unavailable_error ("no answer within " + timeout_seconds.out + " seconds"))
 			elseif attached l_response as l_r and then l_r.is_success and then not l_r.text.is_empty then
-				create Result.make_success (l_r.text.head (a_request.max_characters), Void)
+				create Result.make_success (scrubbed (l_r.text).head (a_request.max_characters), Void)
 			elseif attached l_response as l_e and then attached l_e.error_message as l_message and then not l_message.is_empty then
 				create Result.make_error (unavailable_error ({STRING_32} "Claude could not answer: " + l_message.head (200)))
 			else
@@ -350,6 +350,7 @@ feature -- Conversion (contract support)
 			Result.append ({STRING_32} "%". Answer the member who addressed you, in plain text for a chat: brief and direct, at most ")
 			Result.append_string_general (a_request.max_characters.out)
 			Result.append ({STRING_32} " characters. Never invent facts about the people in the room.")
+			Result.append (No_tools_clause)
 		ensure
 			named: Result.has_substring (handle)
 			room_named: Result.has_substring (a_request.room_name)
@@ -369,6 +370,57 @@ feature -- Conversion (contract support)
 			plain_when_no_window: a_request.context_lines.is_empty implies Result.same_string (prompt_of (a_request))
 			window_first: not a_request.context_lines.is_empty implies Result.starts_with (context_block_of (a_request))
 		end
+
+	No_tools_clause: STRING_32 = " You are running with NO TOOLS: you cannot read files, list directories, run commands, browse, or reach anything on this computer, and you remember nothing between turns except the room messages you are shown. If you are asked whether you can see a drive, a folder or a file, say plainly that you cannot. NEVER write tool-call markup of any kind and never describe a command you did not run."
+			-- The participant is started with --tools "", so it HAS no tools; the
+			-- model was not told, and when Larry asked whether it could see his
+			-- drive it answered with a tool-call transcript and a directory
+			-- listing that was pure invention - the folders it named do not
+			-- exist. The sandbox held; the honesty did not. So the persona says
+			-- what it is, and `scrubbed' catches it if it says otherwise.
+
+	scrubbed (a_text: READABLE_STRING_32): STRING_32
+			-- `a_text' unless it carries TOOL-CALL MARKUP, in which case one
+			-- honest sentence instead of the whole of it.
+			--
+			-- This participant runs with --tools "" and has none. Asked whether
+			-- it could see Larry's drive, it answered with an <invoke> block and
+			-- a directory listing - and the listing was INVENTED: not one of the
+			-- folders it named exists. Nothing was read and nothing escaped the
+			-- sandbox, but the room was shown a transcript of work that never
+			-- happened, which is worse than a refusal. A reply that contains the
+			-- markup of a tool call is, on its face, not an answer this
+			-- participant could have produced honestly, so it does not go to
+			-- the room.
+		do
+			if has_tool_markup (a_text) then
+				create Result.make_from_string (No_tools_reply)
+			else
+				create Result.make_from_string (a_text)
+			end
+		ensure
+			never_markup: not has_tool_markup (Result)
+			kept_when_clean: not has_tool_markup (a_text) implies Result.same_string (a_text)
+			said_something: not Result.is_empty
+		end
+
+	has_tool_markup (a_text: READABLE_STRING_32): BOOLEAN
+			-- Does `a_text' carry the opening of a tool call in any of the forms
+			-- the model writes them? Matched case-insensitively and on the
+			-- OPENING only, so a closing tag or a stray word cannot hide one.
+		local
+			l_low: STRING_32
+		do
+			l_low := a_text.as_lower
+			Result := l_low.has_substring ({STRING_32} "<invoke")
+				or l_low.has_substring ({STRING_32} "<parameter")
+				or l_low.has_substring ({STRING_32} "<function_calls")
+				or l_low.has_substring ({STRING_32} "</invoke")
+				or l_low.has_substring ({STRING_32} "</function_calls")
+		end
+
+	No_tools_reply: STRING_32 = "I have no tools and no file access in this room - I can only read the messages here, so I cannot look at your drive or your folders."
+			-- What the room gets instead of invented work.
 
 	prompt_of (a_request: PARTICIPANT_REQUEST): STRING_32
 			-- The user prompt: the asker by display name, then the request.

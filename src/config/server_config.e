@@ -23,6 +23,7 @@ note
 			message_characters = 4000            # positive
 			upload_bytes = 8388608               # positive
 			ai_requests_per_hour = 5             # zero or more
+			summaries_per_hour = 12              # zero or more; a summary's OWN budget, not an answer's
 			posts_per_minute = 30                # positive
 			login_failures_per_10_minutes = 10   # positive
 			session_days = 90                    # positive
@@ -81,6 +82,7 @@ feature {NONE} -- Initialization
 			message_characters := 4000
 			upload_bytes := 8388608
 			ai_requests_per_hour := 5
+			summaries_per_hour := 12
 			posts_per_minute := 30
 			login_failures_per_10_minutes := 10
 			session_days := 90
@@ -186,6 +188,13 @@ feature -- Access: limits
 	message_characters: INTEGER
 	upload_bytes: INTEGER_64
 	ai_requests_per_hour: INTEGER
+
+	summaries_per_hour: INTEGER
+			-- How many summaries one member may ask of one participant in an
+			-- hour. A summary is an engine call like any other, but it is NOT
+			-- an answer to the room and does not spend `ai_requests_per_hour':
+			-- a member who catches up on returning must not thereby lose the
+			-- right to ask a question. Its own prefix, its own window.
 	posts_per_minute: INTEGER
 	login_failures_per_10_minutes: INTEGER
 	session_days: INTEGER
@@ -381,6 +390,7 @@ feature -- Constants (the file's keys, mirroring the attribute names)
 	Key_message_characters: STRING_32 = "message_characters"
 	Key_upload_bytes: STRING_32 = "upload_bytes"
 	Key_ai_requests_per_hour: STRING_32 = "ai_requests_per_hour"
+	Key_summaries_per_hour: STRING_32 = "summaries_per_hour"
 	Key_posts_per_minute: STRING_32 = "posts_per_minute"
 	Key_login_failures: STRING_32 = "login_failures_per_10_minutes"
 	Key_session_days: STRING_32 = "session_days"
@@ -489,6 +499,13 @@ feature {NONE} -- File loading (simple_toml; D6: every read is validated, no set
 					ai_requests_per_hour := l_ai.item.to_integer_32
 				else
 					note_error (Key_ai_requests_per_hour, "must be zero or a positive integer")
+				end
+			end
+			if attached integer_setting (a_root, Key_summaries_per_hour, Key_summaries_per_hour) as l_sum then
+				if l_sum.item >= 0 and l_sum.item <= {INTEGER_32}.Max_value.to_integer_64 then
+					summaries_per_hour := l_sum.item.to_integer_32
+				else
+					note_error (Key_summaries_per_hour, "must be zero or a positive integer")
 				end
 			end
 			if attached integer_setting (a_root, Key_posts_per_minute, Key_posts_per_minute) as l_posts then
@@ -955,6 +972,7 @@ invariant
 	known_door: is_known_door (front_door_kind)
 	public_when_doored: not front_door_kind.same_string (Door_none) implies is_hostname (public_name)
 	limits_positive: message_characters > 0 and upload_bytes > 0 and ai_requests_per_hour >= 0 and posts_per_minute > 0
+	summaries_non_negative: summaries_per_hour >= 0
 	login_backoff_positive: login_failures_per_10_minutes > 0
 	session_lifetime_positive: session_days > 0
 	password_minimum_sane: password_minimum >= {PASSWORD_HASHER}.Minimum_characters
