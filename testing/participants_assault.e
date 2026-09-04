@@ -897,6 +897,120 @@ feature -- Dispatcher
 				p.persona_of (request_wide ({STRING_32} "hello", 400)).has_substring ({STRING_32} "say plainly that you cannot"))
 		end
 
+	test_the_fold_lets_the_last_edit_win_and_a_delete_bury_it
+			-- ORDER IS THE ARBITER. The log is append-only, so an edit is a
+			-- later event naming an earlier one and the last one wins. A
+			-- DELETE IS FINAL: an edit that arrives after it changes nothing a
+			-- reader sees, because an author who withdrew their words must not
+			-- have them resurrected by a stray edit.
+		local
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+			f: MESSAGE_FOLD
+		do
+			create l_events.make (5)
+			l_events.extend (message (1, 1, 7, {STRING_32} "the roof job starts Monday", False))
+			l_events.extend (fold_event (2, {CHAT_EVENT_KINDS}.Kind_edit, 7, 1, {STRING_32} "the roof job starts Tuesday"))
+			l_events.extend (fold_event (3, {CHAT_EVENT_KINDS}.Kind_edit, 7, 1, {STRING_32} "the roof job starts Wednesday"))
+			create f.make (l_events)
+			assert ("one bubble, not three - the edits never draw", f.standalone.count = 1)
+			assert ("the LAST edit is what shows", attached f.current_text (1) as t and then t.same_string ({STRING_32} "the roof job starts Wednesday"))
+			assert ("and the room knows it was edited", f.is_edited (1))
+			assert ("not deleted", not f.is_deleted (1))
+
+			l_events.extend (fold_event (4, {CHAT_EVENT_KINDS}.Kind_delete, 7, 1, {STRING_32} ""))
+			l_events.extend (fold_event (5, {CHAT_EVENT_KINDS}.Kind_edit, 7, 1, {STRING_32} "a resurrection attempt"))
+			create f.make (l_events)
+			assert ("the tombstone stands", f.is_deleted (1))
+			assert ("an edit AFTER a delete changes nothing", attached f.current_text (1) as t2
+				and then not t2.same_string ({STRING_32} "a resurrection attempt"))
+			assert ("the original is still in the log to be seen", f.standalone.count = 1 and f.standalone.first.id = 1)
+		end
+
+	test_reactions_dedupe_per_person_and_the_last_word_wins
+			-- The favorites shape: add and remove are both events folded in
+			-- log order, keyed by (person, emoji). One person clicking twice
+			-- ends with it OFF; two people are two.
+		local
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+			f: MESSAGE_FOLD
+		do
+			create l_events.make (6)
+			l_events.extend (message (1, 1, 7, {STRING_32} "gutters on Friday", False))
+			l_events.extend (reaction_event (2, 7, 1, {STRING_32} "thumb", True))
+			l_events.extend (reaction_event (3, 8, 1, {STRING_32} "thumb", True))
+			create f.make (l_events)
+			assert ("two people, one emoji, counted twice", f.reactions_on (1).item ({STRING_32} "thumb") = 2)
+			assert ("and each is remembered by name", f.reacted (1, 7, {STRING_32} "thumb") and f.reacted (1, 8, {STRING_32} "thumb"))
+
+			l_events.extend (reaction_event (4, 7, 1, {STRING_32} "thumb", True))
+			create f.make (l_events)
+			assert ("the SAME person adding again does not double-count", f.reactions_on (1).item ({STRING_32} "thumb") = 2)
+
+			l_events.extend (reaction_event (5, 7, 1, {STRING_32} "thumb", False))
+			create f.make (l_events)
+			assert ("taking it off leaves the other person's", f.reactions_on (1).item ({STRING_32} "thumb") = 1)
+			assert ("and that person no longer has it", not f.reacted (1, 7, {STRING_32} "thumb"))
+			assert ("reactions never draw a bubble", f.standalone.count = 1)
+		end
+
+	test_the_fold_ignores_what_it_cannot_understand
+			-- A room must render whatever the log holds. A fold event naming
+			-- nothing, or naming something outside this page, is dropped in
+			-- silence - never raised, and never drawn as a bubble.
+		local
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+			f: MESSAGE_FOLD
+		do
+			create l_events.make (4)
+			l_events.extend (message (1, 1, 7, {STRING_32} "a message", False))
+			l_events.extend (fold_event (2, {CHAT_EVENT_KINDS}.Kind_edit, 7, 0, {STRING_32} "names nothing"))
+			l_events.extend (fold_event (3, {CHAT_EVENT_KINDS}.Kind_delete, 7, 9999, {STRING_32} ""))
+			create f.make (l_events)
+			assert ("still one bubble", f.standalone.count = 1)
+			assert ("the message is untouched", f.current_text (1) = Void and not f.is_deleted (1) and not f.is_edited (1))
+			assert ("a delete for a message not on this page harms nothing here", not f.is_deleted (1))
+		end
+
+	test_a_reply_is_a_message_that_names_its_parent
+			-- A reply is NOT a kind of its own: it draws like any message and
+			-- obeys every rule a message obeys. Only its payload differs.
+		local
+			l_events: ARRAYED_LIST [CHAT_EVENT]
+			f: MESSAGE_FOLD
+		do
+			create l_events.make (3)
+			l_events.extend (message (1, 1, 7, {STRING_32} "who is bringing the ladders?", False))
+			l_events.extend (reply_event (2, 8, 1, {STRING_32} "Dave is"))
+			create f.make (l_events)
+			assert ("BOTH draw - a reply is a message", f.standalone.count = 2)
+			assert ("and it names what it answers", f.reply_parent (2) = 1)
+			assert ("the parent answers nothing itself", f.reply_parent (1) = 0)
+		end
+
+	test_only_the_author_edits_but_an_admin_may_delete
+			-- Larry's rule. Removing someone's words is moderation and an
+			-- administrator may do it; REWRITING them under their own name is
+			-- putting words in their mouth, and no role here carries that.
+		local
+			l_service: CHAT_SERVICE
+			l_author, l_other, l_admin: CHAT_USER
+			l_msg: CHAT_EVENT
+		do
+			l_service := fold_service
+			l_author := stored_person ("author", False)
+			l_other := stored_person ("other", False)
+			l_admin := stored_person ("boss", True)
+			l_msg := message (1, 1, l_author.id, {STRING_32} "my own words", False)
+			assert ("the author may edit", l_service.may_edit (l_author, l_msg))
+			assert ("a stranger may not", not l_service.may_edit (l_other, l_msg))
+			assert ("and NEITHER MAY AN ADMIN", not l_service.may_edit (l_admin, l_msg))
+			assert ("the author may delete", l_service.may_delete (l_author, l_msg))
+			assert ("an admin may delete", l_service.may_delete (l_admin, l_msg))
+			assert ("a stranger may not delete", not l_service.may_delete (l_other, l_msg))
+			assert ("nobody edits a bot's words", not l_service.may_edit (l_author,
+				message (2, 1, l_author.id, {CHAT_EVENT_KINDS}.Bot_marker + {STRING_32} " said the bot", True)))
+		end
+
 	test_dispatcher_prunes_answered
 			-- NEW-6: taken ids at or below the lowest room cursor are pruned
 			-- after a drain, and ids at or below the floor are never retaken.
@@ -1232,6 +1346,86 @@ feature -- Memory (Phase 4)
 		end
 
 feature {NONE} -- Fixtures
+
+	fold_event (a_id: INTEGER_64; a_kind: STRING_8; a_sender, a_target: INTEGER_64; a_body: STRING_32): CHAT_EVENT
+			-- An edit or a delete naming `a_target' (0 names nothing).
+		local
+			l_now: SIMPLE_DATE_TIME
+			l_payload: SIMPLE_JSON_OBJECT
+		do
+			create l_now.make (2026, 9, 4, 12, 0, 0)
+			create l_payload.make
+			if a_target > 0 then
+				l_payload.put_integer (a_target, {CHAT_EVENT_KINDS}.Key_target).do_nothing
+			end
+			create Result.make (a_id, 1, a_sender, a_kind, l_now, a_body, Void, l_payload, False)
+		end
+
+	reaction_event (a_id, a_sender, a_target: INTEGER_64; a_emoji: STRING_32; a_on: BOOLEAN): CHAT_EVENT
+		local
+			l_now: SIMPLE_DATE_TIME
+			l_payload: SIMPLE_JSON_OBJECT
+		do
+			create l_now.make (2026, 9, 4, 12, 0, 0)
+			create l_payload.make
+			l_payload.put_integer (a_target, {CHAT_EVENT_KINDS}.Key_target).do_nothing
+			l_payload.put_string (a_emoji, {CHAT_EVENT_KINDS}.Key_emoji).do_nothing
+			l_payload.put_boolean (a_on, {CHAT_EVENT_KINDS}.Key_on).do_nothing
+			create Result.make (a_id, 1, a_sender, {CHAT_EVENT_KINDS}.Kind_reaction, l_now, {STRING_32} "", Void, l_payload, False)
+		end
+
+	reply_event (a_id, a_sender, a_parent: INTEGER_64; a_body: STRING_32): CHAT_EVENT
+		local
+			l_now: SIMPLE_DATE_TIME
+			l_payload: SIMPLE_JSON_OBJECT
+		do
+			create l_now.make (2026, 9, 4, 12, 0, 0)
+			create l_payload.make
+			l_payload.put_integer (a_parent, {CHAT_EVENT_KINDS}.Key_reply_to).do_nothing
+			create Result.make (a_id, 1, a_sender, {CHAT_EVENT_KINDS}.Kind_message, l_now, a_body, Void, l_payload, False)
+		end
+
+	stored_person (a_username: STRING_8; a_admin: BOOLEAN): CHAT_USER
+			-- A stored, active human.
+		local
+			l_now: SIMPLE_DATE_TIME
+		do
+			create l_now.make_now
+			create Result.make (0, a_username, a_username.to_string_32,
+				"0123456789abcdef0123456789abcdef$600000$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", a_admin, False, l_now)
+			Result.set_id (person_ids (a_username))
+		end
+
+	person_ids (a_username: STRING_8): INTEGER_64
+		do
+			if a_username.same_string ("author") then
+				Result := 7
+			elseif a_username.same_string ("other") then
+				Result := 8
+			else
+				Result := 9
+			end
+		end
+
+	fold_service: CHAT_SERVICE
+			-- A service over a memory store, for the permission rules alone.
+		local
+			l_config: SERVER_CONFIG
+			l_store: MEMORY_CHAT_STORE
+			l_bus: EVENT_BUS
+			l_limits: RATE_LIMITER
+			l_log: CHAT_LOG
+			l_logger: SIMPLE_LOGGER
+		do
+			create l_config.make_defaults
+			create l_store.make
+			l_store.open
+			create l_bus.make
+			create l_limits.make (3600)
+			create l_logger
+			create l_log.make (l_logger)
+			create Result.make (l_store, l_bus, l_limits, l_config, l_log)
+		end
 
 	last_bus: detachable EVENT_BUS
 			-- The latest `posting_dispatcher''s bus - the one its API rings.
