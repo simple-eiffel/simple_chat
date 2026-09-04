@@ -175,7 +175,86 @@ feature -- The GUI's frame, while a poller polls
 			assert ("nothing the GUI thread does costs more than a frame", l_worst <= Frame_budget_ms)
 		end
 
+feature -- The loop must END, or the process never does
+
+	test_a_stopped_inbox_really_ends_the_pollers_loop
+			-- THE OTHER HALF OF `close_room', and nothing proved it until
+			-- 2026-09-04.
+			--
+			-- EVENT_POLLER.run loops until the inbox says stop or the server
+			-- says 401. A poll that merely FAILS is not an ending: it is
+			-- retried for ever, backing off to thirty seconds. And under
+			-- SCOOP the root region is not finished when the root's own
+			-- feature returns - the runtime waits for every other processor
+			-- too - so a poller nobody stopped is a PROCESS THAT NEVER
+			-- EXITS. Two WINDOW_ASSAULT tests opened a room and never closed
+			-- it, and the runner printed "ALL TESTS PASSED" and hung, three
+			-- times in one afternoon.
+			--
+			-- So this pins what `close_room' is worth: once the inbox IS
+			-- stopped, the loop really does return, and inside a deadline.
+			-- The DEADLINE is the point. The flag is asked, never the host:
+			-- a separate query on the host would not be answered until the
+			-- loop ended, so an assault that asked it would hang exactly as
+			-- the runner hung instead of failing.
+		local
+			l_inbox: separate EVENT_INBOX
+			l_host: separate SLOW_POLL_HOST
+			l_flag: separate POLL_DONE_FLAG
+			l_env: EXECUTION_ENVIRONMENT
+			i: INTEGER
+			l_ended: BOOLEAN
+			t0, l_span: INTEGER_64
+		do
+			create l_env
+			create l_inbox.make
+			create l_flag.make
+			create l_host.make (Scripted_cap_seconds)
+			attach_inbox (l_host, l_inbox)
+			hand_flag (l_host, l_flag)
+			launch_poll (l_host)
+				-- Let the loop get inside its first exchange, so the stop has
+				-- something to interrupt rather than something to pre-empt.
+			l_env.sleep (Frame_gap_ms.to_integer_64 * 1_000_000)
+			t0 := now_ms
+			stop_inbox (l_inbox)
+			from
+				i := 1
+			until
+				i > Exit_polls or l_ended
+			loop
+				l_ended := flag_is_up (l_flag)
+				if not l_ended then
+					l_env.sleep (Frame_gap_ms.to_integer_64 * 1_000_000)
+				end
+				i := i + 1
+			variant
+				Exit_polls + 1 - i
+			end
+			l_span := now_ms - t0
+			print ("    the poller's loop returned " + l_span.out + " ms after the inbox was stopped"
+				+ (if l_ended then "" else " - NO, it did not return at all" end) + "%N")
+			assert ("a stopped inbox ends the poller's loop, so its processor finishes and the root may exit", l_ended)
+		end
+
+	Exit_polls: INTEGER = 150
+			-- 150 x `Frame_gap_ms' = 15 s to notice a stop the transport caps at 2 s.
+
 feature {NONE} -- The poller's processor (each a short, separate call)
+
+	hand_flag (a_host: separate SLOW_POLL_HOST; a_flag: separate POLL_DONE_FLAG)
+			-- Give the host the flag it raises when its loop returns.
+		do
+			a_host.set_done_flag (a_flag)
+		end
+
+	flag_is_up (a_flag: separate POLL_DONE_FLAG): BOOLEAN
+			-- Has the host's loop returned? Answered at once: this processor
+			-- does nothing but hold one boolean.
+		do
+			Result := a_flag.is_done
+		end
+
 
 	attach_inbox (a_host: separate SLOW_POLL_HOST; a_inbox: separate EVENT_INBOX)
 			-- Give the host its inbox; one short call, as CLIENT_APP does.

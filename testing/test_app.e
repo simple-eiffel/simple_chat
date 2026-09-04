@@ -1,5 +1,18 @@
 note
-	description: "Assault runner for simple_chat."
+	description: "[
+		Assault runner for simple_chat.
+
+		`-only <text>' RUNS JUST THE TESTS WHOSE NAME CONTAINS <text>, and
+		it is here because of what happened on 2026-09-04: the runner
+		printed "ALL TESTS PASSED" and then never exited, three times in an
+		afternoon, and there was no way to ask which of 264 tests was
+		holding it. Under SCOOP the root region is not finished when `make'
+		returns - the runtime waits for every OTHER processor to finish
+		too - so ONE test that leaves a loop running on a processor of its
+		own hangs the whole run, silently, after the last line. `-only'
+		is how such a test is found: run one, watch whether the shell comes
+		back. See `.eiffel-workflow/CHRONICLE.md', 2026-09-04.
+	]"
 	author: "Larry Rix"
 
 class
@@ -16,7 +29,11 @@ feature {NONE} -- Initialization
 			s: TEST_SCOOP_CONSUMER
 			p: PARTICIPANTS_ASSAULT
 		do
+			read_selection
 			print ("simple_chat assault (Phase 1: contracts + skeletal tests)%N%N")
+			if attached only as l_only then
+				print ("-only " + l_only + ": running just the tests whose name contains it%N%N")
+			end
 			passed := 0
 			failed := 0
 			create t
@@ -213,6 +230,7 @@ feature {NONE} -- Initialization
 			run_test (agent (create {FREEZE_ASSAULT}).test_an_eiffel_sleep_on_another_processor_never_stops_the_allocator, "an_eiffel_sleep_on_another_processor_never_stops_the_allocator")
 			run_test (agent (create {FREEZE_ASSAULT}).test_an_unmarked_c_call_on_another_processor_stops_the_allocator, "an_unmarked_c_call_on_another_processor_stops_the_allocator")
 			run_test (agent (create {FREEZE_ASSAULT}).test_the_gui_keeps_its_frame_while_the_poller_polls, "the_gui_keeps_its_frame_while_the_poller_polls")
+			run_test (agent (create {FREEZE_ASSAULT}).test_a_stopped_inbox_really_ends_the_pollers_loop, "a_stopped_inbox_really_ends_the_pollers_loop")
 
 			print ("=== THE VISIBLE CLIENT (Phase 4 Task 10) ===%N")
 			run_test (agent (create {WINDOW_ASSAULT}).test_view_shows_events_in_order_and_never_twice, "view_shows_events_in_order_and_never_twice")
@@ -328,6 +346,9 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_sw_view_renders_hebrew_and_marker, "sw_view_renders_hebrew_and_marker (skeletal)")
 
 			print ("%N========================%N")
+			if attached only as l_held and then deselected > 0 then
+				print (deselected.out + " tests were not named by -only " + l_held + ", so they were not run%N")
+			end
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")
 			if failed > 0 then
 				print ("TESTS FAILED%N")
@@ -358,14 +379,57 @@ feature {NONE} -- Initialization
 			end
 		end
 
+feature {NONE} -- Selection
+
+	only: detachable STRING_8
+			-- The text a test's name must contain for it to run, from
+			-- `-only <text>' on the command line; Void when every test runs.
+
+	deselected: INTEGER
+			-- Tests `only' held back.
+
+	read_selection
+			-- Read `-only <text>' off the command line, if it is there.
+		local
+			l_arguments: ARGUMENTS_32
+			i: INTEGER
+		do
+			create l_arguments
+			from
+				i := 1
+			until
+				i >= l_arguments.argument_count
+			loop
+				if l_arguments.argument (i).same_string ({STRING_32} "-only") then
+					only := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (l_arguments.argument (i + 1))
+				end
+				i := i + 1
+			variant
+				l_arguments.argument_count - i
+			end
+		ensure
+			nothing_deselected_yet: deselected = 0
+		end
+
+	is_selected (a_name: STRING): BOOLEAN
+			-- Is `a_name' a test this run was asked for?
+		do
+			Result := not attached only as l_only or else a_name.has_substring (l_only)
+		ensure
+			everything_when_unasked: only = Void implies Result
+		end
+
 feature {NONE} -- Harness
 
 	run_test (a_test: PROCEDURE; a_name: STRING)
 			-- Run one test; any exception (contract or otherwise) fails it.
+			-- A test `-only' does not name is neither run nor counted.
 		local
 			l_retried: BOOLEAN
 		do
-			if not l_retried then
+			if not is_selected (a_name) then
+				deselected := deselected + 1
+			elseif not l_retried then
 				a_test.call (Void)
 				print ("  PASS: " + a_name + "%N")
 				io.output.flush
