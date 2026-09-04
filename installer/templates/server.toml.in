@@ -100,3 +100,4 @@ front_door = "none"
 # max_characters = 1200
 # timeout_seconds = 120
 # context_messages = 12      # how many of the room's recent messages the assistant sees each turn (0-50; 0 = only the addressing message)
+# summaries_per_hour = 12     # on-demand summaries and catch-ups, budgeted separately from requests_per_hour

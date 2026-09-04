@@ -68,3 +68,9 @@ window_x = 100
 window_y = 100
 window_width = 900
 window_height = 700
+
+# Catch-up: when the window comes back after an absence, ask the room's assistant
+# for a summary of exactly what you missed - shown only to you, never posted.
+# Both thresholds must pass; set either to 0 to turn the catch-up off.
+# catch_up_away_seconds = 300
+# catch_up_minimum_messages = 5
