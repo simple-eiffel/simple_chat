@@ -286,6 +286,8 @@ feature {NONE} -- Initialization
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_a_reply_is_a_message_that_names_its_parent, "a_reply_is_a_message_that_names_its_parent")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_only_the_author_edits_but_an_admin_may_delete, "only_the_author_edits_but_an_admin_may_delete")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_summary_is_never_a_room_event, "summary_is_never_a_room_event")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_summary_is_a_private_ask_and_names_its_source, "summary_is_a_private_ask_and_names_its_source")
+			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_a_private_ask_neither_resumes_a_session_nor_becomes_one, "a_private_ask_neither_resumes_a_session_nor_becomes_one")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_summary_spends_its_own_budget, "summary_spends_its_own_budget")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_summary_says_when_there_is_nothing_to_say, "summary_says_when_there_is_nothing_to_say")
 			run_test (agent (create {PARTICIPANTS_ASSAULT}).test_summary_gate_refuses_a_stranger, "summary_gate_refuses_a_stranger")
