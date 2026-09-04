@@ -309,24 +309,43 @@ right to ask a question.
 
 ---
 
-## 4c. The menu bar
+## 4c. The menu bar, and the keys
 
-Across the top: **File**, **Edit**, **Room**, **Help**.
+Across the top: **File**, **Edit**, **Room**, **Help** — each with its mnemonic letter
+underlined (`F`, `E`, `R`, `H`).
 
-- **Edit** names the combos that have always worked in the composer — Cut `Ctrl+X`,
-  Copy `Ctrl+C`, Paste `Ctrl+V`, Select All `Ctrl+A`. Items grey out live, so Paste
-  is dead when the clipboard is empty. (Right-clicking the composer offers the same
-  menu; it always did.)
-- **Room** does by click what the composer does by verb: *Summarize the room now*
-  and *Catch me up on what I missed*.
+- **Edit** — Cut `Ctrl+X`, Copy `Ctrl+C`, Paste `Ctrl+V`, Select All `Ctrl+A`. These are
+  **window-wide** now: they work wherever the caret is, and they go to whichever half of
+  the room you are looking at. Click in the composer and Copy takes the line you typed;
+  click a bubble and the same Copy takes the bubble. Items grey live — with a bubble in
+  focus, Cut and Paste are dead, because nothing removes text from a transcript or puts
+  text into it. `Ctrl+Z` and `Ctrl+Y` are deliberately NOT accelerators, so the composer's
+  own undo stack still has them. (Right-clicking the composer offers the same menu; it
+  always did.)
+- **Room** — *Summarize the room now* `Ctrl+M`, *Catch me up on what I missed* `Ctrl+U`.
+  The typed forms still work and are spelled out under **Help > How to address the
+  assistant**.
 - **Help > About** names the version, the build date and the fleet this build was
   compiled against. All three come from `CHAT_VERSION`, the one place any of them
   is written — **and the installer declares the same number at**
   **`installer\SimpleChat.iss` line 48. Changing a version means changing both.**
 
-The combos work while the composer has focus. They are **not** window-wide: keys go
-only to the focused widget today, so a global accelerator needs a simple_widgets
-change and is deliberately not on this branch.
+**Selecting and copying a bubble.** Press and drag inside a bubble to select; double-click
+takes a word; Escape clears; right-click offers Copy / Select Message / Select None. A
+selection lives inside ONE bubble by design — a range spanning three speakers has no honest
+text to hand the clipboard. With a bubble in focus, `Ctrl+A` takes the whole of that one
+message.
+
+**Alt+F does not open the File menu yet, and that is not this client's doing.** simple_shell
+forwards `WM_SYSKEYDOWN` for the OEM plus/minus pair alone, so no Alt+letter reaches this
+window at all. The underlines are real and the mnemonics answer the moment that shell
+release lands; the Ctrl accelerators above work end to end today.
+
+**Check the lines while you are here.** Ask `@claude` for a numbered list — "@claude give me
+three steps for laying a course of block" — and look at the bubble. The steps must be on
+three LINES, and there must be no empty box anywhere in the reply. Those boxes were every
+newline being shaped as a glyph; the workaround that flattened a reply into one paragraph to
+avoid them is retired, and this is the check that it was safe to retire.
 
 ---
 

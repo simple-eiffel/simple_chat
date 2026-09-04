@@ -507,30 +507,38 @@ feature -- SUMMARY_ASK: a summary request, or just a message
 
 feature -- What a bubble can actually draw
 
-	test_a_bubble_never_carries_a_line_break
-			-- The empty boxes Larry saw in the assistant's replies. SW_CHAT_THREAD
-			-- wraps by splitting on the SPACE character alone, so a newline is
-			-- never a break: it stays inside a "word" and is drawn as a glyph.
-			-- His own messages are single lines and looked right; the
-			-- assistant's are not, and every line break in them became a box.
-			-- Not emoji (the Noto artwork resolves) and not CRLF on the wire
-			-- (the store holds what was sent) - the wrap, and only the wrap.
+	test_a_bubble_keeps_the_line_breaks_it_was_given
+			-- BUBBLE_TEXT, RETIRED - and this is the test that replaces its own.
+			-- The empty boxes Larry saw came from SW_CHAT_THREAD wrapping on the
+			-- SPACE character alone: a newline stayed inside a "word" and was
+			-- shaped, so cairo drew it as .notdef. The workaround turned every
+			-- break into a space and cost the structure of every numbered list.
+			-- simple_widgets 0.6.0 cuts a message into PARAGRAPHS before either
+			-- text path lays anything out, so the client now hands the thread
+			-- the text exactly as it was sent - and this is the law it relies on.
 		local
-			b: BUBBLE_TEXT
+			t: SW_CHAT_THREAD
+			p: ARRAYED_LIST [STRING_32]
 		do
-			create b
-			assert ("a newline becomes a space", b.one_line ({STRING_32} "one%Ntwo").same_string ({STRING_32} "one two"))
-			assert ("CRLF becomes ONE space", b.one_line ({STRING_32} "one%R%Ntwo").same_string ({STRING_32} "one two"))
-			assert ("a blank line does not become two spaces", b.one_line ({STRING_32} "one%N%Ntwo").same_string ({STRING_32} "one two"))
-			assert ("a tab is a blank too", b.one_line ({STRING_32} "one%Ttwo").same_string ({STRING_32} "one two"))
-			assert ("leading and trailing breaks are dropped", b.one_line ({STRING_32} "%N one %N").same_string ({STRING_32} "one"))
-			assert ("ordinary text is untouched", b.one_line ({STRING_32} "the roof job starts Monday").same_string ({STRING_32} "the roof job starts Monday"))
-			assert ("empty stays empty", b.one_line ({STRING_32} "").is_empty)
-			assert ("nothing that can be drawn as a box survives",
-				not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%N')
-				and not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%R')
-				and not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%T'))
-			assert ("BMP characters Larry checked are kept", b.one_line ({STRING_32} "em dash %U2014 and %U2122").has_substring ({STRING_32} "%U2014"))
+			create t.make
+			p := t.paragraphs_of ({STRING_32} "one%Ntwo%Nthree")
+			assert ("three lines, not one flattened paragraph", p.count = 3)
+			assert ("in the order they were written",
+				p [1].same_string ({STRING_32} "one") and p [3].same_string ({STRING_32} "three"))
+			assert ("CRLF is ONE break, not two", t.paragraphs_of ({STRING_32} "one%R%Ntwo").count = 2)
+			assert ("a lone CR ends a line too", t.paragraphs_of ({STRING_32} "one%Rtwo").count = 2)
+			assert ("a run of breaks is at most ONE blank line", t.paragraphs_of ({STRING_32} "a%N%N%N%Nb").count = 3)
+			assert ("a trailing break makes no empty last line", t.paragraphs_of ({STRING_32} "one%N").count = 1)
+			assert ("ordinary text is still one paragraph",
+				t.paragraphs_of ({STRING_32} "the roof job starts Monday").count = 1)
+			assert ("a tab is a space, never a box", t.paragraphs_of ({STRING_32} "one%Ttwo") [1].same_string ({STRING_32} "one two"))
+			t.add_message ({SW_CHAT_THREAD}.Role_theirs, {STRING_32} "1. mix the mortar%N2. wet the block%N3. lay the course")
+			assert ("the thread STORED the breaks it was handed", t.messages [1].text.occurrences ('%N') = 2)
+			assert ("and SHOWS them as three lines", t.display_text (1).occurrences ('%N') = 2)
+			assert ("with the numbers still starting their own lines",
+				t.display_text (1).has_substring ({STRING_32} "%N2. wet the block"))
+			assert ("BMP characters Larry checked survive the cut",
+				t.paragraphs_of ({STRING_32} "em dash %U2014 and %U2122") [1].has_substring ({STRING_32} "%U2014"))
 		end
 
 feature -- Help > About: what version am I running

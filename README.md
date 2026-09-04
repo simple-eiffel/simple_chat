@@ -49,6 +49,19 @@ buying a gap for a flat child, so the thread sits one 16 px theme gap above the 
 line comes back the instant there is something to say. Offscreen at 2x, before and after:
 `.eiffel-workflow/evidence/gap-before.png`, `gap-after.png`.
 
+**The bubbles are lines now, and they are text.** simple_widgets 0.6.0 cuts a message into
+paragraphs before either text path lays anything out, so an assistant's numbered list arrives as a
+numbered list — `BUBBLE_TEXT`, the workaround that flattened every reply into one paragraph so the
+newlines would not be shaped into empty boxes, named this release as its retirement condition and is
+gone. The same release brings the keyboard: the menu bar owns the Alt key and draws its mnemonics
+underlined, and `Ctrl+X` / `C` / `V` / `A` plus the room's own `Ctrl+M` (summarize) and `Ctrl+U`
+(catch up) are window-wide accelerators. A claimed accelerator *takes* the key from the focused
+widget, so every editing key ROUTES: Copy takes the composer's selection when the composer has the
+caret and the bubble's when a bubble does, and the Edit menu calls the very same agents, so there is
+one meaning of Copy and two ways to reach it. Offscreen at 2x:
+`.eiffel-workflow/evidence/thread-lines-client-2x.png`. Alt+letter *delivery* is still a simple_shell
+gap and is named as one.
+
 What no headless assault can prove is that the **pixels** are right; that is `RUNBOOK.md`, and it is
 the one thing still owed. Two limits are stated rather than hidden: an image event is shown as a
 named, sized attachment line and not as a picture (no WIC decoder is linked into this client), and

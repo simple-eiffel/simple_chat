@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — simple_widgets 0.6.0 adopted: real lines, real keys, real copy
+
+- **The newline workaround is RETIRED, and the structure it cost is back.**
+  `BUBBLE_TEXT.one_line` turned every line break into a space so `SW_CHAT_THREAD` would
+  not shape an LF into an empty box, and its own class note named simple_widgets'
+  `feature/thread-lines-keys-selection` as its retirement condition. That branch merged
+  as **0.6.0**: the thread now cuts a message into PARAGRAPHS before either text path
+  lays anything out. Both call sites — `show_event` and `show_hint` — hand the thread
+  the text exactly as it was sent, and `src/client/bubble_text.e` is DELETED; nothing
+  else needed it. A three-line reply is three lines and a numbered list is a numbered
+  list, proven not by eye but by `layout_spans`, which says how many `SHAPED_LAYOUT`s a
+  message became — one per paragraph, so **3** for a three-line reply and **1** for a
+  flat one. Offscreen at the room's real 2x:
+  `.eiffel-workflow/evidence/thread-lines-client-2x.png`.
+
+- **The menu bar owns the Alt key and draws its mnemonics.** `&File`, `&Edit`, `&Room`,
+  `&Help`; `Cu&t`, `&Copy`, `&Paste`, `Select &All`, `&Summarize the room now`, `&Catch
+  me up on what I missed`, `&How to address the assistant`, `&About simple_chat`. The
+  library keeps the PLAIN reading in `labels` and `items.label`, so nothing that reads a
+  label sees the marker, and `SW_WINDOW.set_menu_bar` is called with the bar — which bar
+  owns Alt is TOLD, never discovered.
+
+- **Six window-wide accelerators.** `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Ctrl+A` for editing,
+  and `Ctrl+M` (*Summarize the room now*) and `Ctrl+U` (*Catch me up on what I missed*)
+  for the room. Both room keys are stated in the menu itself, in the hint column that used
+  to carry the typed form; the typed forms did not go away, they moved into
+  **Help > How to address the assistant**, which is where a sentence belongs and a hint
+  column is not.
+
+- **THE RULE, and the routing it forces.** simple_widgets consults the window's
+  accelerator table BEFORE the focused widget, so a claimed key is **taken** from that
+  widget: claiming `Ctrl+C` removed it from `SW_TEXT_BOX`'s own control-code-3 handling
+  *and* from `SW_CHAT_THREAD`'s. Every editing accelerator therefore ROUTES.
+  `route_copy` copies the pane's selection when the pane has focus and the composer's
+  when the composer has. `route_cut` and `route_paste` do nothing at all with a bubble in
+  focus, because nothing removes text from a transcript or puts text into it.
+  `route_select_all` takes the whole composer line, or the whole of **one** bubble —
+  simple_widgets keeps a selection inside a single message deliberately, since a range
+  spanning three speakers has no honest text to hand the clipboard. `Ctrl+Z` and `Ctrl+Y`
+  are deliberately **not** registered, so undo and redo still reach the composer's own
+  stack exactly as they always did.
+
+- **The Edit menu can no longer offer what the key would refuse.** Every item calls the
+  same agent its accelerator calls, and its greying reads the same `can_cut` / `can_copy`
+  / `can_paste` / `can_select_all` query that agent guards itself with. One meaning of
+  Copy in this window, two doors to it.
+
+- **Copying from the thread needed nothing new in the pane.** A press lands on the thread
+  (`SW_WINDOW.target_at`), the thread accepts focus, and the library's own dispatch gives
+  it the keys — so press-drag, double-click, right-click *Copy* and `Ctrl+C` all work
+  through simple_widgets. What this client owed was the routing above and the greying,
+  and both focus cases are assaulted through the clipboard the feature really writes to
+  (whatever was on it is put back at the end of the test).
+
+- **Eight assaults, 230 → 238, zero skips**, and one retired: the old
+  `a_bubble_never_carries_a_line_break` — which pinned the workaround — is replaced by
+  `a_bubble_keeps_the_line_breaks_it_was_given`, which pins the law that made the
+  workaround removable. The new eight cover the lines reaching the thread and the frame
+  written from that state; the mnemonics and who owns Alt; the room menu stating its two
+  keys; the accelerator table including the keys deliberately left unclaimed; Copy
+  routing to whichever widget has focus; Cut/Paste/Select All routing the same way;
+  the Edit menu greying for both focus cases; and a press on a bubble being what gives
+  the pane the keys.
+
+### Found while adopting — a simple_widgets 0.6.0 defect, NOT fixed here
+
+- **`SW_CHAT_THREAD` cannot be given a message after it has drawn a shaped frame.** Its
+  invariant `spans_match_when_present` requires `layout_spans.count = messages.count`
+  whenever `shaped_layouts` is non-empty, but `layout_spans` is rebuilt only by `draw`.
+  So `add_message` after a first paint leaves the counts one apart and the invariant
+  fails — which is *precisely* what this client does on every event after the first
+  frame. It does not bite Larry, because the shipped client is finalized and finalized
+  code checks no invariants; it bites any workbench build and it bit this branch's own
+  assault, which now fills a pane and then paints it rather than painting and then
+  filling. **The fix belongs in simple_widgets** (rebuild the spans in `add_message`, or
+  weaken the invariant to `<=` and state the rebuild in `draw`), and this branch was
+  scoped to `apps/client`, `src/client`, `testing` and the docs, so it is reported here
+  rather than patched around.
+
+
 ### Fixed
 
 - **`@claude sum` was posted to the room instead of being intercepted.** The
@@ -78,22 +158,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lay out the lines it is given. Once that lands this class is not merely
   unnecessary but harmful, and both call sites come out.
 
+  **That condition is met and the class is gone** — see *simple_widgets 0.6.0 adopted*
+  at the top of this section.
+
 - **"Room > Summarize the room now" was a dead menu item.** The two lines wiring the
   menu to its actions were never in the file — an earlier patch reported success
   having applied only half of itself — so `on_summary` stayed Void, which builds the
   items DISABLED. Larry clicked a dead item while the typed `@claude sum` worked,
   because the typed path does not go through that wiring.
 
-### Known — needs simple_widgets, not simple_chat
+### Known — CLOSED by simple_widgets 0.6.0, except one half that is simple_shell's
 
-- **No Alt/Alt+F, and no mnemonic underlines on the menu bar.** `SW_WINDOW` routes
-  keys only to the focused widget and `handle_key` carries neither a Ctrl nor an Alt
-  flag; there is no accelerator or mnemonic mechanism in the library at all.
-- **The chat display cannot be selected or copied.** The thread is drawn bubbles with
-  no selection model; only the composer is a real text box.
-
-  Both are on simple_widgets' `feature/thread-lines-keys-selection` with the newline
-  fix. When it lands, the accelerators get registered and Copy gets wired here.
+- ~~**No Alt/Alt+F, and no mnemonic underlines on the menu bar.**~~ ~~**The chat display
+  cannot be selected or copied.**~~ Both were waiting on simple_widgets'
+  `feature/thread-lines-keys-selection`. It merged as 0.6.0 and this branch adopts it —
+  see *simple_widgets 0.6.0 adopted* at the top of Unreleased.
+- **Still open: Alt+letter DELIVERY, and it is not simple_widgets' to close either.**
+  simple_shell answers `WM_SYSKEYDOWN` for the OEM plus/minus pair alone and lets every
+  other syskey fall through to `DefWindowProc`, so `Alt+F` opens the SYSTEM menu and not
+  File. The mnemonics here are parsed, drawn underlined and answered —
+  `SW_WINDOW.activate_mnemonic` is knocked on directly by the assault, exactly as the
+  shell will knock on it — so **Alt delivery follows the simple_shell release**, with no
+  further change in this repository. The Ctrl accelerators work end to end today.
 
 - **Eleven assaults**, 219 → **230**, zero skips. Among them:
   `the_window_keeps_its_heartbeat_while_a_summary_runs` times every collect while a

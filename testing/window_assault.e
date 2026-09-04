@@ -764,6 +764,343 @@ feature -- The room's vertical accounting
 			-- Where `test_the_gap_holds_while_the_composer_grows' leaves its frame,
 			-- written from the project root the runner is started in.
 
+feature -- Line breaks, whole: the workaround retired
+
+	test_the_pane_hands_the_thread_its_line_breaks
+			-- BUBBLE_TEXT flattened every assistant reply into ONE paragraph so
+			-- the thread would not draw a box for each newline. simple_widgets
+			-- 0.6.0 breaks lines itself, so the pane hands the text over intact -
+			-- and the proof that it RENDERS as lines is `layout_spans': the
+			-- shaped path builds one SHAPED_LAYOUT per PARAGRAPH, so a three-line
+			-- reply is three layouts and a flattened one would be a single one.
+			-- The evidence frame is written from this very state, at the room's
+			-- real 2x scale.
+		local
+			v, v_flat: SW_CHAT_VIEW
+			l_flat: REAL_64
+		do
+				-- the baseline is measured in a pane of its own, not by rendering
+				-- this one twice: SW_CHAT_THREAD's `spans_match_when_present'
+				-- invariant forbids adding a message AFTER a shaped frame has been
+				-- drawn (see CHANGELOG, `Found while adopting'), so an assault must
+				-- fill a pane and then paint it, never paint and then fill.
+			v_flat := pane
+			v_flat.show_event (message_event (1, 9, "the roof job starts Monday"), "larry", True)
+			v_flat.window.request_render
+			l_flat := v_flat.thread.content_h
+			v := pane
+			v.show_event (message_event (1, 9, "the roof job starts Monday"), "larry", True)
+			v.show_event (message_event (2, 9, "Here is what I found.%NThe flashing is the leak.%NThe shingles are fine."), "claude", False)
+			v.show_event (message_event (3, 9, "1. mix the mortar%N2. wet the block%N3. lay the course"), "claude", False)
+			v.show_hint ({STRING_32} "a hint keeps its own break too%Nlike this")
+			v.window.request_render
+			assert ("the bubble carries the breaks it was sent - nothing flattened them",
+				v.thread.messages [2].text.occurrences ('%N') = 2)
+			assert ("and the bubble SHOWS three lines", v.thread.display_text (2).occurrences ('%N') = 2)
+			assert ("the numbered list keeps its numbers on their own lines",
+				v.thread.display_text (3).has_substring ({STRING_32} "%N3. lay the course"))
+			assert ("a hint breaks too", v.thread.display_text (4).occurrences ('%N') = 1)
+				-- one layout per PARAGRAPH is what makes them real lines and not
+				-- one long paragraph that happened to wrap
+			assert ("a shaped frame was laid out", v.thread.layout_spans.count = v.thread.count)
+			assert ("the flat message is exactly one layout", v.thread.layout_spans [1].span = 1)
+			assert ("the three-line reply is three", v.thread.layout_spans [2].span = 3)
+			assert ("and so is the numbered list", v.thread.layout_spans [3].span = 3)
+			assert ("so the pane is taller than four flat lines would be",
+				v.thread.content_h > l_flat * 4.0)
+			print ("    flat bubble content " + l_flat.out + "  with three-line replies " + v.thread.content_h.out
+				+ "  spans " + v.thread.layout_spans [1].span.out + "/" + v.thread.layout_spans [2].span.out
+				+ "/" + v.thread.layout_spans [3].span.out + "/" + v.thread.layout_spans [4].span.out + "%N")
+			assert ("the evidence frame is on disk", v.window.write_frame (Lines_evidence_path))
+		end
+
+	Lines_evidence_path: STRING_32 = ".eiffel-workflow/evidence/thread-lines-client-2x.png"
+			-- Where `test_the_pane_hands_the_thread_its_line_breaks' leaves its
+			-- frame, written from the project root the runner is started in.
+
+feature -- The menu bar: mnemonics, and who owns the Alt key
+
+	test_the_menu_bar_declares_its_mnemonics_and_owns_the_alt_key
+			-- Every pad and every item carries an `&'. `labels' and `items.label'
+			-- keep the PLAIN reading - nothing that reads a label sees the marker
+			-- - and the declaration survives in `raw_labels', where the underline
+			-- and the letter lookup find it. Alt+letter DELIVERY is a simple_shell
+			-- gap; `activate_mnemonic' is the gesture itself and is knocked on
+			-- here exactly as the shell will knock on it.
+		local
+			v: SW_CHAT_VIEW
+			mb: SW_MENU_BAR
+			m: SW_MENU
+		do
+			v := pane
+			assert ("the window was TOLD which bar owns Alt", v.window.menu_bar = v.menu_bar)
+			check attached v.menu_bar as b then mb := b end
+			assert ("four pads", mb.labels.count = 4)
+			assert ("and a reader still sees the plain words",
+				mb.labels [1].same_string ({STRING_32} "File") and mb.labels [2].same_string ({STRING_32} "Edit")
+				and mb.labels [3].same_string ({STRING_32} "Room") and mb.labels [4].same_string ({STRING_32} "Help"))
+			assert ("the declaration survives", mb.raw_labels [1].same_string ({STRING_32} "&File"))
+			assert ("F is the letter File underlines", mb.pad_underline_index (1) = 1)
+			assert ("E finds Edit", mb.menu_for_mnemonic ({CHARACTER_32} 'e') = 2)
+			assert ("R finds Room, whatever the case", mb.menu_for_mnemonic ({CHARACTER_32} 'R') = 3)
+			assert ("H finds Help", mb.menu_for_mnemonic ({CHARACTER_32} 'h') = 4)
+			assert ("and Z finds nothing", mb.menu_for_mnemonic ({CHARACTER_32} 'z') = 0)
+				-- the gesture, end to end, minus the keystroke the shell cannot
+				-- yet deliver
+				-- with something selected in the composer, so every Edit item is
+				-- live: `item_for_mnemonic' answers ENABLED items only, which is
+				-- the library being careful, not this menu being wrong
+			v.input.set_text ({STRING_32} "a line, so the whole Edit menu is live")
+			v.input.select_all
+			assert ("Alt+E opens a menu", v.window.activate_mnemonic ({CHARACTER_32} 'e'))
+			check attached v.window.open_popup as pm then m := pm end
+			assert ("Cut, Copy, Paste, a rule and Select All", m.items.count = 5)
+			assert ("plain labels here too",
+				m.items [1].label.same_string ({STRING_32} "Cut") and m.items [5].label.same_string ({STRING_32} "Select All"))
+			assert ("Cut underlines its t, not its C", m.item_underline_index (1) = 3)
+			assert ("and A picks Select All", m.item_for_mnemonic ({CHARACTER_32} 'a') = 5)
+			assert ("the combos are named beside the items",
+				m.items [2].hint.same_string ({STRING_32} "Ctrl+C") and m.items [5].hint.same_string ({STRING_32} "Ctrl+A"))
+		end
+
+	test_the_room_menu_states_the_keys_it_now_answers_to
+			-- Ctrl+M and Ctrl+U, said out loud where a member will look for them.
+			-- The typeable forms did not go away; they moved to Help, which is
+			-- where a sentence belongs and a hint column is not.
+		local
+			v: SW_CHAT_VIEW
+			m: SW_MENU
+		do
+			v := pane
+			v.set_on_summary (agent record_room_ask ({STRING_32} "summary"))
+			v.set_on_catch_up (agent record_room_ask ({STRING_32} "catch up"))
+			assert ("Alt+R opens the Room menu", v.window.activate_mnemonic ({CHARACTER_32} 'r'))
+			check attached v.window.open_popup as pm then m := pm end
+			assert ("two asks", m.items.count = 2)
+			assert ("Summarize says Ctrl+M", m.items [1].hint.same_string ({STRING_32} "Ctrl+M"))
+			assert ("Catch me up says Ctrl+U", m.items [2].hint.same_string ({STRING_32} "Ctrl+U"))
+			assert ("both are live once the host has said what they mean",
+				m.items [1].enabled and m.items [2].enabled)
+			assert ("S picks Summarize", m.item_for_mnemonic ({CHARACTER_32} 's') = 1)
+			assert ("C picks Catch me up", m.item_for_mnemonic ({CHARACTER_32} 'c') = 2)
+			assert ("and Help still spells the typeable form out",
+				v.Text_addressing_help.has_substring ({STRING_32} "catch me up")
+				and v.Text_addressing_help.has_substring ({STRING_32} "Ctrl+M"))
+		end
+
+feature -- Accelerators, and the routing rule that makes them safe
+
+	test_the_ctrl_keys_are_claimed_window_wide_and_undo_is_not
+			-- The library consults the window's table BEFORE the focused widget,
+			-- so a claimed key is TAKEN from that widget. Six keys are claimed
+			-- here and no more: Ctrl+Z and Ctrl+Y stay unclaimed on purpose, and
+			-- so still reach the composer's own undo stack the way they always
+			-- did. The modifier state must match EXACTLY, which is why Ctrl+C and
+			-- Ctrl+Shift+C are different keys.
+		local
+			v: SW_CHAT_VIEW
+		do
+			v := pane
+			assert ("six keys, and no more", v.window.accelerators.count = 6)
+			assert ("Ctrl+X", v.window.accelerator_for (v.Vk_x, True, False, False) > 0)
+			assert ("Ctrl+C", v.window.accelerator_for (v.Vk_c, True, False, False) > 0)
+			assert ("Ctrl+V", v.window.accelerator_for (v.Vk_v, True, False, False) > 0)
+			assert ("Ctrl+A", v.window.accelerator_for (v.Vk_a, True, False, False) > 0)
+			assert ("Ctrl+M", v.window.accelerator_for (v.Vk_m, True, False, False) > 0)
+			assert ("Ctrl+U", v.window.accelerator_for (v.Vk_u, True, False, False) > 0)
+			assert ("Ctrl+Z is NOT claimed, so undo still reaches the composer",
+				v.window.accelerator_for (90, True, False, False) = 0)
+			assert ("nor is Ctrl+Y", v.window.accelerator_for (89, True, False, False) = 0)
+			assert ("a bare C is nobody's accelerator", v.window.accelerator_for (v.Vk_c, False, False, False) = 0)
+			assert ("and Ctrl+Shift+C is a DIFFERENT key", v.window.accelerator_for (v.Vk_c, True, False, True) = 0)
+			room_asks.wipe_out
+			v.set_on_summary (agent record_room_ask ({STRING_32} "summary"))
+			v.set_on_catch_up (agent record_room_ask ({STRING_32} "catch up"))
+			assert ("Ctrl+M is consumed by the window", v.window.fire_accelerator (v.Vk_m, True, False, False))
+			assert ("Ctrl+U too", v.window.fire_accelerator (v.Vk_u, True, False, False))
+			assert ("and each ran its own errand, in order",
+				room_asks.count = 2 and then (room_asks [1].same_string ({STRING_32} "summary")
+				and room_asks [2].same_string ({STRING_32} "catch up")))
+			assert ("a key nobody claimed is not consumed", not v.window.fire_accelerator (90, True, False, False))
+		end
+
+	test_copy_goes_to_whichever_widget_has_the_focus
+			-- THE RULE. Claiming Ctrl+C took it away from BOTH widgets' own
+			-- handling - SW_TEXT_BOX reads control code 3 and so does
+			-- SW_CHAT_THREAD - so `route_copy' is now the only path either of
+			-- them has, and it must hand the gesture to the one the member is
+			-- looking at. Both focus cases, through the clipboard the feature
+			-- really writes to; whatever was on it is put back at the end.
+		local
+			v: SW_CHAT_VIEW
+			clip: SW_CLIPBOARD
+			l_saved: STRING_32
+		do
+			v := pane
+			create clip
+			l_saved := clip.text.twin
+			v.show_event (message_event (1, 9, "the flashing is the leak"), "claude", False)
+			v.window.request_render
+			v.input.set_text ({STRING_32} "what I am still typing")
+			v.input.select_all
+			v.thread.select_message (1)
+			assert ("both have something selected", v.input.has_selection and v.thread.has_selection)
+			assert ("and the two selections are not the same words",
+				not v.input.selected_text.same_string (v.thread.selected_text))
+				-- the composer holds the caret, which is where `run' leaves it
+			v.window.give_focus (v.input)
+			assert ("the pane does not hold the keys", not v.thread_has_focus)
+			v.route_copy
+			assert ("Ctrl+C took the composer's line", clip.text.same_string (v.input.selected_text))
+				-- and now the member clicks a bubble
+			v.window.give_focus (v.thread)
+			assert ("the pane holds them now", v.thread_has_focus)
+			v.route_copy
+			assert ("and the same Ctrl+C took the BUBBLE", clip.text.same_string (v.thread.selected_text))
+			assert ("which is the text the reader was looking at",
+				clip.text.same_string (v.thread.display_text (1)))
+			clip.set_text (l_saved)
+		end
+
+	test_cut_paste_and_select_all_route_the_same_way
+			-- The other three claimed keys. A transcript is never cut into nor
+			-- pasted into, so with the pane focused those two do nothing at all;
+			-- Select All means the whole LINE in the composer and the whole
+			-- MESSAGE in the pane, because simple_widgets keeps a selection
+			-- inside one bubble deliberately.
+		local
+			v: SW_CHAT_VIEW
+		do
+			v := pane
+			v.show_event (message_event (1, 9, "first thing said"), "claude", False)
+			v.show_event (message_event (2, 9, "the last thing said"), "claude", False)
+			v.window.request_render
+			v.input.set_text ({STRING_32} "a line in the composer")
+			v.window.give_focus (v.input)
+			v.route_select_all
+			assert ("Ctrl+A took the whole composer line",
+				v.input.has_selection and v.input.selected_text.same_string ({STRING_32} "a line in the composer"))
+			v.route_cut
+			assert ("Ctrl+X emptied the composer", v.input.text.is_empty)
+			assert ("and left the transcript alone", v.thread.count = 2)
+			v.route_paste
+			assert ("Ctrl+V put it back", v.input.text.same_string ({STRING_32} "a line in the composer"))
+				-- now the pane
+			v.window.give_focus (v.thread)
+			v.route_select_all
+			assert ("Ctrl+A in the pane took the LAST thing said",
+				v.thread.has_selection and v.thread.sel_message = 2)
+			assert ("the whole of it", v.thread.selected_text.same_string (v.thread.display_text (2)))
+			v.route_select_all
+			assert ("and again takes the message the selection is already in", v.thread.sel_message = 2)
+			v.route_cut
+			assert ("Ctrl+X removed nothing from the transcript",
+				v.thread.count = 2 and v.thread.messages [2].text.has_substring ({STRING_32} "the last thing said"))
+			v.route_paste
+			assert ("and Ctrl+V put nothing into it", v.thread.count = 2)
+			assert ("the composer was not touched while the pane had focus",
+				v.input.text.same_string ({STRING_32} "a line in the composer"))
+		end
+
+	test_the_edit_menu_greys_for_both_focus_cases
+			-- An item must never offer what its key would refuse, so the menu
+			-- reads the SAME `can_*' queries the routing guards itself with.
+		local
+			v: SW_CHAT_VIEW
+			m: SW_MENU
+		do
+			v := pane
+			v.show_event (message_event (1, 9, "the ridge cap goes on last"), "claude", False)
+			v.window.request_render
+			v.window.give_focus (v.input)
+			assert ("nothing typed: nothing to cut, copy or select",
+				not v.can_cut and not v.can_copy and not v.can_select_all)
+			assert ("but the composer can always be pasted into", v.can_paste)
+			v.input.set_text ({STRING_32} "a line")
+			assert ("a line, but no selection yet", not v.can_copy and not v.can_cut and v.can_select_all)
+			v.input.select_all
+			assert ("now cut and copy are live", v.can_cut and v.can_copy)
+				-- and the same three, with the pane holding the keys
+			v.window.give_focus (v.thread)
+			assert ("a transcript is never cut into", not v.can_cut)
+			assert ("nor pasted into", not v.can_paste)
+			assert ("and copy is dead until a bubble is selected", not v.can_copy)
+			assert ("Select All is live, because there is a bubble", v.can_select_all)
+			v.route_select_all
+			assert ("and once it has run, copy is live", v.can_copy)
+			assert ("Alt+E opens Edit", v.window.activate_mnemonic ({CHARACTER_32} 'e'))
+			check attached v.window.open_popup as pm then m := pm end
+			assert ("Cut is greyed", not m.items [1].enabled)
+			assert ("Copy is live", m.items [2].enabled)
+			assert ("Paste is greyed", not m.items [3].enabled)
+			assert ("Select All is live", m.items [5].enabled)
+			assert ("and a greyed item does not answer its own letter",
+				m.item_for_mnemonic ({CHARACTER_32} 'p') = 0)
+			assert ("and the composer's own selection is untouched by any of it",
+				v.input.text.same_string ({STRING_32} "a line"))
+		end
+
+	test_a_press_on_a_bubble_is_what_gives_the_pane_the_keys
+			-- Focus follows the press: SW_WINDOW gives it to the widget under the
+			-- point when that widget accepts focus. This pane's part is to put the
+			-- thread where a press finds it and to let it take the keys - and a
+			-- press INSIDE a bubble starts the selection Ctrl+C will copy.
+		local
+			v: SW_CHAT_VIEW
+			l_x, l_y, l_hit_x, l_hit_y: INTEGER
+		do
+			v := pane
+			v.show_event (message_event (1, 9, "press me and drag"), "claude", False)
+			v.window.request_render
+			l_x := (v.thread.x + v.thread.width / 2.0).truncated_to_integer
+			l_y := (v.thread.y + v.thread.height / 2.0).truncated_to_integer
+			assert ("a press in the pane lands on the thread", v.window.target_at (l_x, l_y) = v.thread)
+			assert ("and the thread accepts the keys", v.thread.accepts_focus)
+			assert ("nothing holds them before the press", not v.thread_has_focus)
+				-- find a point actually inside the one bubble, the way the pointer
+				-- would; the bubble hugs its text and does not fill the pane
+			from
+				l_hit_y := (v.thread.y + 4.0).truncated_to_integer
+			until
+				l_hit_y > (v.thread.y + v.thread.height).truncated_to_integer or l_hit_x > 0
+			loop
+				l_x := (v.thread.x + 4.0).truncated_to_integer
+				from
+				until
+					l_x > (v.thread.x + v.thread.width - 4.0).truncated_to_integer or l_hit_x > 0
+				loop
+					if v.thread.hit_test (l_x, l_hit_y).message = 1 then
+						l_hit_x := l_x
+					end
+					l_x := l_x + 8
+				end
+				if l_hit_x = 0 then
+					l_hit_y := l_hit_y + 8
+				end
+			end
+			assert ("there is a point inside the bubble", l_hit_x > 0)
+			assert ("a press there is CONSUMED - the pane needs the capture for the drag",
+				v.thread.handle_click (l_hit_x, l_hit_y))
+			assert ("and it started a selection in that bubble",
+				v.thread.is_selecting and v.thread.sel_message = 1)
+				-- which is exactly what SW_WINDOW's own dispatch does alongside it
+			v.window.give_focus (v.thread)
+			assert ("the pane now owns the keys", v.thread_has_focus)
+			assert ("so Copy would take the bubble, not the composer", not v.can_paste)
+		end
+
+	room_asks: ARRAYED_LIST [STRING_32]
+			-- What the Room menu and its two accelerators asked for, in order.
+		once
+			create Result.make (4)
+		end
+
+	record_room_ask (a_what: STRING_32)
+			-- `on_summary' / `on_catch_up', for the assault.
+		do
+			room_asks.extend (a_what)
+		end
+
 feature {NONE} -- Fixtures: the pane
 
 	pane: SW_CHAT_VIEW

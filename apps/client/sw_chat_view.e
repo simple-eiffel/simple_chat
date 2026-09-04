@@ -61,6 +61,29 @@ note
 		same `submit', which hands the text to the host's agent and clears
 		the line. Nothing here posts: the presenter owns that, and the
 		echo comes back through the poller like everybody else's.
+
+		LINE BREAKS, WHOLE. A message reaches the thread EXACTLY as it was
+		sent. simple_widgets 0.6.0 cuts a bubble into paragraphs before
+		either text path lays anything out, so an LF ends a line instead of
+		being shaped into the empty box Larry saw in every numbered list.
+		BUBBLE_TEXT - the workaround that flattened a reply into one
+		paragraph so it would not draw boxes - named this library release as
+		its own retirement condition and is gone; the structure it cost is
+		back.
+
+		THE KEYBOARD. The menu bar owns the Alt key (`set_menu_bar') and its
+		titles and items carry `&' mnemonics, so File draws with its F
+		underlined. Ctrl+X / C / V / A and the room's own Ctrl+M and Ctrl+U
+		are WINDOW-WIDE accelerators. THE RULE THAT MAKES THAT SAFE: a
+		claimed accelerator is consulted BEFORE the focused widget and so
+		takes the key away from it. Every editing key registered here
+		therefore ROUTES - `route_copy' copies the pane's selection when the
+		pane has focus and the composer's when the composer has - and the
+		Edit menu calls the very same agents, so there is ONE meaning of
+		Copy in this window and two ways to reach it. Alt+letter DELIVERY is
+		a simple_shell gap (it forwards no WM_SYSKEYDOWN for letters yet);
+		the mnemonics draw and answer today and the Alt keystroke arrives
+		with that shell release.
 	]"
 	author: "Larry Rix"
 
@@ -147,6 +170,10 @@ feature {NONE} -- Initialization
 			l_bar.add_menu (Text_menu_edit, agent edit_menu)
 			l_bar.add_menu (Text_menu_room, agent room_menu)
 			l_bar.add_menu (Text_menu_help, agent help_menu)
+				-- Which bar owns the Alt key is told, never discovered: a window
+				-- may hold several bars and only the application knows.
+			window.set_menu_bar (l_bar)
+			register_keys
 		ensure
 			nothing_shown: shown_count = 0
 			nothing_said_of_the_server: not is_connected
@@ -273,7 +300,7 @@ feature -- Basic operations
 	show_event (a_event: CHAT_EVENT; a_sender_name: READABLE_STRING_GENERAL; a_mine: BOOLEAN)
 			-- One bubble, attributed; `a_mine' places it right, sender 0 centres it.
 		do
-			thread.add_message (role_for (a_event, a_mine), bubble_rules.one_line (bubble_text (a_event, a_sender_name)))
+			thread.add_message (role_for (a_event, a_mine), bubble_text (a_event, a_sender_name))
 			shown_ids.extend (a_event.id)
 			redraw
 		ensure then
@@ -317,7 +344,7 @@ feature -- Basic operations
 			-- system event draws with, but never added to `shown_ids': it named
 			-- nobody's message and carries no server id.
 		do
-			thread.add_message ({SW_CHAT_THREAD}.Role_system, bubble_rules.one_line (a_text))
+			thread.add_message ({SW_CHAT_THREAD}.Role_system, a_text)
 			hint_count := hint_count + 1
 			redraw
 		ensure then
@@ -385,43 +412,179 @@ feature -- Conversion (contract support)
 			named_file: (a_event.is_image and attached a_event.attachment as a) implies Result.has_substring (a.original_name)
 		end
 
-feature {NONE} -- What a bubble can actually draw
+feature -- Keyboard routing
 
-	bubble_rules: BUBBLE_TEXT
-			-- The newline workaround, in its own class so it can be assaulted
-			-- without a window. Retired when simple_widgets'
-			-- `feature/thread-lines-keys-selection' lands - see BUBBLE_TEXT.
-		once
-			create Result
+	thread_has_focus: BOOLEAN
+			-- Do the window's keys belong to the PANE right now? False when
+			-- nothing holds focus at all, which is both the headless case and
+			-- the one `run' arranges - it hands the caret to the composer - so
+			-- the composer is the default target and the pane is the exception,
+			-- reached by clicking a bubble.
+		do
+			Result := window.focused = thread
+		ensure
+			definition: Result = (window.focused = thread)
+		end
+
+	can_cut: BOOLEAN
+			-- Cut belongs to the composer alone. A bubble is the record of what
+			-- somebody said and nothing in this client removes text from it.
+		do
+			Result := not thread_has_focus and then input.has_selection and then not input.is_read_only
+		ensure
+			never_from_the_pane: thread_has_focus implies not Result
+		end
+
+	can_copy: BOOLEAN
+			-- Whoever has focus, and only when they have something to give.
+		do
+			if thread_has_focus then
+				Result := thread.has_selection
+			else
+				Result := input.has_selection
+			end
+		ensure
+			the_panes: thread_has_focus implies Result = thread.has_selection
+			the_composers: not thread_has_focus implies Result = input.has_selection
+		end
+
+	can_paste: BOOLEAN
+			-- Nothing pastes into a transcript.
+		do
+			Result := not thread_has_focus and then not input.is_read_only
+		ensure
+			never_into_the_pane: thread_has_focus implies not Result
+		end
+
+	can_select_all: BOOLEAN
+			-- Is there anything for Ctrl+A to take?
+		do
+			if thread_has_focus then
+				Result := thread.count > 0
+			else
+				Result := input.text.count > 0
+			end
+		ensure
+			empty_pane_offers_nothing: (thread_has_focus and thread.count = 0) implies not Result
+		end
+
+	route_cut
+			-- Ctrl+X, and Edit > Cut.
+		do
+			if can_cut then
+				input.cut_selection
+				redraw
+			end
+		end
+
+	route_copy
+			-- Ctrl+X's quieter neighbour, and the one that matters most here:
+			-- the accelerator TOOK Ctrl+C away from both widgets' own handling
+			-- (SW_TEXT_BOX reads control code 3, SW_CHAT_THREAD reads it too),
+			-- so this is now the ONLY path either of them has, and it must hand
+			-- the gesture to whichever one the member is looking at.
+		do
+			if thread_has_focus then
+				thread.copy_selection
+			elseif input.has_selection then
+				input.copy_selection
+			end
+		end
+
+	route_paste
+			-- Ctrl+V, and Edit > Paste.
+		do
+			if can_paste then
+				input.paste_clipboard
+				redraw
+			end
+		end
+
+	route_select_all
+			-- Ctrl+A. In the composer, the whole line. In the pane, the whole of
+			-- ONE bubble: simple_widgets keeps a selection inside a single
+			-- message deliberately - a thread is a list of utterances by
+			-- different speakers and a range spanning three of them has no
+			-- honest text to hand the clipboard - so `all' here means the message
+			-- the selection is already in, or the last thing said.
+		do
+			if thread_has_focus then
+				if thread.count > 0 then
+					if thread.sel_message > 0 and thread.sel_message <= thread.count then
+						thread.select_message (thread.sel_message)
+					else
+						thread.select_message (thread.count)
+					end
+				end
+			else
+				input.select_all
+			end
+			redraw
+		end
+
+	run_summary
+			-- Ctrl+M, and Room > Summarize. One meaning, two doors; silent when
+			-- the host has not said what a summary is.
+		do
+			if attached on_summary as a then
+				a.call
+			end
+		end
+
+	run_catch_up
+			-- Ctrl+U, and Room > Catch me up.
+		do
+			if attached on_catch_up as a then
+				a.call
+			end
+		end
+
+feature {NONE} -- The keyboard, registered
+
+	register_keys
+			-- The window-wide table. A modifier is required by the library and
+			-- every one of these is Ctrl; Alt is registered for nothing, because
+			-- no Alt keystroke reaches this window until simple_shell forwards
+			-- WM_SYSKEYDOWN for letters. The mnemonics are wired anyway: they
+			-- draw underlined today and answer the moment that shell ships.
+		do
+			window.register_accelerator (Vk_x, True, False, False, agent route_cut)
+			window.register_accelerator (Vk_c, True, False, False, agent route_copy)
+			window.register_accelerator (Vk_v, True, False, False, agent route_paste)
+			window.register_accelerator (Vk_a, True, False, False, agent route_select_all)
+			window.register_accelerator (Vk_m, True, False, False, agent run_summary)
+			window.register_accelerator (Vk_u, True, False, False, agent run_catch_up)
 		end
 
 feature -- Constants
 
 	Window_title: STRING_32 = "simple_chat"
 
-	Text_menu_file: STRING_32 = "File"
-	Text_menu_edit: STRING_32 = "Edit"
-	Text_menu_room: STRING_32 = "Room"
-	Text_menu_help: STRING_32 = "Help"
+	Text_menu_file: STRING_32 = "&File"
+			-- The `&' marks the mnemonic letter; `labels' and `items.label'
+			-- keep the PLAIN reading, so nothing that reads a label sees one.
+	Text_menu_edit: STRING_32 = "&Edit"
+	Text_menu_room: STRING_32 = "&Room"
+	Text_menu_help: STRING_32 = "&Help"
 
-	Text_item_close: STRING_32 = "Close"
+	Text_item_close: STRING_32 = "&Close"
 	Text_key_close: STRING_32 = "Alt+F4"
-	Text_item_cut: STRING_32 = "Cut"
+	Text_item_cut: STRING_32 = "Cu&t"
 	Text_key_cut: STRING_32 = "Ctrl+X"
-	Text_item_copy: STRING_32 = "Copy"
+	Text_item_copy: STRING_32 = "&Copy"
 	Text_key_copy: STRING_32 = "Ctrl+C"
-	Text_item_paste: STRING_32 = "Paste"
+	Text_item_paste: STRING_32 = "&Paste"
 	Text_key_paste: STRING_32 = "Ctrl+V"
-	Text_item_select_all: STRING_32 = "Select All"
+	Text_item_select_all: STRING_32 = "Select &All"
 	Text_key_select_all: STRING_32 = "Ctrl+A"
-	Text_item_summarize: STRING_32 = "Summarize the room now"
-	Text_key_summarize: STRING_32 = "type: @claude sum"
-	Text_item_catch_up: STRING_32 = "Catch me up on what I missed"
-	Text_key_catch_up: STRING_32 = "type: @claude catch me up"
-	Text_item_how_to_address: STRING_32 = "How to address the assistant"
-	Text_item_about: STRING_32 = "About simple_chat"
+	Text_item_summarize: STRING_32 = "&Summarize the room now"
+	Text_key_summarize: STRING_32 = "Ctrl+M"
+	Text_item_catch_up: STRING_32 = "&Catch me up on what I missed"
+	Text_key_catch_up: STRING_32 = "Ctrl+U"
+	Text_item_how_to_address: STRING_32 = "&How to address the assistant"
+	Text_item_about: STRING_32 = "&About simple_chat"
 
-	Text_addressing_help: STRING_32 = "Mention the assistant anywhere in a message. Ask it for a summary with sum, recap or catch me up - that answer is yours alone and never goes to the room."
+	Text_addressing_help: STRING_32 = "Mention the assistant anywhere in a message. Ask it for a summary with sum, recap or catch me up - or press Ctrl+M for the summary and Ctrl+U to catch up. That answer is yours alone and never goes to the room."
 			-- The native title bar. It never changes: simple_shell publishes no
 			-- SetWindowText, so the unread count lives in the header strip and the
 			-- tray tooltip instead.
@@ -543,18 +706,20 @@ feature {NONE} -- The menus, built fresh on every open
 		end
 
 	edit_menu: SW_MENU
-			-- The composer's own editing, named and with the combos that have
-			-- always worked there written beside them. Ctrl+A, Ctrl+C, Ctrl+X,
-			-- Ctrl+V, Ctrl+Z and Ctrl+Y reach the box directly when it has
-			-- focus; this menu is where you can SEE that, which is the half
-			-- that was missing.
+			-- Editing, routed. Every item calls the SAME agent the matching
+			-- accelerator calls, and every item's greying reads the SAME
+			-- `can_*' query the agent guards itself with - so the menu can
+			-- never offer what the key would refuse, whichever of the two
+			-- widgets holds focus. Ctrl+Z and Ctrl+Y are deliberately NOT
+			-- accelerators: unclaimed, they still reach the composer's own
+			-- undo stack exactly as they always did.
 		do
 			create Result.make
-			Result.add_item (Text_item_cut, Text_key_cut, input.has_selection and not input.is_read_only, agent input.cut_selection)
-			Result.add_item (Text_item_copy, Text_key_copy, input.has_selection, agent input.copy_selection)
-			Result.add_item (Text_item_paste, Text_key_paste, not input.is_read_only, agent input.paste_clipboard)
+			Result.add_item (Text_item_cut, Text_key_cut, can_cut, agent route_cut)
+			Result.add_item (Text_item_copy, Text_key_copy, can_copy, agent route_copy)
+			Result.add_item (Text_item_paste, Text_key_paste, can_paste, agent route_paste)
 			Result.add_separator
-			Result.add_item (Text_item_select_all, Text_key_select_all, input.text.count > 0, agent input.select_all)
+			Result.add_item (Text_item_select_all, Text_key_select_all, can_select_all, agent route_select_all)
 		end
 
 	room_menu: SW_MENU
@@ -563,8 +728,8 @@ feature {NONE} -- The menus, built fresh on every open
 			-- member alone - a summary is never a room event.
 		do
 			create Result.make
-			Result.add_item (Text_item_summarize, Text_key_summarize, on_summary /= Void, on_summary)
-			Result.add_item (Text_item_catch_up, Text_key_catch_up, on_catch_up /= Void, on_catch_up)
+			Result.add_item (Text_item_summarize, Text_key_summarize, on_summary /= Void, agent run_summary)
+			Result.add_item (Text_item_catch_up, Text_key_catch_up, on_catch_up /= Void, agent run_catch_up)
 		end
 
 	help_menu: SW_MENU
@@ -598,6 +763,17 @@ feature {NONE} -- Implementation
 	send_button: SW_BUTTON
 
 feature -- Constants
+
+	Vk_a: INTEGER = 65
+			-- Win32 virtual keys. A letter's virtual key IS its uppercase
+			-- ASCII code, which is also what SW_WINDOW folds a Ctrl+letter
+			-- control code back to (code + 64), so one number serves both
+			-- of the doors the library tries.
+	Vk_c: INTEGER = 67
+	Vk_m: INTEGER = 77
+	Vk_u: INTEGER = 85
+	Vk_v: INTEGER = 86
+	Vk_x: INTEGER = 88
 
 	Text_scale: REAL_64 = 2.0
 			-- How much larger than SW_THEME's own sizes this window draws
