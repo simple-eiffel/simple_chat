@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-09-03
+
+The window release: a menu bar with File, Edit, Room and Help - About names the version and the fleet it was built against; summary on demand and catch-up on return, each an answer to the person who asked and never a room event; real line breaks in the pane, a numbered list drawn as a list; selection and Copy from the thread; Ctrl and Alt keys that reach the menu; the assistant told it has no tools, and tool-call markup refused; the room's members addressed by handle. Built against simple_widgets 0.6.1, simple_shell 1.9.3, simple_console 1.2.0 and the UTF-8 simple_ai_client.
+
+### Added
+
+- **A menu bar** — File (Close), Edit (Cut/Copy/Paste/Select All, each greyed live),
+  Room (Summarize the room now, Catch me up), Help (How to address the assistant,
+  About). Asked for at the first smoke test and again in the room; never built until
+  now.
+
+- **Help > About**, Larry's exact ask: the version, the build date and the fleet it
+  was built against. `CHAT_VERSION` is the single source of truth for all three;
+  the installer declares the same number at `installer\SimpleChat.iss` line 48
+  (`#define AppVersion`) and **the two are kept in step by hand** — there is no
+  build step that derives one from the other, so a release touches both.
+
+  The Edit combos (`Ctrl+A/C/X/V/Z/Y`) already worked in the composer, and
+  right-clicking it already offered the same menu; the bar is where they become
+  *visible*. Window-wide accelerators are **not** here: `SW_WINDOW` routes keys only
+  to the focused widget and `handle_key` carries no Ctrl flag, so a global
+  `Ctrl+M` needs a simple_widgets change on its own branch.
+
+- **The empty boxes in the assistant's replies were the bubble WRAP, not emoji and
+  not CRLF.** `SW_CHAT_THREAD` wraps by splitting on the space character alone, so a
+  newline is never a break — it stays inside a "word" and is drawn as a glyph.
+  Larry's own messages are single lines and looked right; the assistant's are not,
+  and every line break in them became a box. The Noto artwork resolves correctly
+  (`emoji_u1f916.png` is present) and the store holds exactly what was sent, so both
+  of the theories on offer were wrong; his own instinct — the display's line
+  handling — was right.
+
+  `BUBBLE_TEXT.one_line` collapses breaks and blanks before drawing. **The structure
+  is the cost**: a numbered list arrives as one flowing paragraph. It is a WORKAROUND
+  and it names its own retirement condition — simple_widgets'
+  `feature/thread-lines-keys-selection`, which makes the thread break on newlines and
+  lay out the lines it is given. Once that lands this class is not merely
+  unnecessary but harmful, and both call sites come out.
+
+  **That condition is met and the class is gone** — see *simple_widgets 0.6.0 adopted*
+  at the top of this section.
+
+- **"Room > Summarize the room now" was a dead menu item.** The two lines wiring the
+  menu to its actions were never in the file — an earlier patch reported success
+  having applied only half of itself — so `on_summary` stayed Void, which builds the
+  items DISABLED. Larry clicked a dead item while the typed `@claude sum` worked,
+  because the typed path does not go through that wiring.
+
+- **A summary on demand, and a catch-up when you come back.** Both were designed
+  in Larry's own words after his second look at the branch client — *no rolling
+  summary on an arbitrary timer; a summary on demand (`@claude sum last 10
+  minutes`); and a catch-up when the window regains focus after an absence,
+  summarising exactly the gap* — and both are built to the ruling that came with
+  them: **a summary is an engine reply to the person who asked, shown in their own
+  window, and never a room event.** Events are never per-person, so a summary must
+  not be one.
+
+  **On demand.** A composer line that mentions an assistant and *opens* with a
+  summary verb — `sum`, `summary`, `summarise`, `summarize`, `recap`, `catch (me)
+  up` — is never posted. `CLIENT_APP.send_text` sends it to `POST
+  /rooms/{id}/summary` instead and draws what comes back with `show_hint`, which
+  is a real bubble in the thread that deliberately never touches `shown_model`. So
+  nothing downstream can mistake a summary for a room event. The rule lives in its
+  own class, `SUMMARY_ASK`, and is deliberately conservative: it would rather miss
+  than over-reach, because the cost of guessing wrong is a question the room never
+  sees. `@claude can you write a summary of the roof job` is a question and is
+  posted; `@claude summertime is here` is a message, not a verb.
+
+  **On returning.** simple_shell raises no activation event and swallows minimise
+  outright, so there is nothing to subscribe to: the window's return is found by
+  edge-detecting `view.is_foreground` in the 250 ms tick — **before** the pump,
+  because the pump is what clears the very unread count the decision reads. Two
+  thresholds must both be passed, and they are in `client.toml`:
+  `catch_up_away_seconds` (default 300) and `catch_up_minimum_messages` (default
+  5). A long lunch in a silent room is not a gap, and three messages while the
+  kettle boiled are not an absence. The catch-up summarises `since` the last event
+  seen when the window went away — exactly the gap, not a line more.
+
+- **A summary has its own engine budget.** `summaries_per_hour` (default 12) in
+  `server.toml`, charged under an `s:` prefix, entirely separate from the
+  participant's `p:` answer budget. Catching up on what you missed must never cost
+  you the right to ask a question — which is the whole reason the budgets are two.
+
+### Changed
+
+- **The client's bot hint no longer teaches the superseded rule.** It said
+  *"Address the room's assistant by starting a line with @claude"*; a mention
+  anywhere has addressed the assistant since 0.1.3, and it now says **by
+  mentioning**. A hint that teaches the old rule is worse than no hint, and this
+  one was the discoverability gap Larry raised.
+
+### Fixed
+
+- **`@claude sum` was posted to the room instead of being intercepted.** The
+  client's rule matched `"@" + username` from the roster — but the roster carries
+  the bot USER (`claude_bot`), while the server's address parser matches the
+  participant HANDLE (`@claude`). The two are not the same string, so the rule
+  never fired and the line went through as an ordinary message. Larry hit it on
+  the first try. The client now fetches the real handles from `GET /participants`.
+
+- **That fetch was itself broken**, which is why the first fix changed nothing:
+  `/participants` answers `{"participants": [...]}` — an object *wrapping* the
+  array — and it was decoded as a bare array (the `/rooms` shape). The failure was
+  silent, the handle list stayed empty, and an empty list makes the rule answer
+  False. Both halves are needed; either alone still posts the line.
+
+- **The sign-in hint was telling members to type an address that cannot work.** It
+  was built from the roster too, so it read `@claude_bot`. It now names the
+  handles, and falls back to the roster only when `/participants` has not answered.
+
+- **The assistant answered a question about the local drive with a fabricated tool
+  call.** Asked whether it could see a folder, it produced an `<invoke name="Bash">`
+  block and a directory listing — of folders that **do not exist**. The sandbox and
+  `--tools ""` held and nothing was read; what failed was honesty, and the room was
+  shown a transcript of work that never happened. Two fixes: the persona now states
+  it has no tools, no file access and no memory beyond the room's messages, and
+  must say so when asked; and any reply carrying tool-call markup is replaced with
+  one plain sentence before it can reach the room.
+
+- **A summary would have frozen the window.** It was issued on the GUI processor,
+  and a `claude -p` call takes seconds — Windows ghosts a window that stops pumping
+  for about five of them and discards the keystrokes aimed at it (the standing bar
+  from `phase4-freeze.txt`). The request now runs on `SUMMARY_HOST`'s own
+  processor, the answer lands in a `SUMMARY_SLOT` that only ever assigns fields,
+  and the 250 ms tick collects it — the poller's choreography exactly. The member
+  sees `Summarizing…` at once and keeps a working composer.
+
 ### Added — simple_widgets 0.6.0 adopted: real lines, real keys, real copy
 
 - **The newline workaround is RETIRED, and the structure it cost is back.**
@@ -111,87 +238,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scoped to `apps/client`, `src/client`, `testing` and the docs, so it is reported here
   rather than patched around.
 
-
-### Fixed
-
-- **`@claude sum` was posted to the room instead of being intercepted.** The
-  client's rule matched `"@" + username` from the roster — but the roster carries
-  the bot USER (`claude_bot`), while the server's address parser matches the
-  participant HANDLE (`@claude`). The two are not the same string, so the rule
-  never fired and the line went through as an ordinary message. Larry hit it on
-  the first try. The client now fetches the real handles from `GET /participants`.
-
-- **That fetch was itself broken**, which is why the first fix changed nothing:
-  `/participants` answers `{"participants": [...]}` — an object *wrapping* the
-  array — and it was decoded as a bare array (the `/rooms` shape). The failure was
-  silent, the handle list stayed empty, and an empty list makes the rule answer
-  False. Both halves are needed; either alone still posts the line.
-
-- **The sign-in hint was telling members to type an address that cannot work.** It
-  was built from the roster too, so it read `@claude_bot`. It now names the
-  handles, and falls back to the roster only when `/participants` has not answered.
-
-- **The assistant answered a question about the local drive with a fabricated tool
-  call.** Asked whether it could see a folder, it produced an `<invoke name="Bash">`
-  block and a directory listing — of folders that **do not exist**. The sandbox and
-  `--tools ""` held and nothing was read; what failed was honesty, and the room was
-  shown a transcript of work that never happened. Two fixes: the persona now states
-  it has no tools, no file access and no memory beyond the room's messages, and
-  must say so when asked; and any reply carrying tool-call markup is replaced with
-  one plain sentence before it can reach the room.
-
-- **A summary would have frozen the window.** It was issued on the GUI processor,
-  and a `claude -p` call takes seconds — Windows ghosts a window that stops pumping
-  for about five of them and discards the keystrokes aimed at it (the standing bar
-  from `phase4-freeze.txt`). The request now runs on `SUMMARY_HOST`'s own
-  processor, the answer lands in a `SUMMARY_SLOT` that only ever assigns fields,
-  and the 250 ms tick collects it — the poller's choreography exactly. The member
-  sees `Summarizing…` at once and keeps a working composer.
-
-### Added
-
-- **A menu bar** — File (Close), Edit (Cut/Copy/Paste/Select All, each greyed live),
-  Room (Summarize the room now, Catch me up), Help (How to address the assistant,
-  About). Asked for at the first smoke test and again in the room; never built until
-  now.
-
-- **Help > About**, Larry's exact ask: the version, the build date and the fleet it
-  was built against. `CHAT_VERSION` is the single source of truth for all three;
-  the installer declares the same number at `installer\SimpleChat.iss` line 48
-  (`#define AppVersion`) and **the two are kept in step by hand** — there is no
-  build step that derives one from the other, so a release touches both.
-
-  The Edit combos (`Ctrl+A/C/X/V/Z/Y`) already worked in the composer, and
-  right-clicking it already offered the same menu; the bar is where they become
-  *visible*. Window-wide accelerators are **not** here: `SW_WINDOW` routes keys only
-  to the focused widget and `handle_key` carries no Ctrl flag, so a global
-  `Ctrl+M` needs a simple_widgets change on its own branch.
-
-- **The empty boxes in the assistant's replies were the bubble WRAP, not emoji and
-  not CRLF.** `SW_CHAT_THREAD` wraps by splitting on the space character alone, so a
-  newline is never a break — it stays inside a "word" and is drawn as a glyph.
-  Larry's own messages are single lines and looked right; the assistant's are not,
-  and every line break in them became a box. The Noto artwork resolves correctly
-  (`emoji_u1f916.png` is present) and the store holds exactly what was sent, so both
-  of the theories on offer were wrong; his own instinct — the display's line
-  handling — was right.
-
-  `BUBBLE_TEXT.one_line` collapses breaks and blanks before drawing. **The structure
-  is the cost**: a numbered list arrives as one flowing paragraph. It is a WORKAROUND
-  and it names its own retirement condition — simple_widgets'
-  `feature/thread-lines-keys-selection`, which makes the thread break on newlines and
-  lay out the lines it is given. Once that lands this class is not merely
-  unnecessary but harmful, and both call sites come out.
-
-  **That condition is met and the class is gone** — see *simple_widgets 0.6.0 adopted*
-  at the top of this section.
-
-- **"Room > Summarize the room now" was a dead menu item.** The two lines wiring the
-  menu to its actions were never in the file — an earlier patch reported success
-  having applied only half of itself — so `on_summary` stayed Void, which builds the
-  items DISABLED. Larry clicked a dead item while the typed `@claude sum` worked,
-  because the typed path does not go through that wiring.
-
 ### Known — CLOSED by simple_widgets 0.6.0, except one half that is simple_shell's
 
 - ~~**No Alt/Alt+F, and no mnemonic underlines on the menu bar.**~~ ~~**The chat display
@@ -209,52 +255,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `summary_is_never_a_room_event` pins the law the design hangs on;
   `a_reply_carrying_tool_markup_never_reaches_the_room` covers the fabricated tool
   call, including that `5 < 10` is arithmetic and not markup.
-
-
-### Added
-
-- **A summary on demand, and a catch-up when you come back.** Both were designed
-  in Larry's own words after his second look at the branch client — *no rolling
-  summary on an arbitrary timer; a summary on demand (`@claude sum last 10
-  minutes`); and a catch-up when the window regains focus after an absence,
-  summarising exactly the gap* — and both are built to the ruling that came with
-  them: **a summary is an engine reply to the person who asked, shown in their own
-  window, and never a room event.** Events are never per-person, so a summary must
-  not be one.
-
-  **On demand.** A composer line that mentions an assistant and *opens* with a
-  summary verb — `sum`, `summary`, `summarise`, `summarize`, `recap`, `catch (me)
-  up` — is never posted. `CLIENT_APP.send_text` sends it to `POST
-  /rooms/{id}/summary` instead and draws what comes back with `show_hint`, which
-  is a real bubble in the thread that deliberately never touches `shown_model`. So
-  nothing downstream can mistake a summary for a room event. The rule lives in its
-  own class, `SUMMARY_ASK`, and is deliberately conservative: it would rather miss
-  than over-reach, because the cost of guessing wrong is a question the room never
-  sees. `@claude can you write a summary of the roof job` is a question and is
-  posted; `@claude summertime is here` is a message, not a verb.
-
-  **On returning.** simple_shell raises no activation event and swallows minimise
-  outright, so there is nothing to subscribe to: the window's return is found by
-  edge-detecting `view.is_foreground` in the 250 ms tick — **before** the pump,
-  because the pump is what clears the very unread count the decision reads. Two
-  thresholds must both be passed, and they are in `client.toml`:
-  `catch_up_away_seconds` (default 300) and `catch_up_minimum_messages` (default
-  5). A long lunch in a silent room is not a gap, and three messages while the
-  kettle boiled are not an absence. The catch-up summarises `since` the last event
-  seen when the window went away — exactly the gap, not a line more.
-
-- **A summary has its own engine budget.** `summaries_per_hour` (default 12) in
-  `server.toml`, charged under an `s:` prefix, entirely separate from the
-  participant's `p:` answer budget. Catching up on what you missed must never cost
-  you the right to ask a question — which is the whole reason the budgets are two.
-
-### Changed
-
-- **The client's bot hint no longer teaches the superseded rule.** It said
-  *"Address the room's assistant by starting a line with @claude"*; a mention
-  anywhere has addressed the assistant since 0.1.3, and it now says **by
-  mentioning**. A hint that teaches the old rule is worse than no hint, and this
-  one was the discoverability gap Larry raised.
 
 ### Notes on the shape
 
