@@ -643,6 +643,14 @@ feature -- The per-message menu: what is offered, and to whom
 			assert ("BUT MAY NEVER EDIT IT", not item_enabled (m, {STRING_32} "Edit"))
 			assert ("and Edit is SHOWN, greyed, not hidden", item_present (m, {STRING_32} "Edit"))
 			assert ("anyone may reply to anyone", item_enabled (m, {STRING_32} "Reply"))
+			assert ("AND THE WINDOW IS REALLY PRESENTING IT - not merely holding the object",
+				app.view.window.open_popup = m)
+			assert ("a right-click gave the thread the focus, as every editor does",
+				app.view.thread.is_focused)
+			app.view.window.request_render
+			assert ("the painted menu is on disk", app.view.window.write_frame (Menu_evidence_path))
+			app.view.window.simulate_key_down (27, False, False, False)
+			assert ("and Escape closes what the pointer opened", app.view.window.open_popup = Void)
 		end
 
 	test_a_plain_member_may_do_nothing_to_anyone_elses_message
@@ -856,20 +864,30 @@ feature -- The compose strip: what Return will do, and how to back out
 			assert ("the fold evidence frame is on disk", app.view.window.write_frame (Fold_evidence_path))
 		end
 
+	Menu_evidence_path: STRING_32 = ".eiffel-workflow/evidence/message-menu-greying-2x.png"
+			-- The frame that could not be written until simple_widgets 0.7.1:
+			-- an OPEN context menu, painted, at the room's own 2x, with Edit
+			-- greyed on somebody else's message and Delete live because this
+			-- reader is an administrator. Stage 3 shipped an assertion here
+			-- and deleted the misleading frame it had written instead.
+			--
+			-- LOOK AT THIS FRAME, do not just let it be written: the eight
+			-- emoji items in it draw as EMPTY BOXES. No assertion here can
+			-- see that - every item is present, enabled and carries the
+			-- right emoji string - because `SW_MENU.draw' paints labels
+			-- with the painter's plain `text' while the thread uses
+			-- `draw_shaped_layout', and only the shaping kit resolves
+			-- colour-emoji artwork. Recorded under Known in the CHANGELOG;
+			-- it is a simple_widgets fix, not this branch's.
+
 	Fold_evidence_path: STRING_32 = ".eiffel-workflow/evidence/message-fold-pane.png"
 			-- Where `test_the_fold_reaches_the_real_pane' leaves its frame,
 			-- written from the project root the runner is started in.
 			--
-			-- THERE IS NO COMPANION FRAME OF THE MENU. `SW_WINDOW.show_popup'
-			-- is `feature {NONE}' and only its own right-click dispatch calls
-			-- it, so an assault can build the menu and read every item but
-			-- cannot make the window PAINT one. A frame written here would
-			-- show the pane with no menu on it and be named as though it
-			-- showed the greying, which is worse than no frame at all. What
-			-- would fix it is an additive `simulate_context_click' beside the
-			-- `simulate_wheel' and `simulate_key_down' simple_widgets already
-			-- offers for driving a window headless - a library change, and so
-			-- Larry's to gate.
+			-- The companion frame of the OPEN MENU is written by the greying
+			-- assault, which could not write one until simple_widgets 0.7.1
+			-- gave `simulate_context_click' a way to make the window present
+			-- a popup - `show_popup' is the window's own.
 
 feature {NONE} -- The per-message fixtures
 
@@ -915,18 +933,38 @@ feature {NONE} -- The per-message fixtures
 		end
 
 	menu_on (a_app: CLIENT_APP; a_bubble: INTEGER): detachable SW_MENU
-			-- The per-message menu of bubble `a_bubble', asked for at a point
-			-- the pane itself says is on it. The pane is rendered first
-			-- because hit-testing runs off the LAST FRAME - a menu asked for
-			-- before a paint would find no bubble at all, which is the honest
-			-- answer and a useless one.
+			-- The per-message menu of bubble `a_bubble', opened BY A REAL
+			-- RIGHT-CLICK on a point the pane itself says is on it, and read
+			-- back off the window as `open_popup'.
+			--
+			-- This used to call `context_menu' directly, which built the menu
+			-- object and proved every item on it - but proved nothing about
+			-- the window ever PRESENTING one. simple_widgets 0.7.1 adds
+			-- `simulate_context_click', which delivers event 11 through the
+			-- shipped dispatch: `target_at' finds the widget, `bubble_context'
+			-- walks its ancestors for the first `context_menu' on offer, the
+			-- target takes the focus a right-click gives it, and `show_popup'
+			-- presents the result. Everything between the click and the menu
+			-- is now under test rather than assumed.
+			--
+			-- The pane is rendered first because hit-testing runs off the LAST
+			-- FRAME - a click before a paint would find no bubble at all,
+			-- which is the honest answer and a useless one. And an already
+			-- open menu is dismissed with Escape first, because a second
+			-- context click CLOSES the open one rather than opening another:
+			-- that is the window's own modality, and a fixture that ignored
+			-- it would silently hand back Void every other call.
 		local
 			pt: TUPLE [x, y: REAL_64]
 		do
+			if a_app.view.window.open_popup /= Void then
+				a_app.view.window.simulate_key_down (27, False, False, False)
+			end
 			a_app.view.window.request_render
 			pt := point_on_bubble (a_app.view.thread, a_bubble)
 			if pt.y > 0.0 then
-				Result := a_app.view.thread.context_menu (pt.x, pt.y)
+				a_app.view.window.simulate_context_click (pt.x.rounded, pt.y.rounded)
+				Result := a_app.view.window.open_popup
 			end
 		end
 
