@@ -740,7 +740,7 @@ feature {NONE} -- The keyboard, registered
 			window.register_accelerator (Vk_u, True, False, False, agent run_catch_up)
 			window.register_accelerator (Vk_f, False, True, False, agent open_menu_pad ({CHARACTER_32} 'f'))
 			window.register_accelerator (Vk_e, False, True, False, agent open_menu_pad ({CHARACTER_32} 'e'))
-			window.register_accelerator (Vk_r, False, True, False, agent open_menu_pad ({CHARACTER_32} 'r'))
+			window.register_accelerator (Vk_m, False, True, False, agent open_menu_pad ({CHARACTER_32} 'm'))
 			window.register_accelerator (Vk_h, False, True, False, agent open_menu_pad ({CHARACTER_32} 'h'))
 		end
 
@@ -752,7 +752,20 @@ feature -- Constants
 			-- The `&' marks the mnemonic letter; `labels' and `items.label'
 			-- keep the PLAIN reading, so nothing that reads a label sees one.
 	Text_menu_edit: STRING_32 = "&Edit"
-	Text_menu_room: STRING_32 = "&Room"
+	Text_menu_room: STRING_32 = "Roo&m"
+			-- THE MNEMONIC IS THE M, NOT THE R, AND THAT IS NOT A TYPO.
+			-- Alt+R never reached this application: the NVIDIA overlay
+			-- registers it as a GLOBAL hotkey (its stats panel - FPS, GPU,
+			-- CPU, LAT - is what Larry found on his screen), and a global
+			-- hook is consulted before any window's own table. simple_widgets
+			-- was measured and cleared first: headless, `activate_mnemonic`
+			-- opens pad 3 on 'r' exactly as it does on 'f', 'e' and 'h'. The
+			-- keystroke simply never arrived.
+			--
+			-- The LABEL does not change - it still reads "Room" - because
+			-- underlining a non-initial letter is ordinary Windows practice
+			-- ("E&xit" is the same shape). Renaming the pad to buy a free
+			-- initial would have cost the reader a word he already knows.
 	Text_menu_help: STRING_32 = "&Help"
 
 	Text_item_close: STRING_32 = "&Close"
