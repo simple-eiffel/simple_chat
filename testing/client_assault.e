@@ -466,6 +466,180 @@ feature -- Where the token may go
 			assert ("window set, servers kept", cfg.window_x = 10 and cfg.window_y = 20 and cfg.window_width = 300 and cfg.window_height = 200 and cfg.server_urls.count = 1)
 		end
 
+feature -- SUMMARY_ASK: a summary request, or just a message
+
+	test_summary_ask_needs_a_verb_at_the_front
+			-- The rule would rather MISS than over-reach: a line it claims is
+			-- never posted, so guessing wrong costs the room a question it
+			-- should have seen. A line counts only when, with its mentions
+			-- removed, it OPENS with a summary verb.
+		local
+			s: SUMMARY_ASK
+		do
+			create s
+			assert ("a bare verb", s.is_summary_ask ({STRING_32} "@claude sum"))
+			assert ("the long spelling", s.is_summary_ask ({STRING_32} "@claude summarise the last hour"))
+			assert ("the American spelling", s.is_summary_ask ({STRING_32} "@claude summarize please"))
+			assert ("recap", s.is_summary_ask ({STRING_32} "@claude recap"))
+			assert ("catch me up", s.is_summary_ask ({STRING_32} "@claude catch me up"))
+			assert ("the mention may be anywhere", s.is_summary_ask ({STRING_32} "summarise this @claude"))
+			assert ("an ordinary question is NOT a summary", not s.is_summary_ask ({STRING_32} "@claude what is 2+2?"))
+			assert ("the word in the middle is not the verb at the front", not s.is_summary_ask ({STRING_32} "@claude can you write a summary of the roof job"))
+			assert ("a whole word, not a prefix", not s.is_summary_ask ({STRING_32} "@claude summertime is here"))
+			assert ("a mention alone is not a summary", not s.is_summary_ask ({STRING_32} "@claude"))
+		end
+
+	test_summary_ask_reads_the_window_it_names
+			-- "last 10 minutes" is ten minutes; a number with no unit names no
+			-- window; and a member who types a year gets a day.
+		local
+			s: SUMMARY_ASK
+		do
+			create s
+			assert ("ten minutes", s.minutes_of ({STRING_32} "@claude sum last 10 minutes") = 10)
+			assert ("the short unit", s.minutes_of ({STRING_32} "@claude sum 30 min") = 30)
+			assert ("the singular", s.minutes_of ({STRING_32} "@claude sum 1 minute") = 1)
+			assert ("a trailing stop is still a unit", s.minutes_of ({STRING_32} "@claude sum 5 mins.") = 5)
+			assert ("no unit, no window", s.minutes_of ({STRING_32} "@claude sum the last 10 things") = 0)
+			assert ("no number, no window", s.minutes_of ({STRING_32} "@claude summarise") = 0)
+			assert ("a year is capped at a day", s.minutes_of ({STRING_32} "@claude sum 999999 minutes") = 1440)
+		end
+
+feature -- What a bubble can actually draw
+
+	test_a_bubble_never_carries_a_line_break
+			-- The empty boxes Larry saw in the assistant's replies. SW_CHAT_THREAD
+			-- wraps by splitting on the SPACE character alone, so a newline is
+			-- never a break: it stays inside a "word" and is drawn as a glyph.
+			-- His own messages are single lines and looked right; the
+			-- assistant's are not, and every line break in them became a box.
+			-- Not emoji (the Noto artwork resolves) and not CRLF on the wire
+			-- (the store holds what was sent) - the wrap, and only the wrap.
+		local
+			b: BUBBLE_TEXT
+		do
+			create b
+			assert ("a newline becomes a space", b.one_line ({STRING_32} "one%Ntwo").same_string ({STRING_32} "one two"))
+			assert ("CRLF becomes ONE space", b.one_line ({STRING_32} "one%R%Ntwo").same_string ({STRING_32} "one two"))
+			assert ("a blank line does not become two spaces", b.one_line ({STRING_32} "one%N%Ntwo").same_string ({STRING_32} "one two"))
+			assert ("a tab is a blank too", b.one_line ({STRING_32} "one%Ttwo").same_string ({STRING_32} "one two"))
+			assert ("leading and trailing breaks are dropped", b.one_line ({STRING_32} "%N one %N").same_string ({STRING_32} "one"))
+			assert ("ordinary text is untouched", b.one_line ({STRING_32} "the roof job starts Monday").same_string ({STRING_32} "the roof job starts Monday"))
+			assert ("empty stays empty", b.one_line ({STRING_32} "").is_empty)
+			assert ("nothing that can be drawn as a box survives",
+				not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%N')
+				and not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%R')
+				and not b.one_line ({STRING_32} "a%N%Nb%R%Nc%Td").has ('%T'))
+			assert ("BMP characters Larry checked are kept", b.one_line ({STRING_32} "em dash %U2014 and %U2122").has_substring ({STRING_32} "%U2014"))
+		end
+
+feature -- Help > About: what version am I running
+
+	test_about_names_the_version_the_build_and_the_fleet
+			-- Larry's ask, in his own words: "an Help with an About that will
+			-- tell me the version of simple_chat that I am using". CHAT_VERSION
+			-- is the ONE place any version string is written in the product -
+			-- the installer declares the same number at
+			-- installer\SimpleChat.iss line 48 and the two are kept in step by
+			-- hand, which is why this test names the shape rather than trusting
+			-- a build step that does not exist.
+		local
+			v: CHAT_VERSION
+		do
+			create v
+			assert ("a version is declared", not v.Product.is_empty)
+			assert ("a build date is declared", not v.Built_on.is_empty)
+			assert ("the fleet is named", v.Libraries.has_substring ({STRING_32} "simple_widgets"))
+			assert ("About names the product", v.About_text.has_substring ({STRING_32} "simple_chat"))
+			assert ("About names the version", v.About_text.has_substring (v.Product))
+			assert ("About names the build date", v.About_text.has_substring (v.Built_on))
+			assert ("About names what it was built against", v.About_text.has_substring ({STRING_32} "simple_console"))
+		end
+
+feature -- The GUI never waits for a summary
+
+	test_the_window_keeps_its_heartbeat_while_a_summary_runs
+			-- THE ACCEPTANCE BAR FROM THE FREEZE WORK, applied to summaries.
+			-- Windows ghosts a window that stops pumping for about five seconds
+			-- and DISCARDS the keystrokes aimed at the ghost - so a multi-second
+			-- claude -p call may not be made on the GUI's processor. It is made
+			-- on SUMMARY_HOST's, and the window collects the answer from a
+			-- SUMMARY_SLOT that only ever assigns fields.
+			--
+			-- Here a summary takes THREE SECONDS while this processor plays the
+			-- heartbeat: every collect is timed, and the worst must fit inside a
+			-- frame. Against a synchronous implementation the FIRST collect
+			-- alone would take the whole three seconds.
+		local
+			l_slot: separate SUMMARY_SLOT
+			l_host: separate SLOW_SUMMARY_HOST
+			l_before, l_after: SIMPLE_DATE_TIME
+			l_worst, l_ms, i: INTEGER
+			l_text: STRING_32
+			l_arrived: BOOLEAN
+		do
+			create l_text.make_empty
+			create l_slot.make
+			create l_host.make (3_000)
+			give_slot (l_host, l_slot)
+			mark_waiting (l_slot)
+			start_slow_summary (l_host)
+			from i := 1 until i > 60 or l_arrived loop
+				create l_before.make_now
+				l_text := take_from_slot (l_slot)
+				create l_after.make_now
+				l_ms := ((l_after.to_timestamp - l_before.to_timestamp) * 1000).to_integer_32
+				if l_ms > l_worst then
+					l_worst := l_ms
+				end
+				l_arrived := not l_text.is_empty
+				if not l_arrived then
+					summary_nap (250)
+				end
+				i := i + 1
+			end
+			assert ("the summary did arrive", l_arrived and l_text.has_substring ({STRING_32} "roof job"))
+			assert ("every heartbeat fitted in a frame while the engine ran (worst " + l_worst.out + " ms)", l_worst < 250)
+			assert ("the slot is clear once taken", take_from_slot (l_slot).is_empty)
+		end
+
+	give_slot (a_host: separate SLOW_SUMMARY_HOST; a_slot: separate SUMMARY_SLOT)
+		do
+			a_host.set_slot (a_slot)
+		end
+
+	mark_waiting (a_slot: separate SUMMARY_SLOT)
+		do
+			a_slot.note_request
+		end
+
+	start_slow_summary (a_host: separate SLOW_SUMMARY_HOST)
+			-- Asynchronous: a scalar is all that crosses, so this returns before
+			-- the sleep begins - which is the mechanism under test.
+		do
+			a_host.fetch (1)
+		end
+
+	take_from_slot (a_slot: separate SUMMARY_SLOT): STRING_32
+			-- What the window's tick does: read and clear under one reservation.
+		do
+			create Result.make_empty
+			if a_slot.has_outcome then
+				create Result.make_from_separate (a_slot.text)
+				a_slot.clear
+			end
+		end
+
+	summary_nap (a_milliseconds: INTEGER)
+		require
+			positive: a_milliseconds > 0
+		local
+			l_env: EXECUTION_ENVIRONMENT
+		do
+			create l_env
+			l_env.sleep (a_milliseconds.to_integer_64 * 1_000_000)
+		end
+
 feature -- SERVICE_LOCATOR
 
 	test_locator_prefers_live_local_then_standby

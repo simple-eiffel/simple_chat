@@ -98,6 +98,32 @@ feature -- CLIENT_CONFIG: the file
 			assert ("no session invented", not l_loaded.has_session and l_loaded.load_session = Void)
 		end
 
+	test_client_config_keeps_the_catch_up_thresholds
+			-- Both catch-up thresholds survive the file, and a hostile file
+			-- leaves the defaults standing rather than a nonsense that would
+			-- fire an engine call on every glance at the window (D6).
+		local
+			l_saved, l_loaded: CLIENT_CONFIG
+		do
+			create l_saved.make_defaults
+			assert ("the defaults are a real policy, not zero", l_saved.catch_up_away_seconds = 300 and l_saved.catch_up_minimum_messages = 5)
+			l_saved.set_storage_path (scratch_path ("catch_up_roundtrip"))
+			l_saved.set_catch_up_away_seconds (900)
+			l_saved.set_catch_up_minimum_messages (12)
+			l_saved.save
+			create l_loaded.make_defaults
+			l_loaded.set_storage_path (l_saved.storage_path)
+			l_loaded.load
+			assert ("both came back", l_loaded.catch_up_away_seconds = 900 and l_loaded.catch_up_minimum_messages = 12)
+			create l_loaded.make_defaults
+			l_loaded.set_storage_path (write_scratch ("catch_up_hostile", "[
+				catch_up_away_seconds = -5
+				catch_up_minimum_messages = %"lots%"
+				]"))
+			l_loaded.load
+			assert ("the defaults stand against nonsense", l_loaded.catch_up_away_seconds = 300 and l_loaded.catch_up_minimum_messages = 5)
+		end
+
 	test_client_config_hostile_file_yields_defaults
 			-- Junk that does not parse, then a parseable file of wrong types and
 			-- hostile values: the defaults stand, nothing crashes (D6).

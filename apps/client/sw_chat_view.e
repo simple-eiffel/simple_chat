@@ -85,6 +85,7 @@ feature {NONE} -- Initialization
 			l_root: COLLAPSING_COLUMN
 			l_header: SW_ROW
 			l_composer: COMPOSER_ROW
+			l_bar: SW_MENU_BAR
 		do
 			create room_title.make_from_string_general (a_room_title)
 			create shown_ids.make (64)
@@ -124,7 +125,10 @@ feature {NONE} -- Initialization
 			create l_composer.make
 			l_composer.put (input)
 			l_composer.put (send_button)
+			create l_bar.make
+			menu_bar := l_bar
 			create l_root.make
+			l_root.put (l_bar)
 			l_root.put (l_header)
 			l_root.put (thread)
 			l_root.put (status_label)
@@ -137,6 +141,12 @@ feature {NONE} -- Initialization
 				-- Current lets Current escape, so every attribute has to be set first.
 			input.set_on_submit (agent submit)
 			send_button.set_on_click (agent submit)
+				-- The menu builders are agents on Current too, so they belong here
+				-- with the rest and not beside the widget that holds them.
+			l_bar.add_menu (Text_menu_file, agent file_menu)
+			l_bar.add_menu (Text_menu_edit, agent edit_menu)
+			l_bar.add_menu (Text_menu_room, agent room_menu)
+			l_bar.add_menu (Text_menu_help, agent help_menu)
 		ensure
 			nothing_shown: shown_count = 0
 			nothing_said_of_the_server: not is_connected
@@ -263,7 +273,7 @@ feature -- Basic operations
 	show_event (a_event: CHAT_EVENT; a_sender_name: READABLE_STRING_GENERAL; a_mine: BOOLEAN)
 			-- One bubble, attributed; `a_mine' places it right, sender 0 centres it.
 		do
-			thread.add_message (role_for (a_event, a_mine), bubble_text (a_event, a_sender_name))
+			thread.add_message (role_for (a_event, a_mine), bubble_rules.one_line (bubble_text (a_event, a_sender_name)))
 			shown_ids.extend (a_event.id)
 			redraw
 		ensure then
@@ -307,7 +317,7 @@ feature -- Basic operations
 			-- system event draws with, but never added to `shown_ids': it named
 			-- nobody's message and carries no server id.
 		do
-			thread.add_message ({SW_CHAT_THREAD}.Role_system, a_text)
+			thread.add_message ({SW_CHAT_THREAD}.Role_system, bubble_rules.one_line (a_text))
 			hint_count := hint_count + 1
 			redraw
 		ensure then
@@ -375,9 +385,43 @@ feature -- Conversion (contract support)
 			named_file: (a_event.is_image and attached a_event.attachment as a) implies Result.has_substring (a.original_name)
 		end
 
+feature {NONE} -- What a bubble can actually draw
+
+	bubble_rules: BUBBLE_TEXT
+			-- The newline workaround, in its own class so it can be assaulted
+			-- without a window. Retired when simple_widgets'
+			-- `feature/thread-lines-keys-selection' lands - see BUBBLE_TEXT.
+		once
+			create Result
+		end
+
 feature -- Constants
 
 	Window_title: STRING_32 = "simple_chat"
+
+	Text_menu_file: STRING_32 = "File"
+	Text_menu_edit: STRING_32 = "Edit"
+	Text_menu_room: STRING_32 = "Room"
+	Text_menu_help: STRING_32 = "Help"
+
+	Text_item_close: STRING_32 = "Close"
+	Text_key_close: STRING_32 = "Alt+F4"
+	Text_item_cut: STRING_32 = "Cut"
+	Text_key_cut: STRING_32 = "Ctrl+X"
+	Text_item_copy: STRING_32 = "Copy"
+	Text_key_copy: STRING_32 = "Ctrl+C"
+	Text_item_paste: STRING_32 = "Paste"
+	Text_key_paste: STRING_32 = "Ctrl+V"
+	Text_item_select_all: STRING_32 = "Select All"
+	Text_key_select_all: STRING_32 = "Ctrl+A"
+	Text_item_summarize: STRING_32 = "Summarize the room now"
+	Text_key_summarize: STRING_32 = "type: @claude sum"
+	Text_item_catch_up: STRING_32 = "Catch me up on what I missed"
+	Text_key_catch_up: STRING_32 = "type: @claude catch me up"
+	Text_item_how_to_address: STRING_32 = "How to address the assistant"
+	Text_item_about: STRING_32 = "About simple_chat"
+
+	Text_addressing_help: STRING_32 = "Mention the assistant anywhere in a message. Ask it for a summary with sum, recap or catch me up - that answer is yours alone and never goes to the room."
 			-- The native title bar. It never changes: simple_shell publishes no
 			-- SetWindowText, so the unread count lives in the header strip and the
 			-- tray tooltip instead.
@@ -461,6 +505,88 @@ feature {NONE} -- The desktop
 			"C inline use <windows.h>"
 		alias
 			"return (EIF_POINTER) GetForegroundWindow();"
+		end
+
+feature -- The menu bar
+
+	menu_bar: detachable SW_MENU_BAR
+			-- File / Edit / Room / Help across the top. Every menu is built
+			-- FRESH on each open (SW_MENU_BAR takes builder agents, not menus),
+			-- so an item is greyed exactly when the thing it does is impossible
+			-- right now - nothing offers to paste an empty clipboard.
+
+	set_on_summary (a_action: PROCEDURE)
+			-- What "Summarize the room now" does.
+		do
+			on_summary := a_action
+		ensure
+			set: on_summary = a_action
+		end
+
+	set_on_catch_up (a_action: PROCEDURE)
+			-- What "Catch me up on what I missed" does.
+		do
+			on_catch_up := a_action
+		ensure
+			set: on_catch_up = a_action
+		end
+
+	on_summary: detachable PROCEDURE
+	on_catch_up: detachable PROCEDURE
+
+feature {NONE} -- The menus, built fresh on every open
+
+	file_menu: SW_MENU
+		do
+			create Result.make
+			Result.add_item (Text_item_close, Text_key_close, True, agent close)
+		end
+
+	edit_menu: SW_MENU
+			-- The composer's own editing, named and with the combos that have
+			-- always worked there written beside them. Ctrl+A, Ctrl+C, Ctrl+X,
+			-- Ctrl+V, Ctrl+Z and Ctrl+Y reach the box directly when it has
+			-- focus; this menu is where you can SEE that, which is the half
+			-- that was missing.
+		do
+			create Result.make
+			Result.add_item (Text_item_cut, Text_key_cut, input.has_selection and not input.is_read_only, agent input.cut_selection)
+			Result.add_item (Text_item_copy, Text_key_copy, input.has_selection, agent input.copy_selection)
+			Result.add_item (Text_item_paste, Text_key_paste, not input.is_read_only, agent input.paste_clipboard)
+			Result.add_separator
+			Result.add_item (Text_item_select_all, Text_key_select_all, input.text.count > 0, agent input.select_all)
+		end
+
+	room_menu: SW_MENU
+			-- The two things a member can ask of the room that are not messages.
+			-- Both are also typeable ("@claude sum"), and both answer to this
+			-- member alone - a summary is never a room event.
+		do
+			create Result.make
+			Result.add_item (Text_item_summarize, Text_key_summarize, on_summary /= Void, on_summary)
+			Result.add_item (Text_item_catch_up, Text_key_catch_up, on_catch_up /= Void, on_catch_up)
+		end
+
+	help_menu: SW_MENU
+		do
+			create Result.make
+			Result.add_item (Text_item_how_to_address, {STRING_32} "", True, agent show_addressing_help)
+			Result.add_separator
+			Result.add_item (Text_item_about, {STRING_32} "", True, agent show_about)
+		end
+
+	show_about
+			-- Larry's ask, in his own words: "an Help with an About that will
+			-- tell me the version of simple_chat that I am using". The version,
+			-- the build date and the fleet it was built against - all from
+			-- CHAT_VERSION, which is the one place any of them is written.
+		do
+			show_hint ((create {CHAT_VERSION}).About_text)
+		end
+
+	show_addressing_help
+		do
+			show_hint (Text_addressing_help)
 		end
 
 feature {NONE} -- Implementation

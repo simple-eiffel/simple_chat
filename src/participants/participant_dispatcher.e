@@ -104,6 +104,7 @@ feature {NONE} -- Initialization
 			create codec.make
 			create last_ask_key.make_empty
 			create last_via_key.make_empty
+			create last_summary_key.make_empty
 		ensure
 			starts_where_told: start_after = a_start_after
 			floor_at_start: pruned_floor = a_start_after
@@ -192,6 +193,20 @@ feature -- Access
 
 	asks: INTEGER
 			-- Engine calls made: one per request the room could take and the limiter allowed.
+
+	summaries_asked: INTEGER
+			-- Summaries the engine was asked for. Counted apart from `asks':
+			-- a summary is not an answer to the room and spends its own budget.
+
+	summaries_given: INTEGER
+			-- Summaries the engine actually produced.
+
+	last_summary_status: INTEGER
+			-- What the latest `summary_of' did, in HTTP terms; 0 before any.
+
+	last_summary_key: STRING_8
+			-- The summary budget key the latest `summary_of' charged; empty
+			-- before any.
 
 	mentions_seen: INTEGER
 			-- Of `requests_seen', how many were taken from a mention that was
@@ -464,6 +479,84 @@ feature -- Basic operations
 				and (not (old cursors_model).domain.has (@ic.key) implies ic >= start_after) end
 			floor_current: not old is_dispatching implies pruned_floor = minimum_cursor
 			queued_when_reentrant: old is_dispatching implies pending_rooms_model.has (a_room_id)
+		end
+
+	summary_of (a_room_id, a_since_id, a_until_id, a_asker_id: INTEGER_64; a_minutes: INTEGER): STRING_32
+			-- A summary of `a_room_id' after `a_since_id' and up to
+			-- `a_until_id' (0 for "to the newest"), asked of the first
+			-- registered participant on behalf of `a_asker_id'.
+			--
+			-- NOTHING IS POSTED AND NOTHING IS RUNG. A summary is one
+			-- member's private catch-up, and the room's events are never
+			-- per-person: it goes back through the asker's own HTTP reply and
+			-- is drawn in their window alone. So this reads, asks, and
+			-- returns - no `post_answer', no queue slot, no cursor moved, no
+			-- id marked answered. The drain is untouched by it.
+			--
+			-- `last_summary_status' says what happened, in HTTP terms, and is
+			-- set before this returns so one reservation of this processor
+			-- reads both. Empty Result whenever that status is not 200.
+		require
+			positive_room: a_room_id > 0
+			since_non_negative: a_since_id >= 0
+			until_non_negative: a_until_id >= 0
+			positive_asker: a_asker_id > 0
+			minutes_non_negative: a_minutes >= 0
+		local
+			l_lines: ARRAYED_LIST [STRING_32]
+			l_request: PARTICIPANT_REQUEST
+			l_answer: PARTICIPANT_ANSWER
+			l_failed: BOOLEAN
+		do
+			create Result.make_empty
+			if l_failed then
+				last_summary_status := Summary_engine_failed
+				log.error ({STRING_32} "dispatcher: the summary engine raised; nothing was posted")
+			elseif registry.count = 0 then
+				last_summary_status := Summary_no_participant
+			else
+				l_lines := summary_lines_of (a_room_id, a_since_id, a_until_id, a_minutes)
+				if l_lines.is_empty then
+					last_summary_status := Summary_nothing_to_say
+				elseif attached registry.participants.first as l_target then
+					last_summary_key := l_target.summary_limit_key (a_asker_id)
+					if not summary_allowed (api, last_summary_key) then
+						last_summary_status := Summary_budget_spent
+					else
+						summaries_asked := summaries_asked + 1
+						create l_request.make_addressed (a_asker_id, display_name_of (api, a_asker_id), Summary_instruction,
+							a_room_id, room_name_of (api, a_room_id), l_target.max_characters, Void)
+						l_request.set_context (l_lines)
+						l_answer := l_target.answer (l_request)
+						if l_answer.is_success and then not l_answer.text.is_empty then
+							Result := l_answer.text.twin
+							last_summary_status := Summary_ok
+							summaries_given := summaries_given + 1
+						else
+							last_summary_status := Summary_engine_failed
+						end
+					end
+				end
+			end
+		ensure
+			status_set: last_summary_status > 0
+			text_only_when_ok: (not Result.is_empty) implies last_summary_status = Summary_ok
+			empty_unless_ok: last_summary_status /= Summary_ok implies Result.is_empty
+			nothing_posted: answers_posted = old answers_posted and answer_failures = old answer_failures
+			nothing_taken: requests_seen = old requests_seen and asks = old asks
+			answered_untouched: answered_model |=| old answered_model
+			cursors_untouched: cursors_model |=| old cursors_model
+			nothing_queued: pending_rooms_model |=| old pending_rooms_model
+			no_wake: wake_count = old wake_count
+			asked_when_ok: last_summary_status = Summary_ok implies summaries_asked = old summaries_asked + 1
+		rescue
+				-- One retry only: the retried body skips the engine and reports
+				-- the failure. A summary that breaks must never take the
+				-- dispatcher, or the asker's request, down with it.
+			if not l_failed then
+				l_failed := True
+				retry
+			end
 		end
 
 	receive_status (a_status: separate CHAT_STATUS)
@@ -826,6 +919,17 @@ feature {NONE} -- The API, only as a separate argument
 			create Result.make_from_separate (a_api.dispatcher_context (a_room_id, a_before_id, a_limit))
 		end
 
+	summary_allowed (a_api: separate CHAT_API; a_key: READABLE_STRING_8): BOOLEAN
+			-- One more summary under `a_key', decided and counted on the
+			-- API's processor against the SUMMARY budget - never the
+			-- participant's answer budget.
+		require
+			key_given: not a_key.is_empty
+			summary_key: a_key.starts_with ("s:")
+		do
+			Result := a_api.dispatcher_summary_allowed (a_key)
+		end
+
 	can_post (a_api: separate CHAT_API; a_bot_user_id, a_room_id: INTEGER_64): BOOLEAN
 			-- May bot `a_bot_user_id' post in `a_room_id'?
 		do
@@ -1070,6 +1174,64 @@ feature {NONE} -- Implementation
 		ensure
 			bounded: Result.count <= a_count
 			none_empty: across Result as l all not l.is_empty end
+		end
+
+	summary_lines_of (a_room_id, a_since_id, a_until_id: INTEGER_64; a_minutes: INTEGER): ARRAYED_LIST [STRING_32]
+			-- The room's messages after `a_since_id' and up to `a_until_id'
+			-- (0 for "to the newest"), oldest first, each "<sender display
+			-- name>: <text>" - the same line `context_line_of' draws for the
+			-- memory window, so a summary reads what a follow-up reads.
+			-- Bounded by one page: a catch-up after a long absence summarises
+			-- the last `Pull_limit' messages of the gap, not the whole room.
+			--
+			-- WITH NO GAP NAMED (`a_since_id' = 0) this is an on-demand summary
+			-- and must read the room's LATEST messages, so it pulls backwards
+			-- from the end. Pulling forward from 0 would summarise the oldest
+			-- page in the room, which is exactly wrong and silently so.
+			--
+			-- `a_minutes' > 0 keeps only what was said inside that window.
+		require
+			positive_room: a_room_id > 0
+			since_non_negative: a_since_id >= 0
+			until_non_negative: a_until_id >= 0
+			minutes_non_negative: a_minutes >= 0
+		local
+			l_names: HASH_TABLE [STRING_32, INTEGER_64]
+			l_bytes: STRING_8
+			l_now: SIMPLE_DATE_TIME
+		do
+			create Result.make (32)
+			create l_names.make (4)
+			create l_now.make_now
+			if a_since_id > 0 then
+				l_bytes := pull_page (api, a_room_id, a_since_id, Pull_limit)
+			else
+				l_bytes := pull_context (api, a_room_id, {INTEGER_64}.Max_value, Pull_limit)
+			end
+			if attached codec.page_from_bytes (l_bytes) as p then
+				across p.events as e loop
+					if e.is_message and e.room_id = a_room_id and (a_until_id = 0 or e.id <= a_until_id)
+						and then within_minutes (e, l_now, a_minutes)
+					then
+						Result.extend (context_line_of (e, l_names))
+					end
+				end
+			end
+		ensure
+			none_empty: across Result as l all not l.is_empty end
+			bounded: Result.count <= Pull_limit
+		end
+
+	within_minutes (a_event: CHAT_EVENT; a_now: SIMPLE_DATE_TIME; a_minutes: INTEGER): BOOLEAN
+			-- Was `a_event' said inside the last `a_minutes'? Everything is,
+			-- when no window was named (`a_minutes' = 0), so "summarise the
+			-- room" and "summarise the last ten minutes" run the same path.
+		require
+			minutes_non_negative: a_minutes >= 0
+		do
+			Result := a_minutes = 0 or else (a_now.to_timestamp - a_event.created_at.to_timestamp) <= (a_minutes.to_integer_64 * 60)
+		ensure
+			everything_without_a_window: a_minutes = 0 implies Result
 		end
 
 	context_pull_of (a_count: INTEGER): INTEGER
@@ -1548,6 +1710,19 @@ feature {NONE} -- Population (Task 7 item 5)
 feature -- Constants
 
 	Context_line_maximum: INTEGER = 400
+
+	Summary_ok: INTEGER = 200
+	Summary_nothing_to_say: INTEGER = 204
+	Summary_budget_spent: INTEGER = 429
+	Summary_engine_failed: INTEGER = 502
+	Summary_no_participant: INTEGER = 503
+			-- What `summary_of' did, in the status the asker's own request
+			-- will carry back.
+
+	Summary_instruction: STRING_32 = "Summarise the conversation above for someone who has been away: what was decided, what is still open, and anything addressed to me. Plain text, no preamble, no greeting."
+			-- The whole of a summary request. The transcript itself travels as
+			-- the request's context lines, which is what the engine already
+			-- reads for a follow-up.
 			-- The longest a single window line may be: a reminder of what was
 			-- said, not the whole of a long message.
 
@@ -1570,6 +1745,9 @@ invariant
 	start_non_negative: start_after >= 0
 	counts_non_negative: wake_count >= 0 and requests_seen >= 0 and answers_posted >= 0 and answer_failures >= 0 and asks >= 0
 	population_non_negative: participants_registered >= 0 and participants_skipped >= 0
+	summaries_non_negative: summaries_asked >= 0 and summaries_given >= 0
+	summaries_given_within_asked: summaries_given <= summaries_asked
+	summaries_are_not_answers: summaries_asked = 0 or asks >= 0
 	answers_cover_requests: answers_posted + answer_failures <= requests_seen
 	asks_within_requests: asks <= requests_seen
 	requests_cover_answered_ids: requests_seen >= answered.count

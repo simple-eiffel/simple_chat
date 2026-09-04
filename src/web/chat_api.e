@@ -36,6 +36,7 @@ feature {NONE} -- Initialization
 			service := a_service
 			config := a_config
 			create codec.make
+			create last_summary_key.make_empty
 		ensure
 			set: service = a_service and config = a_config
 			nothing_yet: request_count = 0
@@ -98,6 +99,7 @@ feature {NONE} -- Initialization
 			create service.make (l_store, l_bus, l_limits, l_config, l_log)
 			config := l_config
 			create codec.make
+			create last_summary_key.make_empty
 		ensure
 			open: service.store.is_open
 			nothing_yet: request_count = 0
@@ -114,6 +116,22 @@ feature -- Access
 
 	last_subscription: INTEGER
 			-- The ticket the latest `subscribe' issued; 0 when it was refused.
+
+	participant_dispatcher: detachable separate PARTICIPANT_DISPATCHER
+			-- The dispatcher DISPATCHER_HOST launched, for a request handler
+			-- that needs an ENGINE rather than an answer (a summary). The
+			-- handler asks it from the REQUEST's own processor, never from
+			-- this one: an engine call takes seconds, and every request in
+			-- the process comes through here. Void until it is registered,
+			-- and Void for ever in a server configured without participants.
+
+	last_summary_key: STRING_8
+			-- The limiter key the latest `dispatcher_summary_allowed' was
+			-- charged to, copied onto THIS processor; empty before any. The
+			-- copy is what the postcondition speaks of - a lock-passed call's
+			-- postcondition is evaluated after the caller's locks are
+			-- returned, so reaching back into the caller's own string there
+			-- is a phantom raise waiting to happen (see `dispatcher_post').
 
 feature -- Answers: liveness and session
 
@@ -345,6 +363,25 @@ feature -- Answers: reading
 			end
 		ensure
 			counted: request_count = old request_count + 1
+		end
+
+feature -- Answers: summary
+
+	summary_gate (a_token: separate READABLE_STRING_8; a_room_id: INTEGER_64): INTEGER_64
+			-- The id of the member `a_token' signs in as WHEN they may ask for
+			-- a summary of `a_room_id' - a live session, and membership of that
+			-- room; 0 for everyone else. One answer for both refusals: a
+			-- stranger learns nothing about which rooms exist.
+		do
+			if attached user_for (local_8 (a_token)) as l_user and then attached member_room (l_user, a_room_id) then
+				Result := l_user.id
+			end
+			request_count := request_count + 1
+		ensure
+			counted: request_count = old request_count + 1
+			non_negative: Result >= 0
+			only_members: Result > 0 implies (attached service.store.user (Result) as u and then service.store.is_member (u.id, a_room_id))
+			nothing_stored: service.store.last_event_id = old service.store.last_event_id
 		end
 
 feature -- Answers: posting
@@ -732,6 +769,41 @@ feature {PARTICIPANT_DISPATCHER, DISPATCHER_HOST} -- The dispatcher's processor
 			last_subscription := service.bus.last_ticket
 		ensure
 			live: last_subscription > 0 and service.bus.is_subscribed (last_subscription)
+		end
+
+	dispatcher_register (a_dispatcher: separate PARTICIPANT_DISPATCHER)
+			-- Keep `a_dispatcher' so a request handler can reach an engine
+			-- through `participant_dispatcher'. Held only as a reference and
+			-- never called from this processor.
+		do
+			participant_dispatcher := a_dispatcher
+		ensure
+			kept: participant_dispatcher = a_dispatcher
+			reachable: participant_dispatcher /= Void
+			nothing_stored: service.store.last_event_id = old service.store.last_event_id
+		end
+
+	dispatcher_summary_allowed (a_key: separate READABLE_STRING_8): BOOLEAN
+			-- One more SUMMARY under `a_key' if its own budget allows -
+			-- decided and counted here, on the processor that owns the
+			-- limiter. `a_key' is the caller's string, so it is copied to
+			-- `last_summary_key' first and only the copy is spoken of below.
+		require
+			key_given: not a_key.is_empty
+		do
+			create last_summary_key.make_from_separate (a_key)
+			Result := service.limits.is_allowed (last_summary_key)
+			if Result then
+				service.limits.record (last_summary_key)
+			end
+			request_count := request_count + 1
+		ensure
+			counted: request_count = old request_count + 1
+			key_copied_here: not last_summary_key.is_empty
+			summary_budget_only: last_summary_key.starts_with ("s:")
+			recorded: Result implies service.limits.total (last_summary_key) >= 1
+			nothing_when_refused: not Result implies service.limits.counts_model |=| old service.limits.counts_model
+			nothing_stored: service.store.last_event_id = old service.store.last_event_id
 		end
 
 	dispatcher_page (a_room_id, a_since_id: INTEGER_64; a_limit: INTEGER): STRING_8

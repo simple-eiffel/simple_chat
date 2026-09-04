@@ -249,6 +249,47 @@ feature -- Reading
 			session_kept: is_logged_in and me = old me
 		end
 
+	participant_handles: CHAT_RESULT [ARRAYED_LIST [STRING_32]]
+			-- GET /participants - the HANDLES the server answers to ("@claude"),
+			-- which are NOT the bots' usernames ("claude_bot"). The roster gives
+			-- usernames and only usernames, so a client that builds a mention out
+			-- of the roster tells the member to type something the address parser
+			-- will never match. Larry was told exactly that, and the summary rule
+			-- missed "@claude sum" for the same reason - it looked for
+			-- "@claude_bot". Handles come from here or from nowhere.
+		require
+			logged_in: is_logged_in
+		local
+			l_reply: HTTP_REPLY
+			l_list: ARRAYED_LIST [STRING_32]
+			i: INTEGER
+		do
+			l_reply := exchange ("GET", Path_participants, authorized_headers, Void, Default_timeout_seconds)
+				-- {"participants": [...]} - an OBJECT wrapping the array, not a bare
+				-- array like /rooms. Decoding it as a bare array fails silently,
+				-- leaves the client with no handles, and every summary line is then
+				-- posted to the room as an ordinary message. That is exactly what
+				-- happened to "@claude sum".
+			if l_reply.is_success and then attached codec.object (l_reply.body) as ob
+				and then attached ob.array_item ({CHAT_JSON}.Key_participants) as a
+			then
+				create l_list.make (a.count)
+				from i := 1 until i > a.count loop
+					if attached a.object_item (i) as o and then attached o.string_item ({CHAT_JSON}.Key_handle) as h
+						and then h.count >= 2 and then h.item (1) = '@'
+					then
+						l_list.extend (h.to_string_32)
+					end
+					i := i + 1
+				end
+				create Result.make_success (l_list)
+			else
+				create Result.make_error (error_of (l_reply))
+			end
+		ensure
+			all_addressable: (Result.is_success and then attached Result.value as v) implies across v as h all h.starts_with ({STRING_32} "@") end
+		end
+
 	rooms: CHAT_RESULT [ARRAYED_LIST [TUPLE [id: INTEGER_64; name: STRING_32]]]
 			-- GET /rooms - [{id, name}] for this member, in the server's order. A bare
 			-- array, so it is decoded through CLIENT_CODEC.array; one malformed entry
@@ -314,6 +355,41 @@ feature -- Reading
 		end
 
 feature -- Posting
+
+	summarise (a_room_id, a_since_id, a_until_id: INTEGER_64; a_minutes: INTEGER): CHAT_RESULT [STRING_32]
+			-- POST /rooms/{id}/summary {"since":, "until":, "minutes":}; 200 with
+			-- the assistant's summary of that stretch, for THIS member only.
+			--
+			-- The answer is never a room event and is stored nowhere: it comes
+			-- back in this reply and is drawn in this window alone, because the
+			-- room's events are never per-person. The call waits on the engine,
+			-- so it is given the upload timeout rather than the ordinary one.
+		require
+			logged_in: is_logged_in
+			positive_room: a_room_id > 0
+			since_non_negative: a_since_id >= 0
+			until_non_negative: a_until_id >= 0
+			minutes_non_negative: a_minutes >= 0
+		local
+			l_json: SIMPLE_JSON_OBJECT
+			l_reply: HTTP_REPLY
+		do
+			create l_json.make
+			l_json.put_integer (a_since_id, Key_since).do_nothing
+			l_json.put_integer (a_until_id, Key_until).do_nothing
+			l_json.put_integer (a_minutes.to_integer_64, Key_minutes).do_nothing
+			l_reply := exchange ("POST", room_path (a_room_id, "/summary"), authorized_headers, codec.json.bytes_of (l_json), Upload_timeout_seconds)
+			if l_reply.is_success and then attached codec.object (l_reply.body) as o and then attached o.string_item (Key_summary) as l_text and then not l_text.is_empty then
+				create Result.make_success (l_text)
+			elseif l_reply.is_success then
+				create Result.make_error (unexpected_answer)
+			else
+				create Result.make_error (error_of (l_reply))
+			end
+		ensure
+			said_something: (Result.is_success and then attached Result.value as t) implies not t.is_empty
+			session_kept: is_logged_in and me = old me
+		end
 
 	post_message (a_room_id: INTEGER_64; a_body: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
 			-- POST /rooms/{id}/messages {"body": ...}; 201 with the stored event. An echo
@@ -430,6 +506,7 @@ feature -- Constants
 	Path_logout: STRING_8 = "/logout"
 	Path_me: STRING_8 = "/me"
 	Path_rooms: STRING_8 = "/rooms"
+	Path_participants: STRING_8 = "/participants"
 	Header_authorization: STRING_8 = "Authorization"
 	Header_content_type: STRING_8 = "Content-Type"
 	Header_file_name: STRING_8 = "X-File-Name"
@@ -438,6 +515,10 @@ feature -- Constants
 	Key_username: STRING_32 = "username"
 	Key_password: STRING_32 = "password"
 	Key_body: STRING_32 = "body"
+	Key_since: STRING_32 = "since"
+	Key_until: STRING_32 = "until"
+	Key_minutes: STRING_32 = "minutes"
+	Key_summary: STRING_32 = "summary"
 
 	Message_unexpected: STRING_32 = "The server's answer was not what was expected"
 

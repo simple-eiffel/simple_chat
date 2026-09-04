@@ -278,6 +278,58 @@ Silence used to be the whole of the evidence.
 
 ---
 
+## 4b. Ask it for a summary, and go away and come back
+
+Two features, one endpoint. Neither of them ever posts to the room.
+
+**On demand.** Type, in the composer:
+
+```
+@claude sum last 10 minutes
+```
+
+That line is **not** posted. Nobody else in the room sees it, and no event is
+stored. The summary comes back as a centred bubble in your window alone. Try
+`@claude recap` and `@claude catch me up` too — and then check the other half of
+the rule by typing `@claude can you write a summary of the roof job`, which **is**
+a question and **should** appear in the room like any other message. The verb has
+to be at the front, past the mention; that is the whole rule.
+
+**On returning.** Click away to another window, leave it for five minutes while
+someone (or `@claude`) puts at least five messages in the room, then click back.
+A catch-up bubble appears, summarising exactly the gap. Both thresholds are in
+`%APPDATA%\simple_chat\client.toml` — `catch_up_away_seconds` (default 300) and
+`catch_up_minimum_messages` (default 5) — and setting either to 0 switches
+catch-up off without touching the on-demand ask. Lower them both to try it
+without the wait.
+
+A summary spends `summaries_per_hour` (default 12, in `server.toml`), which is a
+**separate** budget from `requests_per_hour`: catching up never costs you the
+right to ask a question.
+
+---
+
+## 4c. The menu bar
+
+Across the top: **File**, **Edit**, **Room**, **Help**.
+
+- **Edit** names the combos that have always worked in the composer — Cut `Ctrl+X`,
+  Copy `Ctrl+C`, Paste `Ctrl+V`, Select All `Ctrl+A`. Items grey out live, so Paste
+  is dead when the clipboard is empty. (Right-clicking the composer offers the same
+  menu; it always did.)
+- **Room** does by click what the composer does by verb: *Summarize the room now*
+  and *Catch me up on what I missed*.
+- **Help > About** names the version, the build date and the fleet this build was
+  compiled against. All three come from `CHAT_VERSION`, the one place any of them
+  is written — **and the installer declares the same number at**
+  **`installer\SimpleChat.iss` line 48. Changing a version means changing both.**
+
+The combos work while the composer has focus. They are **not** window-wide: keys go
+only to the focused widget today, so a global accelerator needs a simple_widgets
+change and is deliberately not on this branch.
+
+---
+
 ## 5. THE ACCEPTANCE LINE — the reason this task waited a month
 
 Post exactly this, and then **look at it**:

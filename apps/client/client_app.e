@@ -354,8 +354,14 @@ feature -- Basic operations
 				room_id := l_list.first.id
 				view.set_room_title (l_list.first.name)
 				presenter.load_roster (room_id)
+				load_handles
+					-- The Room menu does by click what the composer does by verb.
+					-- Without these the items build DISABLED (their action is Void)
+					-- and a click does nothing at all, which is what Larry hit.
+				view.set_on_summary (agent ask_summary (0, 0, 0))
+				view.set_on_catch_up (agent catch_up_now)
 				if not presenter.bot_members.is_empty then
-					view.show_hint (bot_hint_text (presenter.bot_members))
+					view.show_hint (addressing_hint (presenter.bot_members))
 				end
 				start_polling (presenter, room_id, last_seen_id)
 				view.set_unread (presenter.unread)
@@ -376,6 +382,10 @@ feature -- Basic operations
 			-- and - when the server has rejected the session - the end of this pane.
 		do
 			if presenter.is_room_open and then client.is_logged_in then
+					-- BEFORE the pump, because the pump is what marks the missed
+					-- messages seen and clears the very count this reads.
+				note_foreground
+				show_any_summary
 				presenter.pump
 				last_seen_id := presenter.last_seen_id
 				view.set_unread (presenter.unread)
@@ -390,15 +400,247 @@ feature -- Basic operations
 		end
 
 	send_text (a_text: READABLE_STRING_GENERAL)
-			-- The composer's line, posted. The echo comes back through the poller like
-			-- everybody else's, so nothing is shown here.
+			-- The composer's line. Ordinarily it is posted and the echo comes
+			-- back through the poller like everybody else's, so nothing is shown
+			-- here.
+			--
+			-- A line that MENTIONS an assistant and opens with a summary verb is
+			-- not posted at all. It is a question this member is asking on their
+			-- own account, and its answer belongs to them alone - so it goes
+			-- straight to the summary endpoint and comes back as a hint bubble
+			-- in this window. Nothing of it reaches the room, because the room's
+			-- events are never per-person.
 		do
 			if presenter.is_room_open and then client.is_logged_in and then not a_text.is_empty then
-				presenter.send (a_text)
+				if is_summary_line (a_text) then
+					ask_summary (0, 0, summary_ask.minutes_of (a_text))
+				else
+					presenter.send (a_text)
+				end
 			end
 		ensure
 			nothing_shown_here: view.shown_model |=| old view.shown_model
 		end
+
+feature {NONE} -- Summary and catch-up
+
+	summary_ask: SUMMARY_ASK
+			-- The rule that tells a summary request from an ordinary message.
+		once
+			create Result
+		end
+
+	was_foreground: BOOLEAN
+			-- Was the window in front the last time `tick' looked? The only way
+			-- to know it has come BACK: simple_shell raises no activation event,
+			-- so the edge is found by watching, not by being told.
+
+	left_at: detachable SIMPLE_DATE_TIME
+			-- When the window last went out of the foreground; Void while it has
+			-- not been away.
+
+	seen_when_left: INTEGER_64
+			-- The last event this member had seen when the window went away, so
+			-- the catch-up summarises exactly the gap and not a line more.
+
+	catch_ups_asked: INTEGER
+			-- How many catch-ups this session has fired (for the assault).
+
+	note_foreground
+			-- Watch the window leave the foreground and come back, and catch up
+			-- on the gap when the return is worth an engine call: away for at
+			-- least `config.catch_up_away_seconds' AND at least
+			-- `config.catch_up_minimum_messages' missed. Both, because a long
+			-- lunch in a silent room is not a gap and three messages while the
+			-- kettle boiled are not an absence.
+		local
+			l_now: SIMPLE_DATE_TIME
+			l_is_front: BOOLEAN
+			l_missed: INTEGER
+		do
+			l_is_front := view.is_foreground
+			if was_foreground and not l_is_front then
+				create l_now.make_now
+				left_at := l_now
+				seen_when_left := presenter.last_seen_id
+			elseif l_is_front and not was_foreground and then attached left_at as l_left then
+				create l_now.make_now
+				l_missed := presenter.unread
+				if config.catch_up_away_seconds > 0 and config.catch_up_minimum_messages > 0
+					and then (l_now.to_timestamp - l_left.to_timestamp) >= config.catch_up_away_seconds.to_integer_64
+					and then l_missed >= config.catch_up_minimum_messages
+				then
+					catch_ups_asked := catch_ups_asked + 1
+					ask_summary (seen_when_left, 0, 0)
+				end
+				left_at := Void
+			end
+			was_foreground := l_is_front
+		ensure
+			remembered: was_foreground = view.is_foreground
+			nothing_posted: view.shown_model |=| old view.shown_model
+		end
+
+	catch_up_now
+			-- "Catch me up" from the menu: the gap since the last event this
+			-- member had seen when the window went away; the recent room when
+			-- it has not been away.
+		do
+			ask_summary (seen_when_left.max (0), 0, 0)
+		end
+
+	show_any_summary
+			-- One short call on the slot per frame; a bubble when the answer has
+			-- landed. This is the whole of what the GUI does about summaries.
+		local
+			l_text: STRING_32
+		do
+			if attached summary_slot as s then
+				l_text := collect_summary (s)
+				if not l_text.is_empty then
+					view.show_hint (l_text)
+					summaries_shown := summaries_shown + 1
+				end
+			end
+		end
+
+	bot_handles: ARRAYED_LIST [STRING_32]
+			-- The handles the SERVER answers to ("@claude"), fetched from
+			-- /participants when the room opens. NOT the roster's usernames:
+			-- the bot user is "claude_bot" and addressing that matches nothing.
+			-- Empty until fetched, which makes `is_summary_line' answer False -
+			-- the safe way round, since a line it claims is never posted.
+		attribute
+			create Result.make (2)
+		end
+
+	load_handles
+			-- Ask the server which handles it answers to.
+		local
+			l_result: CHAT_RESULT [ARRAYED_LIST [STRING_32]]
+		do
+			if client.is_logged_in then
+				l_result := client.participant_handles
+				if l_result.is_success and then attached l_result.value as v then
+					bot_handles := v
+				end
+			end
+		end
+
+	is_summary_line (a_text: READABLE_STRING_GENERAL): BOOLEAN
+			-- Does `a_text' mention one of the room's assistants AND open (past
+			-- the mention) with a summary verb? Both halves are required: "sum"
+			-- alone is a message to the room, and "@claude what is 2+2" is a
+			-- question for the room to see.
+		do
+			Result := not bot_handles.is_empty
+				and then across bot_handles as h some mentions_handle (a_text, h) end
+				and then summary_ask.is_summary_ask (a_text)
+		end
+
+	mentions_handle (a_text: READABLE_STRING_GENERAL; a_handle: READABLE_STRING_32): BOOLEAN
+			-- Does `a_text' carry `a_handle' ("@claude"), in any case?
+		require
+			addressable: a_handle.count >= 2 and then a_handle.item (1) = '@'
+		do
+			Result := a_text.to_string_32.as_lower.has_substring (a_handle.to_string_32.as_lower)
+		end
+
+	ask_summary (a_since_id, a_until_id: INTEGER_64; a_minutes: INTEGER)
+			-- Ask for a summary WITHOUT waiting for it. The engine call behind
+			-- it is a `claude -p' run of several seconds, and a GUI thread that
+			-- stops pumping for five is ghosted by Windows with its keystrokes
+			-- thrown away - so the request goes to a SUMMARY_HOST on its own
+			-- processor, launched asynchronously (scalars only), and this
+			-- returns within the frame. The answer lands in the slot and `tick'
+			-- collects it. Meanwhile the member gets a status line and a
+			-- composer that still works.
+		require
+			since_non_negative: a_since_id >= 0
+			until_non_negative: a_until_id >= 0
+			minutes_non_negative: a_minutes >= 0
+		local
+			l_host: separate SUMMARY_HOST
+			l_slot: separate SUMMARY_SLOT
+		do
+			if client.is_logged_in and room_id > 0 then
+				if not attached summary_slot then
+					create l_slot.make
+					summary_slot := l_slot
+				end
+				if attached summary_slot as s then
+					if slot_is_waiting (s) then
+						view.show_status (Message_summary_busy)
+					else
+						note_slot_request (s)
+						create l_host.make (client.endpoint.base_url)
+						hand_session_to_summary (l_host)
+						attach_slot (l_host, s)
+						launch_summary (l_host, room_id, a_since_id, a_until_id, a_minutes)
+						view.show_status (Message_summarizing)
+						summaries_asked := summaries_asked + 1
+					end
+				end
+			end
+		ensure
+			nothing_posted: view.shown_model |=| old view.shown_model
+		end
+
+	summary_slot: detachable separate SUMMARY_SLOT
+			-- Where a summary lands. One per window; it never blocks.
+
+	slot_is_waiting (a_slot: separate SUMMARY_SLOT): BOOLEAN
+		do
+			Result := a_slot.is_waiting
+		end
+
+	note_slot_request (a_slot: separate SUMMARY_SLOT)
+		do
+			a_slot.note_request
+		end
+
+	hand_session_to_summary (a_host: separate SUMMARY_HOST)
+			-- Copy the session into the host's client (short; the token is read here).
+		require
+			logged_in: client.is_logged_in
+		do
+			client.hand_session_to (a_host.client)
+		end
+
+	attach_slot (a_host: separate SUMMARY_HOST; a_slot: separate SUMMARY_SLOT)
+		do
+			a_host.set_slot (a_slot)
+		end
+
+	launch_summary (a_host: separate SUMMARY_HOST; a_room_id, a_since_id, a_until_id: INTEGER_64; a_minutes: INTEGER)
+			-- Asynchronous: every argument is a scalar, so nothing of this
+			-- processor is passed and the call does not wait for the engine.
+		do
+			a_host.fetch (a_room_id, a_since_id, a_until_id, a_minutes)
+		end
+
+	collect_summary (a_slot: separate SUMMARY_SLOT): STRING_32
+			-- Whatever the slot holds, taken and cleared under ONE reservation
+			-- so a second answer cannot land between the read and the clear;
+			-- empty when there is nothing yet. Never waits: the slot only ever
+			-- assigns fields.
+		do
+			create Result.make_empty
+			if a_slot.has_outcome then
+				create Result.make_from_separate (a_slot.text)
+				a_slot.clear
+			end
+		end
+
+
+	summaries_asked: INTEGER
+			-- Summaries this window has asked for, by hand or on returning.
+
+	summaries_shown: INTEGER
+			-- Summaries actually drawn in this window.
+
+feature {NONE} -- Implementation
+
 
 	shut_down
 			-- Close the room, end the session unless it is being remembered, and write the
@@ -429,6 +671,12 @@ feature -- Constants
 	Minimum_window_height: INTEGER = 360
 
 	Message_bad_server: STRING_32 = "That is not an address this client will send a password to"
+	Message_summarizing: STRING_32 = "Summarizing..."
+			-- Shown the instant a summary is asked for, so the window says what
+			-- it is doing while another processor waits on the engine.
+
+	Message_summary_busy: STRING_32 = "Still summarizing - one at a time."
+
 	Message_no_rooms: STRING_32 = "The server lists no room for this account"
 
 	advice: CONNECTION_ADVICE
@@ -440,10 +688,66 @@ feature -- Constants
 
 feature {NONE} -- The bot hint
 
+	addressing_hint (a_bots: ARRAYED_LIST [CHAT_MEMBER]): STRING_32
+			-- What to tell the member: the server's own HANDLES when
+			-- /participants has answered, and the roster's mentions only as a
+			-- fallback.
+			--
+			-- The difference is not cosmetic. The bot USER is "claude_bot" and
+			-- the roster knows nothing else, so a hint built from the roster
+			-- tells the member to type "@claude_bot" - which the address parser,
+			-- which matches HANDLES, will never recognise. That is what the
+			-- window told Larry for three weeks.
+		require
+			some_bots: not a_bots.is_empty
+		do
+			if bot_handles.is_empty then
+				Result := bot_hint_text (a_bots)
+			else
+				Result := handle_hint_text (bot_handles)
+			end
+		ensure
+			said_something: not Result.is_empty
+			handles_when_known: not bot_handles.is_empty implies across bot_handles as h all Result.has_substring (h) end
+		end
+
+	handle_hint_text (a_handles: ARRAYED_LIST [STRING_32]): STRING_32
+			-- "Address the room's assistant by mentioning @claude, anywhere in a message."
+		require
+			given: not a_handles.is_empty
+		local
+			i: INTEGER
+		do
+			create Result.make (80)
+			Result.append ({STRING_32} "Address the room's assistant")
+			if a_handles.count > 1 then
+				Result.append_character ('s')
+			end
+			Result.append ({STRING_32} " by mentioning ")
+			from i := 1 until i > a_handles.count loop
+				Result.append (a_handles [i])
+				if i < a_handles.count - 1 then
+					Result.append ({STRING_32} ", ")
+				elseif i = a_handles.count - 1 then
+					Result.append ({STRING_32} " or ")
+				end
+				i := i + 1
+			end
+			Result.append ({STRING_32} ", anywhere in a message.")
+		ensure
+			named: across a_handles as h all Result.has_substring (h) end
+			says_where: Result.has_substring ({STRING_32} "anywhere")
+		end
+
 	bot_hint_text (a_bots: ARRAYED_LIST [CHAT_MEMBER]): STRING_32
-			-- "Address the room's assistant by starting a line with @claude." for one
-			-- bot; "...assistants... @claude or @otherbot." for several - always the
+			-- "Address the room's assistant by mentioning @claude." for one bot;
+			-- "...assistants... @claude or @otherbot." for several - always the
 			-- roster's own usernames, never a name typed into this file.
+			--
+			-- It said "by starting a line with" until the mention rule changed
+			-- under it: a handle anywhere in the message addresses the
+			-- assistant now, and a hint that teaches the superseded rule is
+			-- worse than no hint.
 		require
 			some_bots: not a_bots.is_empty
 		local
@@ -454,7 +758,7 @@ feature {NONE} -- The bot hint
 			if a_bots.count > 1 then
 				Result.append_character ('s')
 			end
-			Result.append ({STRING_32} " by starting a line with ")
+			Result.append ({STRING_32} " by mentioning ")
 			from
 				i := 1
 			until
