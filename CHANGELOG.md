@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-04
+
+The emoji release: the right-click menu's emoji are pictures, not boxes - rebuilt against simple_widgets 0.7.2; the greying rule is proven by a painted menu in the test suite.
+
 ### Changed
 
 - **The per-message menu is now proven by a picture, not just an assertion.**
@@ -32,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message and **Delete drawn live** because this reader is an administrator.
   `SW_MENU` renders a disabled item in `ink_muted` rather than `ink`, which is
   the greying rule made visible.
+
+### Fixed
+
+- **The eight emoji in the right-click menu draw as emoji, not boxes** -
+  rebuilt against simple_widgets 0.7.2, in which a menu's labels take the
+  shaping kit whenever the painter has one, so an emoji label is a picture
+  and a Hebrew title keeps its mnemonic underline under the right glyph.
+  0.2.0 shipped with the boxes; the painted-menu test caught it minutes
+  after it existed.
 
 ### Known
 
