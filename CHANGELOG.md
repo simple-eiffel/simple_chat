@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Uninstalling ANY install of SimpleChat stopped EVERY SimpleChat server on
+  the PC.** `[UninstallRun]` said
+  `Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM SimpleChatServer.exe"`.
+  It matched an image name and carried no component condition, so a client-only
+  install's uninstall — which has no server of its own at all — and a
+  verification build's uninstall both reached across every install on the
+  machine. On 2026-09-04 that took Larry's live room down twice in one
+  afternoon, with a conversation in it.
+
+  **The verify identity could not have caught this.** The `/DVERIFY` block
+  switches every symbol two installs can collide over — AppId, AppName,
+  DirName, ServerRoot, TaskName, ClientCfgDir, OutBase — and `ServerExe` is not
+  among them and cannot be: it is the same compiled binary in both builds, and
+  that rename is what keeps the client, the server and the test runner (all
+  three finalize to `simple_chat.exe`) from being three files with one name.
+  The image name is the one property of this product that the verify identity
+  must not switch, and it was the one property the uninstaller keyed on.
+
+  The stop now matches the full executable path `{app}\SimpleChatServer.exe`,
+  in PowerShell — `taskkill` filters on an image name and cannot filter on a
+  path — and carries `Components: server` as a second lock. The component
+  condition is **not** the fix: it would have skipped the client-only case by
+  accident, and a verify build *with* the server component would still have
+  killed the live room. `{app}` is per-install always.
+
+  `templates/stop_server.cmd` gets the same scoping, for the server and for
+  Caddy — its own comment had promised it since the day it was written
+  (*"only the copy that lives in our own folder"*) while the code below said
+  `/IM caddy.exe`. `templates/start_server.cmd`'s "is it already running?"
+  test is scoped too: by image name it answered about *any* install's server,
+  so a verification build could not be started at all while the real room was
+  up.
+
+- **A silent upgrade over a running server left the room dark.**
+  `CloseApplications` was unset, so Restart Manager was free to close the
+  running server to replace its file, and every `[Run]` entry carried
+  `skipifsilent` — so nothing started it again and nothing said so. The host
+  found out from his friends.
+
+  `StopServerFromAppDir` now runs at `ssInstall`, before a file is copied: it
+  finds a server running from this install's own folder by path, records
+  `ServerWasRunning` **first** and stops it second, so an upgrade knows the
+  room was up even when the stop fails and Restart Manager closes the process
+  instead. A `[Run]` entry with `Check: ServerNeedsSilentRestart` then
+  relaunches it through `start_server_hidden.vbs`, hidden, as the original
+  user.
+
+  It restarts **only** a server the installer itself stopped: a first install,
+  or an upgrade over a room the host had deliberately stopped, starts nothing.
+  It is `postinstall` because plain `[Run]` entries execute before
+  `ssPostInstall`, which is where `server_root.cmd` is written — started any
+  earlier, `run_server.cmd` falls back to `%ProgramData%\SimpleChat` and a
+  verification build would restart a server against the real room. And it is
+  silent-only, because on the interactive path the host has a visible, ticked
+  "Start the server now" and two automatic starters would race: `wscript`
+  returns the moment it has spawned `cmd`, long before `SimpleChatServer.exe`
+  exists. The finish briefing now tells an interactive host that the installer
+  stopped a running server, so he knows what unticking that step costs.
+
+  `CloseApplications=yes` is now stated rather than defaulted, with the reason:
+  it stays on for the chat *window*, and the server is deliberately not left to
+  it.
+
 ## [0.2.2] — 2026-09-04
 
 The addressing release: the per-message menu acts on the message under the pointer in every room shape - a hint bubble had put every action one message out of step, so that an emoji on the newest message did nothing and a Delete could have tombstoned its neighbour - and every refusal from the menu now states its reason. Rebuilt against simple_widgets 0.7.2.

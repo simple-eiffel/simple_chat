@@ -114,6 +114,27 @@ PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog commandline
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+
+; ---------------------------------------------------------------------------
+; RESTART MANAGER: LEFT ON, BUT NOT RELIED ON FOR THE SERVER.
+;
+; This was previously unset, which is the same value - Inno 6 defaults it to
+; yes - but unset meant nobody had decided. It matters, because the thing
+; Restart Manager would be closing on an upgrade is the RUNNING ROOM.
+;
+; What it does for us: an upgrade over a running CHAT WINDOW gets the window
+; closed so SimpleChat.exe can be replaced, and RestartApplications (also on by
+; default) puts it back. That is worth having and is why this stays yes.
+;
+; What it must NOT be left to do: close the SERVER. Restart Manager closing a
+; process is invisible to [Code] and to [Run], so a silent upgrade would come
+; out the far side with the room dark and nothing in the installer aware that
+; it had ever been up. StopServerFromAppDir in [Code] therefore stops our own
+; server at ssInstall, REMEMBERS that it did, and the restart entry in [Run]
+; brings it back. By the time Restart Manager looks, there is nothing of ours
+; holding the file.
+; ---------------------------------------------------------------------------
+CloseApplications=yes
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -351,6 +372,51 @@ Filename: "{sys}\schtasks.exe"; \
 ; will use them, not to whoever happened to answer the UAC prompt.
 ; ===========================================================================
 
+; --- 0. put back the server this installer stopped, on a SILENT install -----
+;
+; THE GAP THIS CLOSES. Every entry in the finish sequence below carries
+; `skipifsilent', which is right for all three of them - they open consoles and
+; windows, and a silent install is by definition one nobody is sitting in
+; front of. But an upgrade over a RUNNING room has to stop the server to
+; replace its executable (StopServerFromAppDir, in [Code]), and with every
+; starter skipped, `SimpleChat-Setup.exe /VERYSILENT' left the room dark and
+; said nothing. The host found out from his friends.
+;
+; ONLY WHEN WE STOPPED ONE. ServerWasRunning is set at ssInstall and only
+; there: it is the answer to "was a server running from {app}\SimpleChatServer.exe
+; when this install began?" - not "should there be one". A first install, or an
+; upgrade over a room that was already down, restarts nothing, because putting
+; a server up that the host had deliberately stopped is not an upgrade's
+; business.
+;
+; WHY THIS IS SILENT-ONLY, AND NOT `Check: ServerWasRunning' ALONE. An entry
+; that fires on both paths would run a second or so before "Start the server
+; now" below - and lose the race with it. start_server.cmd's guard is
+; path-scoped now and would catch a server that had finished starting, but the
+; server does not exist yet at that moment: wscript has to start cmd, which has
+; to read server.toml and check the port, before SimpleChatServer.exe is even
+; launched. Two vbs launches would go out, and the second would fail into
+; server.log on a port collision. On the interactive path the host has a
+; visible, ticked "Start the server now" one step further down, and the finish
+; briefing now tells him the installer stopped a running server - so there is a
+; starter there already, under his hand, and this entry stands down.
+;
+; NOT `postinstall' BY ACCIDENT. It has to be, so that it runs AFTER
+; ssPostInstall has written server_root.cmd: without that file run_server.cmd
+; falls back to %ProgramData%\SimpleChat, and a verification build would
+; restart a server against the REAL room - the exact collision the verify
+; identity exists to prevent. Plain [Run] entries execute BEFORE ssPostInstall.
+;
+; wscript, not {cmd}: run_server.cmd through start_server_hidden.vbs is the
+; same door the logon scheduled task uses, and it opens no console at all.
+; `nowait' because the server is meant to outlive Setup; `runasoriginaluser'
+; for the reason the whole sequence uses it - a server started by the elevated
+; installer could not afterwards be stopped from the Start Menu.
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\start_server_hidden.vbs"""; WorkingDir: "{app}"; \
+    Description: "Restart the chat server that this installer stopped"; \
+    Flags: postinstall nowait runasoriginaluser; \
+    Components: server; Check: ServerNeedsSilentRestart
+
 ; --- 1. the first administrator --------------------------------------------
 ; Check: only when the room has no store yet. Re-running the installer over an
 ; existing room must never offer to mint a second first-admin: the server does
@@ -390,8 +456,64 @@ Filename: "{app}\HOSTING-GUIDE.html"; Description: "Open the hosting guide"; \
 Filename: "{sys}\schtasks.exe"; Parameters: "/delete /tn ""{#TaskName}"" /f"; \
     Flags: runhidden waituntilterminated; RunOnceId: "DelChatTask"
 
-; Stop the server before pulling its executable out from under it.
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#ServerExe}"; \
+; ---------------------------------------------------------------------------
+; Stop the server before pulling its executable out from under it - THIS
+; INSTALL'S SERVER, MATCHED BY PATH.
+;
+; WHAT THIS USED TO SAY, AND WHAT IT COST.
+;
+;     Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#ServerExe}"
+;
+; On 2026-09-04 that line took a LIVE room down twice in one afternoon. Both
+; times the uninstall being run was of a DIFFERENT install of this same
+; product - once a client-only one, once a verification build - and both times
+; it stopped the server somebody was actually talking in.
+;
+; WHY THE VERIFY IDENTITY DID NOT PROTECT AGAINST IT. The /DVERIFY block above
+; switches every symbol two installs could collide over: AppId, AppName,
+; DirName, ServerRoot, TaskName, ClientCfgDir, OutBase. ServerExe is NOT in
+; that list, and cannot be: it is the same compiled binary in both builds, and
+; the renaming that gives it that name is what stage_payload.sh does to keep
+; the client, the server and the test runner - all three of which finalize to
+; simple_chat.exe - from being three files with one name.
+;
+; So an image name is the ONE property of this product that the verify
+; identity does not and must not switch, and this was the one operation keyed
+; on it. The schtasks entry above is already verify-scoped through TaskName;
+; this was the only by-name reach left in the uninstaller.
+;
+; THE FIX IS THE PATH. {app} is per-install, always: the real product's
+; {autopf}\SimpleChat, a verify build's {autopf}\SimpleChat-verify, a per-user
+; install's {localappdata}\Programs\..., or whatever /DIR was given. Comparing
+; the running process's executable path against {app}\SimpleChatServer.exe is
+; therefore exactly "the server this uninstaller is entitled to stop", and
+; nothing else on the PC can match it.
+;
+; `Components: server' is the second lock, not the first. It would have
+; skipped today's client-only case - by accident, because that install had no
+; server to stop - but a verify build WITH the server component would still
+; have killed the live room. The path is what makes this safe; the component
+; condition just keeps a client-only uninstall from spawning a shell at all.
+;
+; PowerShell rather than taskkill because taskkill filters on an image name
+; and cannot filter on a path. `{{' is Inno's escape for a literal brace, so
+; the Where-Object block survives constant expansion; the path arrives inside
+; single quotes, which is what carries the space in "Program Files".
+; A process whose path cannot be read answers $null and simply does not match,
+; so the failure direction of this comparison is "kill nothing".
+;
+; `Wait-Process' TAKES THE PROCESS OBJECTS, NOT THEIR IDS, and the command ends
+; with an explicit `exit 0'. Both are about the LOG. Wait-Process -Id looks the
+; id up again, and by then the process it is waiting for has usually gone, so
+; it raises an error - suppressed, but still enough to make powershell.exe
+; leave with status 1, which Inno then writes into the uninstall log as
+; "Process exit code: 1" directly under a stop that had in fact worked. An
+; uninstaller whose whole job here is a trustworthy stop must not leave a line
+; behind that reads like a failed one.
+; ---------------------------------------------------------------------------
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
+    Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""$p = @(Get-Process -Name SimpleChatServer -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{app}\{#ServerExe}' }); if ($p.Count -gt 0) {{ $p | Stop-Process -Force -ErrorAction SilentlyContinue; $p | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue }; exit 0"""; \
+    Components: server; \
     Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "StopChatServer"
 
 [UninstallDelete]
@@ -452,6 +574,14 @@ var
     without depending on whether an AfterInstall runs for an entry that
     `onlyifdoesntexist' skipped. }
   ServerTomlExistedBefore: Boolean;
+
+  { True when a server was running FROM THIS INSTALL'S FOLDER when the install
+    began. Recorded at ssInstall, before a single file is copied, and never
+    revised afterwards - including when the stop itself fails, because what the
+    restart entry needs to know is "was the room up", not "did we manage to put
+    it down". Restart Manager closing the process for us leaves the same answer
+    behind, which is the point of recording it before either of us acts. }
+  ServerWasRunning: Boolean;
 
   { `claude' on the PATH: looked for once, then remembered. ClaudeCommandFound
     is a [Tasks] Check, so it is asked repeatedly. }
@@ -567,6 +697,78 @@ end;
 function RoomHasNoDatabase: Boolean;
 begin
   Result := not FileExists(ExpandConstant('{#ServerRoot}\data\simple_chat.db'));
+end;
+
+{ ---------------------------------------------------------------------------
+  STOP THE SERVER THAT LIVES IN *THIS* INSTALL FOLDER, AND SAY WHETHER THERE
+  WAS ONE.
+
+  (Braces are Pascal comments here, so the install-folder constant is spelled
+  out in words below rather than written the way [Run] writes it.)
+
+  Called once, at ssInstall, before any file is copied. Two jobs in one pass,
+  and the order matters: the finding is recorded first, so an upgrade knows the
+  room was up even if the stop afterwards fails and Restart Manager has to
+  close the process instead.
+
+  MATCHED BY PATH, NEVER BY NAME. See the long note in [UninstallRun]: the
+  image name SimpleChatServer.exe is shared by every install of this product,
+  the real one and every verification build alike, because it is the same
+  compiled binary renamed apart from simple_chat.exe. The install folder is the
+  only thing that is per-install, so the SimpleChatServer.exe inside it is the
+  only honest way to say "ours".
+
+  The exit status carries the finding back: 10 means one was found and stopped,
+  0 means there was nothing of ours running. A process whose path cannot be
+  read answers $null to -eq and does not match, so a permission failure can
+  only ever make this stop LESS, never more.
+  --------------------------------------------------------------------------- }
+procedure StopServerFromAppDir;
+var
+  Cmd, Exe: String;
+  Rc: Integer;
+begin
+  Exe := ExpandConstant('{app}\{#ServerExe}');
+  Cmd := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "'
+       + '$p = @(Get-Process -Name SimpleChatServer -ErrorAction SilentlyContinue | '
+       + 'Where-Object { $_.Path -eq ''' + Exe + ''' }); '
+       + 'if ($p.Count -eq 0) { exit 0 }; '
+       + '$p | Stop-Process -Force -ErrorAction SilentlyContinue; '
+       + '$p | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue; '
+       + 'exit 10"';
+
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+              Cmd, '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+  begin
+    Log('SimpleChat: could not run PowerShell to look for a running server. ' +
+        'Nothing was stopped, and nothing will be restarted.');
+    Exit;
+  end;
+
+  if Rc = 10 then
+  begin
+    ServerWasRunning := True;
+    Log('SimpleChat: a server was running from ' + Exe + '. It has been stopped ' +
+        'so its executable can be replaced, and it will be started again when ' +
+        'this install finishes.');
+  end
+  else
+    Log('SimpleChat: no server running from ' + Exe + ' (PowerShell exit ' +
+        IntToStr(Rc) + '). Nothing stopped.');
+end;
+
+{ ---------------------------------------------------------------------------
+  The Check on the restart entry in [Run].
+
+  Both halves are load-bearing. ServerWasRunning keeps a first install, and an
+  upgrade over a room the host had deliberately stopped, from being handed a
+  server it never asked for. WizardSilent keeps this off the interactive path,
+  where the host has a visible "Start the server now" one step further down and
+  this entry would only race it. The [Run] note above gives the timing.
+  --------------------------------------------------------------------------- }
+function ServerNeedsSilentRestart: Boolean;
+begin
+  Result := ServerWasRunning and WizardSilent;
 end;
 
 { ---------------------------------------------------------------------------
@@ -695,6 +897,13 @@ begin
   if CurStep = ssInstall then
     ServerTomlExistedBefore := FileExists(ExpandConstant('{#ServerRoot}\server.toml'));
 
+  { ...and is a server of OURS running out of the folder we are about to write
+    into? Ask before Restart Manager gets the chance, so that the answer is
+    ours to act on. Only when the server component is going down: a client-only
+    install has no business looking for one, let alone stopping it. }
+  if (CurStep = ssInstall) and WizardIsComponentSelected('server') then
+    StopServerFromAppDir;
+
   if (CurStep = ssPostInstall) and WizardIsComponentSelected('server') then
   begin
     WriteServerRootFile;
@@ -728,8 +937,18 @@ begin
   if (CurStep = ssPostInstall) and WizardIsComponentSelected('server')
      and not WizardSilent then
   begin
-    Msg := 'The chat server is installed.' + #13#10#13#10 +
-           'When you press Finish, this installer will, in order:' + #13#10#13#10;
+    Msg := 'The chat server is installed.' + #13#10#13#10;
+
+    { If we took a live room down to replace its executable, say so here and
+      not only in the log - because the thing that puts it back on this path is
+      a checkbox the host can untick. }
+    if ServerWasRunning then
+      Msg := Msg + 'The server was RUNNING when this upgrade started, so it was ' +
+                   'stopped to replace its program file. Step 2 below is what puts ' +
+                   'it back: leave it ticked, or the room stays down until you ' +
+                   'start it from the Start Menu.' + #13#10#13#10;
+
+    Msg := Msg + 'When you press Finish, this installer will, in order:' + #13#10#13#10;
     if RoomHasNoDatabase then
       Msg := Msg + '  1. open a console and ask you to create the first administrator' + #13#10
     else

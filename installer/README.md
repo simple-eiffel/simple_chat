@@ -42,11 +42,49 @@ exactly like a server that is down. Name the type:
 Start-Process .\SimpleChat-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TYPE=host','/COMPONENTS=client,server' -Wait
 ```
 
-Silent installs also skip every post-install step (they are `skipifsilent` by
-design): no first administrator is created, the server is not started and no
-window opens. After a silent host install run `create_admin.cmd` (first
-install only) and `start_server.cmd` yourself. Found 2026-09-04 when an agent
-scripted a reinstall for the host and got a client-only tree.
+`/TYPE=host` is not optional and `/COMPONENTS=client,server` is not a
+belt-and-braces repeat of it: the type sets the default selection, the
+components list is what actually goes down, and either one alone has been
+enough to produce a client-only tree. Both. Every time.
+
+Silent installs skip every post-install step (they are `skipifsilent` by
+design): no first administrator is created, no window opens, and the hosting
+guide does not open. After a **first** silent host install run
+`create_admin.cmd` and `start_server.cmd` yourself. Found 2026-09-04 when an
+agent scripted a reinstall for the host and got a client-only tree.
+
+**One post-install step is NOT skipped, and it is the one an upgrade needs.**
+A silent install over a **running** server has to stop that server to replace
+its executable. Until 2026-09-04 that was the end of it: every starter was
+`skipifsilent`, so `/VERYSILENT` left the room dark and said nothing, and the
+host learned about it from his friends. Now:
+
+- at `ssInstall`, before a file is copied, `StopServerFromAppDir` looks for a
+  server running **from this install's own folder** — by path, never by image
+  name — stops it, and remembers in `ServerWasRunning` that it did;
+- a `[Run]` entry with `Check: ServerNeedsSilentRestart` launches
+  `{app}\start_server_hidden.vbs` through `wscript` when, and only when,
+  `ServerWasRunning and WizardSilent`.
+
+So a silent **upgrade** puts the room back exactly as it found it, and a silent
+**first** install — or an upgrade over a room the host had deliberately stopped —
+starts nothing. Restarting a server nobody asked for is not an upgrade's
+business.
+
+The restart entry is deliberately `postinstall` even though no human will ever
+see its checkbox: plain `[Run]` entries execute **before** `ssPostInstall`, and
+`ssPostInstall` is where `server_root.cmd` is written. Started any earlier,
+`run_server.cmd` would fall back to `%ProgramData%\SimpleChat` and a
+verification build would restart a server against the **real room**.
+
+It is also deliberately silent-only. On the interactive path the host already
+has a visible, ticked *"Start the server now"*, and the finish briefing now
+tells him plainly that the installer stopped a server that was running, so that
+he knows what unticking it costs. Two automatic starters would race each other:
+`wscript` returns the moment it has spawned `cmd`, well before
+`SimpleChatServer.exe` exists, so the second starter would find neither a
+process nor a bound port and would launch again. `start_server.cmd`'s own
+guard — now path-scoped — is the backstop, not the design.
 
 ### Never drive the installer from Git Bash
 
@@ -236,6 +274,40 @@ worth the tidiness. `[Messages] ConfirmUninstall` says so plainly.
 
 `[UninstallRun]` does remove the logon scheduled task and stop a running
 server, in that order, before the files go.
+
+### The stop is scoped to *this* install's server, by path
+
+The stop used to be `taskkill /F /IM SimpleChatServer.exe`. On **2026-09-04**
+that took a live room down twice in one afternoon: both times the uninstall
+being run belonged to a **different** install of this same product — once a
+client-only one, once a verification build — and both times it stopped the
+server people were actually talking in.
+
+**The verify identity could not have caught it.** The `/DVERIFY` block switches
+every symbol two installs can collide over — `AppId`, `AppName`, `DirName`,
+`ServerRoot`, `TaskName`, `ClientCfgDir`, `OutBase` — and `ServerExe` is not
+among them and cannot be. It is the *same compiled binary* in both builds, and
+that rename is what stops the client, the server and the test runner (all three
+finalize to `simple_chat.exe`) from being three files with one name. The image
+name is the one property of this product the verify identity must not switch,
+and it was the one thing the uninstaller keyed on.
+
+So the stop now matches on the full executable path, `{app}\SimpleChatServer.exe`,
+which is per-install always — and carries `Components: server` as a second lock.
+The component condition is **not** the fix: it would have skipped the
+client-only case by accident, and a verify build *with* the server component
+would still have killed the live room. The path is the fix.
+
+The same correction went into `templates/stop_server.cmd`, whose own comment had
+promised path scoping for caddy since it was written (*"only the copy that lives
+in our own folder"*) while the code below it said `/IM caddy.exe`; and into
+`templates/start_server.cmd`, whose "is it already running?" test answered about
+**any** install's server, so a verification build could not be started at all
+while the real room was up. All three now compare paths in PowerShell, because
+`tasklist` and `taskkill` filter on an image name and cannot filter on a path.
+
+Change the **template**, never `installer/src/server/*.cmd`: those are generated
+by `stage_payload.sh`, which copies the templates and normalizes them to CRLF.
 
 ---
 
