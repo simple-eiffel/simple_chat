@@ -25,7 +25,17 @@ REM holding the port and the two lines to change, before launching anything.
 REM ===========================================================================
 setlocal
 set "SYS=%SystemRoot%\System32"
+set "PS=%SYS%\WindowsPowerShell\v1.0\powershell.exe"
 set "PORT=8090"
+
+REM The server that belongs to THIS install: the copy beside this script. The
+REM "is it already running?" test below matches on this full path and not on
+REM the image name, for the reason stop_server.cmd sets out at length - a
+REM second install of the same product has a SimpleChatServer.exe of exactly
+REM the same name, so a name-only test answers about somebody else's room. The
+REM path is handed over in the environment so spaces and brackets in
+REM "C:\Program Files (x86)\..." cannot be re-parsed on the way.
+set "SERVER_EXE=%~dp0SimpleChatServer.exe"
 
 set "NOPAUSE="
 if /i "%~1"=="/nopause" set "NOPAUSE=1"
@@ -70,8 +80,18 @@ echo   log    : %ROOT%\server.log
 echo   port   : %PORT%
 echo.
 
-"%SYS%\tasklist.exe" /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | "%SYS%\find.exe" /i "SimpleChatServer.exe" >nul
-if not errorlevel 1 (
+REM Exit status IS the number of OUR servers running, so `errorlevel 1' means
+REM at least one. This is also the interlock that keeps the installer from
+REM starting a second one: on a silent upgrade the wizard restarts the server
+REM itself, through start_server_hidden.vbs, and an interactive host who then
+REM presses "Start the server now" arrives here and is told there is nothing
+REM to do. Two starts, one server. (Before 2026-09-04 this asked tasklist for
+REM the IMAGE NAME, so it answered "already running" whenever ANY install's
+REM server was up, and a verification build could not be started at all while
+REM the real room was live.)
+"%PS%" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
+  "exit @(Get-Process -Name SimpleChatServer -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:SERVER_EXE }).Count" >nul 2>&1
+if errorlevel 1 (
     echo   The server is already running. Nothing to do.
     echo.
     call :hold 4

@@ -29,12 +29,37 @@ on the installer's last page and done afterwards from the Start Menu, under
 So from an installed copy, **skip to §2 (Start the client)** — you already have a
 server and an account. The rest of §0 and §1 are for driving the source tree.
 
+**If you are scripting the install instead of clicking it**, two things change,
+and both have bitten:
+
+- **Name the type AND the components.** A silent install takes the default
+  type, which is *client only*, so a host scripted with plain `/VERYSILENT`
+  gets a chat window and no server at all — and the first sign-in looks exactly
+  like a server that is down. Pass `/TYPE=host /COMPONENTS=client,server`, both,
+  from PowerShell and never from Git Bash (MSYS rewrites `/VERYSILENT` into a
+  path and it is silently ignored).
+- **A silent install starts nothing — except a server it stopped itself.**
+  Steps 1 to 3 above are all `skipifsilent`, so after a *first* silent host
+  install you still run `create_admin.cmd` and `start_server.cmd` yourself. But
+  an *upgrade* over a **running** server has to stop that server to replace its
+  program file, and since 2026-09-04 the installer puts it back: it notices the
+  running server by its path at the start, remembers that it stopped it, and
+  restarts it through `start_server_hidden.vbs` when the install ends. Before
+  that, `/VERYSILENT` over a live room left the room dark and said nothing.
+
 Two things worth knowing while you are in there:
 
 - **`Start server` from the Start Menu pauses at the end; the installer's copy
   does not.** The installer passes `start_server.cmd /nopause`, which prints the
   same things and holds the window open long enough to read, then closes itself
   so the sequence can go on.
+- **`Start server` and `Stop server` mean *this* install's server, not every
+  one on the PC.** Both scripts, and the uninstaller, match the running process
+  by its full path — `<install folder>\SimpleChatServer.exe` — and Caddy by the
+  copy in this room's own folder. They used to match on the image name, which
+  is the same in every install of SimpleChat including a verification build,
+  and on 2026-09-04 that took a live room down twice. If you are running a
+  second copy for testing, the two are now genuinely independent.
 - **`@claude` may already be configured.** If you ticked the `@claude` box and
   the installer created `server.toml` for you, the `[[participants]]` block is
   already uncommented — §4 will just work. If you had a `server.toml` before, the
