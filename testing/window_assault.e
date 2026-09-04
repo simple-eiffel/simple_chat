@@ -606,6 +606,469 @@ feature -- CLIENT_APP: nothing answered at all (Larry's install, 2026-09-02)
 				a.Settings_file.has_substring ({STRING_32} "simple_chat") and a.Settings_file.ends_with ({STRING_32} "client.toml"))
 		end
 
+feature -- The per-message menu: what is offered, and to whom
+
+	test_the_per_message_menu_greys_by_the_servers_own_rule
+			-- Larry's rule, drawn on the real pane through the real agents
+			-- CLIENT_APP wires at `open_room': the author may edit their own;
+			-- the author OR AN ADMINISTRATOR may delete; nobody may edit
+			-- anyone else's words, an administrator included.
+			--
+			-- A greyed item is still SHOWN. A menu that hides what you may
+			-- not do teaches nothing, and a member who wonders why Edit is
+			-- grey on somebody else's message has learned the rule.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+			m: detachable SW_MENU
+		do
+			t := scripted_transport
+			app := room_app (t, "greying", member_reply)
+			feed (t, app, wire_said (1, 5, "my own words") + "," + wire_said (2, 9, "somebody elses"))
+			assert ("two bubbles and nothing else", app.view.thread.count = 2 and app.view.shown_count = 2)
+
+			m := menu_on (app, 1)
+			assert ("the pane found its first bubble", m /= Void)
+			assert ("on MY OWN message the author may edit", item_enabled (m, {STRING_32} "Edit"))
+			assert ("and delete", item_enabled (m, {STRING_32} "Delete"))
+			assert ("Reply is offered", item_enabled (m, {STRING_32} "Reply"))
+			assert ("and so is every emoji, as an item of its own",
+				across app.view.thread.emoji_choices as em all item_enabled (m, em) end)
+			assert ("the library's own Copy is still there - the host ADDED, it did not replace",
+				item_present (m, {STRING_32} "Copy"))
+
+			m := menu_on (app, 2)
+			assert ("the pane found the second bubble", m /= Void)
+			assert ("AN ADMIN MAY DELETE SOMEBODY ELSE'S", item_enabled (m, {STRING_32} "Delete"))
+			assert ("BUT MAY NEVER EDIT IT", not item_enabled (m, {STRING_32} "Edit"))
+			assert ("and Edit is SHOWN, greyed, not hidden", item_present (m, {STRING_32} "Edit"))
+			assert ("anyone may reply to anyone", item_enabled (m, {STRING_32} "Reply"))
+		end
+
+	test_a_plain_member_may_do_nothing_to_anyone_elses_message
+			-- The same pane signed in as somebody with no badge: on another
+			-- member's words BOTH items are dead, and on his own both live.
+			-- This is the arm an admin-only fixture can never reach.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+			m: detachable SW_MENU
+		do
+			t := scripted_transport
+			app := room_app (t, "plainmember", plain_member_reply)
+			feed (t, app, wire_said (1, 5, "my own words") + "," + wire_said (2, 9, "somebody elses"))
+
+			m := menu_on (app, 2)
+			assert ("no edit of another's words", not item_enabled (m, {STRING_32} "Edit"))
+			assert ("AND NO DELETE EITHER - moderation is a badge", not item_enabled (m, {STRING_32} "Delete"))
+			assert ("both are still shown",
+				item_present (m, {STRING_32} "Edit") and item_present (m, {STRING_32} "Delete"))
+
+			m := menu_on (app, 1)
+			assert ("but his own is his to edit", item_enabled (m, {STRING_32} "Edit"))
+			assert ("and his own to withdraw", item_enabled (m, {STRING_32} "Delete"))
+		end
+
+	test_nothing_is_offered_on_a_tombstone
+			-- A delete is final: there is nothing left to edit, answer or
+			-- react to, and a menu that offered it would be lying. The emoji
+			-- are not merely greyed - they are not offered at all, because a
+			-- dead row of eight grey glyphs is noise.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+			m: detachable SW_MENU
+		do
+			t := scripted_transport
+			app := room_app (t, "tombstone", member_reply)
+			feed (t, app, wire_said (1, 5, "about to go") + "," + wire_delete_event (2, 5, 1))
+			assert ("one bubble - the delete drew none of its own", app.view.thread.count = 1)
+			assert ("and it is a tombstone", app.view.thread.is_tombstone (1))
+			m := menu_on (app, 1)
+			assert ("A TOMBSTONE STILL HOLDS ITS PLACE on the pane", m /= Void)
+			assert ("Reply is dead", not item_enabled (m, {STRING_32} "Reply"))
+			assert ("Edit is dead", not item_enabled (m, {STRING_32} "Edit"))
+			assert ("Delete is dead", not item_enabled (m, {STRING_32} "Delete"))
+			assert ("and no emoji is offered at all",
+				across app.view.thread.emoji_choices as em all not item_present (m, em) end)
+		end
+
+	test_a_click_on_a_reaction_chip_toggles_that_one_emoji
+			-- The chip is the fast path: no menu, one click, and it TOGGLES -
+			-- the reader's own chip comes off, somebody else's goes on. What
+			-- decides is the row that is DRAWN, so the pane and the wire
+			-- cannot disagree about what the click meant.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+			l_row: ARRAYED_LIST [TUPLE [emoji: STRING_32; tally: INTEGER; mine: BOOLEAN]]
+			l_thumb, l_heart: STRING_32
+			pt: TUPLE [x, y: REAL_64]
+			l_handled: BOOLEAN
+		do
+			t := scripted_transport
+			app := room_app (t, "chips", member_reply)
+			feed (t, app, wire_said (1, 9, "gutters on Friday"))
+			l_thumb := app.view.thread.emoji_choices.first
+			l_heart := app.view.thread.emoji_choices.i_th (2)
+			create l_row.make (2)
+			l_row.extend ([l_thumb, 2, True])
+			l_row.extend ([l_heart, 1, False])
+			app.view.apply_reactions (1, l_row)
+			assert ("the pane knows which chip is the reader's own",
+				app.view.reaction_is_mine (1, l_thumb) and not app.view.reaction_is_mine (1, l_heart))
+			app.view.window.request_render
+
+			pt := point_on_chip (app.view.thread, 1, l_thumb)
+			assert ("the reader's own chip was drawn somewhere", pt.y > 0.0)
+			t.script (200, wire_reaction_echo (2, 5, 1))
+			l_handled := app.view.thread.handle_click (pt.x, pt.y)
+			assert ("the chip took the click - it never reached the thread beneath", l_handled)
+			assert ("and it went out as a reaction on THAT message",
+				t.last_request.url.ends_with ("/rooms/4/messages/1/reactions"))
+			assert ("TAKING HIS OWN BACK: on is false", t.last_request.body.has_substring (Wire_on_false))
+
+			pt := point_on_chip (app.view.thread, 1, l_heart)
+			assert ("the other chip was drawn too", pt.y > 0.0)
+			t.script (200, wire_reaction_echo (3, 5, 1))
+			l_handled := app.view.thread.handle_click (pt.x, pt.y)
+			assert ("JOINING ONE HE HAS NOT GOT: on is true",
+				l_handled and t.last_request.body.has_substring (Wire_on_true))
+		end
+
+feature -- The compose strip: what Return will do, and how to back out
+
+	test_the_compose_strip_says_what_return_will_do_and_escape_backs_out
+			-- Reply, Edit and Delete all aim the composer at one message, and
+			-- the strip above it says which. Every one of them is reached the
+			-- way a member reaches it - BY INVOKING THE MENU ITEM - so
+			-- nothing here would still pass the day the menu stopped calling
+			-- what it says it calls.
+			--
+			-- THE DELETE CONFIRM IS IN THE PANE, not a modal: a dialog that
+			-- steals the keyboard to ask "are you sure" is how a window stops
+			-- pumping, and Windows discards the keystrokes of a window that
+			-- stops pumping. This room has been bitten by that before.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+		do
+			t := scripted_transport
+			app := room_app (t, "strip", member_reply)
+			feed (t, app, wire_said (1, 5, "my own words") + "," + wire_said (2, 9, "who has the ladders?"))
+			assert ("the strip starts empty, and an empty one costs no height",
+				app.view.compose_strip.text.is_empty)
+
+			invoke (menu_on (app, 2), {STRING_32} "Reply")
+			assert ("the strip names who is being answered",
+				app.view.compose_strip.text.starts_with ({STRING_32} "Replying to "))
+			assert ("and quotes what they said",
+				app.view.compose_strip.text.has_substring ({STRING_32} "ladders"))
+			assert ("the composer is untouched - a reply is typed, not pre-filled",
+				app.view.input.text.is_empty)
+
+			invoke (menu_on (app, 1), {STRING_32} "Edit")
+			assert ("EDIT REPLACES REPLY - a composer that was both would have to guess",
+				app.view.compose_strip.text.has_substring ({STRING_32} "Editing"))
+			assert ("and it loads the words on screen, so they are changed and not retyped",
+				app.view.input.text.same_string ({STRING_32} "my own words"))
+
+			app.view.input.handle_key (27, False)
+			app.view.input.handle_char (27)
+			assert ("ESCAPE BACKS OUT, exactly as the strip promised it would",
+				app.view.compose_strip.text.is_empty and app.view.input.text.is_empty)
+
+			invoke (menu_on (app, 2), {STRING_32} "Delete")
+			assert ("the first Delete ASKS, in the pane",
+				app.view.compose_strip.text.has_substring ({STRING_32} "Delete this message?"))
+			assert ("and nothing has gone out yet", not t.last_request.url.has_substring ("/messages/2"))
+			t.script (200, wire_delete_event (3, 5, 2))
+			invoke (menu_on (app, 2), {STRING_32} "Delete")
+			assert ("THE SECOND DOES IT", t.last_request.url.ends_with ("/rooms/4/messages/2/delete"))
+			assert ("and the strip clears itself", app.view.compose_strip.text.is_empty)
+		end
+
+	test_return_sends_an_edit_or_a_reply_and_then_goes_back_to_plain
+			-- One composer, three meanings, and the strip is the only thing
+			-- that says which. After either, Return means an ordinary message
+			-- again: a composer that stayed aimed at a message would silently
+			-- rewrite the next thing typed into it.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+		do
+			t := scripted_transport
+			app := room_app (t, "sending", member_reply)
+			feed (t, app, wire_said (1, 5, "my own words") + "," + wire_said (2, 9, "who has the ladders?"))
+
+			invoke (menu_on (app, 1), {STRING_32} "Edit")
+			t.script (200, wire_said (4, 5, "my own words, corrected"))
+			app.send_text ({STRING_32} "my own words, corrected")
+			assert ("Return sent an EDIT of the message it was aimed at",
+				t.last_request.url.ends_with ("/rooms/4/messages/1/edit"))
+			assert ("and the pane is plain again", app.view.compose_strip.text.is_empty)
+
+			invoke (menu_on (app, 2), {STRING_32} "Reply")
+			t.script (200, wire_said (5, 5, "Dave has them"))
+			app.send_text ({STRING_32} "Dave has them")
+			assert ("Return sent a REPLY to the message it was aimed at",
+				t.last_request.url.ends_with ("/rooms/4/messages/2/replies"))
+			assert ("and the pane is plain again", app.view.compose_strip.text.is_empty)
+
+			t.script (200, wire_said (6, 5, "just talking"))
+			app.send_text ({STRING_32} "just talking")
+			assert ("AND THE NEXT LINE IS AN ORDINARY MESSAGE",
+				t.last_request.url.ends_with ("/rooms/4/messages"))
+		end
+
+	test_the_fold_reaches_the_real_pane
+			-- The whole chain on the drawn widget rather than the double: an
+			-- edit rewrites a bubble and marks it, a delete tombstones one in
+			-- place, and a reply carries its parent's words. The room is the
+			-- record, so the tombstone keeps its slot in the order.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+		do
+			t := scripted_transport
+			app := room_app (t, "foldpane", member_reply)
+			feed (t, app, wire_said (1, 9, "who is bringing the ladders?") + ","
+				+ wire_said (2, 5, "the roof job starts Monday") + ","
+				+ wire_said (3, 9, "something regretted") + ","
+				+ wire_reply_event (4, 5, 1, "Dave is") + ","
+				+ wire_edit_event (5, 5, 2, "the roof job starts Tuesday") + ","
+				+ wire_delete_event (6, 9, 3))
+			assert ("FOUR bubbles: three messages and a reply - no fold drew one",
+				app.view.thread.count = 4 and app.view.shown_count = 4)
+			assert ("the edited bubble reads the new words",
+				app.view.thread.messages [2].text.has_substring ({STRING_32} "Tuesday"))
+			assert ("and not the old ones",
+				not app.view.thread.messages [2].text.has_substring ({STRING_32} "Monday"))
+			assert ("the room can SEE it was edited", app.view.thread.is_edited (2))
+			assert ("the withdrawn message is a tombstone IN ITS PLACE",
+				app.view.thread.is_tombstone (3) and app.view.event_of_bubble (3) = 3)
+			assert ("and the reply still sits after it", app.view.event_of_bubble (4) = 4)
+			assert ("the reply carries what it answers",
+				app.view.thread.reply_quote (4).text.has_substring ({STRING_32} "ladders"))
+			assert ("attributed to whoever said it", not app.view.thread.reply_quote (4).author.is_empty)
+			assert ("nothing else took a quote", app.view.thread.reply_quote (2).text.is_empty)
+			app.view.window.request_render
+			assert ("the fold evidence frame is on disk", app.view.window.write_frame (Fold_evidence_path))
+		end
+
+	Fold_evidence_path: STRING_32 = ".eiffel-workflow/evidence/message-fold-pane.png"
+			-- Where `test_the_fold_reaches_the_real_pane' leaves its frame,
+			-- written from the project root the runner is started in.
+			--
+			-- THERE IS NO COMPANION FRAME OF THE MENU. `SW_WINDOW.show_popup'
+			-- is `feature {NONE}' and only its own right-click dispatch calls
+			-- it, so an assault can build the menu and read every item but
+			-- cannot make the window PAINT one. A frame written here would
+			-- show the pane with no menu on it and be named as though it
+			-- showed the greying, which is worse than no frame at all. What
+			-- would fix it is an additive `simulate_context_click' beside the
+			-- `simulate_wheel' and `simulate_key_down' simple_widgets already
+			-- offers for driving a window headless - a library change, and so
+			-- Larry's to gate.
+
+feature {NONE} -- The per-message fixtures
+
+	scripted_transport: MEMORY_HTTP_TRANSPORT
+		do
+			create Result.make
+		end
+
+	room_app (a_transport: MEMORY_HTTP_TRANSPORT; a_tag: STRING_8; a_me: STRING_8): CLIENT_APP
+			-- An app signed in as `a_me' with room 4 open - which is the
+			-- moment CLIENT_APP wires the per-message menu's actions and its
+			-- permission rule onto the thread. Going through `open_room'
+			-- rather than wiring by hand is the whole point: an assault that
+			-- wired the agents itself would keep passing the day the app
+			-- stopped wiring them, which is exactly the defect Larry found
+			-- in the Room menu.
+		local
+			l_why: detachable STRING_32
+		do
+			create Result.make_for_test (a_transport, scratch_config (a_tag))
+			a_transport.script (200, "{%"token%":%"" + Hex_64 + "%",%"member%":" + a_me + "}")
+			l_why := Result.attempt_login (Loopback_url, "larry", {STRING_32} "right")
+			check logged_in: Result.client.is_logged_in and l_why = Void end
+			a_transport.script (200, "[{%"id%":4,%"name%":%"main%"}]")
+			a_transport.script (200, "{%"members%":[" + a_me + "]}")
+			Result.open_room
+			check opened: Result.presenter.is_room_open and Result.room_id = 4 end
+		end
+
+	feed (a_transport: MEMORY_HTTP_TRANSPORT; a_app: CLIENT_APP; a_events: STRING_8)
+			-- Put one page of events through the app's OWN presenter. The
+			-- room is reopened on an inbox this assault can reach, because
+			-- the app's own is `separate' and belongs to its poller.
+		local
+			l_inbox: EVENT_INBOX
+		do
+			a_transport.script (200, "")
+			a_app.presenter.close_room
+			create l_inbox.make
+			a_app.presenter.open_room (4, 0, l_inbox)
+			l_inbox.put (wire_page (a_events, ""))
+			a_app.presenter.pump
+		end
+
+	menu_on (a_app: CLIENT_APP; a_bubble: INTEGER): detachable SW_MENU
+			-- The per-message menu of bubble `a_bubble', asked for at a point
+			-- the pane itself says is on it. The pane is rendered first
+			-- because hit-testing runs off the LAST FRAME - a menu asked for
+			-- before a paint would find no bubble at all, which is the honest
+			-- answer and a useless one.
+		local
+			pt: TUPLE [x, y: REAL_64]
+		do
+			a_app.view.window.request_render
+			pt := point_on_bubble (a_app.view.thread, a_bubble)
+			if pt.y > 0.0 then
+				Result := a_app.view.thread.context_menu (pt.x, pt.y)
+			end
+		end
+
+	invoke (a_menu: detachable SW_MENU; a_label: READABLE_STRING_32)
+			-- Do what a click on that item does - and ONLY IF IT IS LIVE,
+			-- because a member cannot click a greyed one either. A missing
+			-- or dead item leaves everything as it was, which is exactly
+			-- what the assertion after the call then reports.
+		do
+			if attached a_menu as m then
+				across m.items as it loop
+					if it.label.same_string (a_label) and then it.enabled and then attached it.action as act then
+						act.call
+					end
+				end
+			end
+		end
+
+	point_on_bubble (a_thread: MESSAGE_THREAD; a_index: INTEGER): TUPLE [x, y: REAL_64]
+			-- A point the thread's OWN hit-testing says is on bubble
+			-- `a_index', found by scanning the pane: the frame cache is
+			-- `feature {NONE}', as it should be, so an assault asks the same
+			-- question a right-click asks. Zeroes when the bubble is
+			-- nowhere, which fails the assertion that reads them.
+		local
+			lx, ly: REAL_64
+			l_found: BOOLEAN
+		do
+			Result := [{REAL_64} 0.0, {REAL_64} 0.0]
+			from
+				ly := a_thread.y + 1.0
+			until
+				ly >= a_thread.y + a_thread.height or l_found
+			loop
+				from
+					lx := a_thread.x + 1.0
+				until
+					lx >= a_thread.x + a_thread.width or l_found
+				loop
+					if a_thread.message_at (lx, ly) = a_index then
+						Result := [lx, ly]
+						l_found := True
+					end
+					lx := lx + 3.0
+				end
+				ly := ly + 3.0
+			end
+		end
+
+	point_on_chip (a_thread: MESSAGE_THREAD; a_index: INTEGER; a_emoji: READABLE_STRING_32): TUPLE [x, y: REAL_64]
+			-- A point on the chip carrying `a_emoji' on bubble `a_index',
+			-- asked of `reaction_at' the way a click asks it.
+		local
+			lx, ly: REAL_64
+			l_found: BOOLEAN
+			hit: TUPLE [message: INTEGER; emoji: STRING_32]
+		do
+			Result := [{REAL_64} 0.0, {REAL_64} 0.0]
+			from
+				ly := a_thread.y + 1.0
+			until
+				ly >= a_thread.y + a_thread.height or l_found
+			loop
+				from
+					lx := a_thread.x + 1.0
+				until
+					lx >= a_thread.x + a_thread.width or l_found
+				loop
+					hit := a_thread.reaction_at (lx, ly)
+					if hit.message = a_index and then hit.emoji.same_string (a_emoji) then
+						Result := [lx, ly]
+						l_found := True
+					end
+					lx := lx + 2.0
+				end
+				ly := ly + 2.0
+			end
+		end
+
+	item_present (a_menu: detachable SW_MENU; a_label: READABLE_STRING_32): BOOLEAN
+		do
+			Result := attached a_menu as m and then
+				across m.items as it some it.label.same_string (a_label) end
+		end
+
+	item_enabled (a_menu: detachable SW_MENU; a_label: READABLE_STRING_32): BOOLEAN
+		do
+			Result := attached a_menu as m and then
+				across m.items as it some it.label.same_string (a_label) and it.enabled end
+		end
+
+	plain_member_reply: STRING_8
+			-- User 5 again, and NOT an administrator - the arm the admin
+			-- fixture cannot reach.
+		do
+			Result := "{%"id%":5,%"username%":%"larry%",%"display_name%":%"Larry%",%"is_admin%":false,%"is_bot%":false}"
+		end
+
+	wire_fold_event (a_id, a_sender: INTEGER_64; a_kind, a_body, a_payload: STRING_8): STRING_8
+			-- One event of room 4 carrying `a_payload' - the object a fold
+			-- reads its target and its parent out of.
+		do
+			Result := "{%"id%":" + a_id.out + ",%"room_id%":4,%"sender_id%":" + a_sender.out
+				+ ",%"kind%":%"" + a_kind + "%",%"created_at%":%"2026-09-02T12:00:00%",%"body%":%"" + a_body
+				+ "%",%"attachment%":null,%"payload%":" + a_payload + ",%"is_bot%":false}"
+		end
+
+	wire_edit_event (a_id, a_sender, a_target: INTEGER_64; a_body: STRING_8): STRING_8
+		do
+			Result := wire_fold_event (a_id, a_sender, "edit", a_body, "{%"target%":" + a_target.out + "}")
+		end
+
+	wire_delete_event (a_id, a_sender, a_target: INTEGER_64): STRING_8
+		do
+			Result := wire_fold_event (a_id, a_sender, "delete", "", "{%"target%":" + a_target.out + "}")
+		end
+
+	wire_reply_event (a_id, a_sender, a_parent: INTEGER_64; a_body: STRING_8): STRING_8
+			-- A reply is a MESSAGE that names a parent: it draws its own bubble.
+		do
+			Result := wire_fold_event (a_id, a_sender, "message", a_body, "{%"reply_to%":" + a_parent.out + "}")
+		end
+
+	wire_said (a_id, a_sender: INTEGER_64; a_body: STRING_8): STRING_8
+			-- An ordinary message OF ROOM 4, which is the room `room_app'
+			-- opens. The older `wire_message' says room 1, and a presenter
+			-- SKIPS an event of a room it does not have open - so a fixture
+			-- that used it here would feed a page that drew nothing at all.
+		do
+			Result := wire_fold_event (a_id, a_sender, "message", a_body, "{}")
+		end
+
+	wire_reaction_echo (a_id, a_sender, a_target: INTEGER_64): STRING_8
+			-- What the server answers a reaction POST with.
+		do
+			Result := wire_fold_event (a_id, a_sender, "reaction", "", "{%"target%":" + a_target.out + "}")
+		end
+
+	Wire_on_false: STRING_8 = "%"on%":false"
+
+	Wire_on_true: STRING_8 = "%"on%":true"
+
 feature -- The room's vertical accounting
 
 	test_composer_grows_on_the_frame_the_wrap_happens

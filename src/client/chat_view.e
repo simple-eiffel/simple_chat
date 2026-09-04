@@ -65,6 +65,51 @@ feature -- Basic operations
 			appended: shown_model |=| ((old shown_model) & a_event.id)
 		end
 
+	apply_edit (a_event_id: INTEGER_64; a_text: READABLE_STRING_GENERAL)
+			-- The message `a_event_id' now reads `a_text', and the room can
+			-- see it was edited. Nothing happens for an id this view never
+			-- showed, or one already tombstoned: a delete is final.
+		require
+			positive: a_event_id > 0
+			text_given: not a_text.is_empty
+		deferred
+		ensure
+			nothing_added: shown_model |=| old shown_model
+		end
+
+	apply_delete (a_event_id: INTEGER_64)
+			-- Tombstone `a_event_id': the bubble stays where it is and reads
+			-- "message deleted". THE ORDER OF A THREAD IS PART OF ITS RECORD -
+			-- a vanished bubble silently rewrites who answered whom.
+		require
+			positive: a_event_id > 0
+		deferred
+		ensure
+			nothing_added: shown_model |=| old shown_model
+		end
+
+	apply_reactions (a_event_id: INTEGER_64; a_list: LIST [TUPLE [emoji: STRING_32; tally: INTEGER; mine: BOOLEAN]])
+			-- Replace the reaction row of `a_event_id' wholesale. The server
+			-- has already deduped per person per emoji; a client that tried
+			-- to merge would be keeping a second, worse tally.
+		require
+			positive: a_event_id > 0
+			tallies_positive: across a_list as r all r.tally > 0 end
+		deferred
+		ensure
+			nothing_added: shown_model |=| old shown_model
+		end
+
+	apply_reply_quote (a_event_id: INTEGER_64; a_author, a_text: READABLE_STRING_GENERAL)
+			-- Make `a_event_id' show the one-line quote of what it answers.
+			-- Two empty strings clear it.
+		require
+			positive: a_event_id > 0
+		deferred
+		ensure
+			nothing_added: shown_model |=| old shown_model
+		end
+
 	show_status (a_text: READABLE_STRING_GENERAL)
 			-- An ephemeral line ("🤖 Claude is thinking…"); replaces the previous one.
 		deferred

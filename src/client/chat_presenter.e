@@ -213,6 +213,7 @@ feature -- Basic operations
 			inbox := a_inbox
 			room_id := a_room_id
 			last_seen_id := a_since_id
+			seen_events.wipe_out
 			reported_outage := False
 			session_lost := False
 			view.show_connection (client.endpoint, True)
@@ -370,11 +371,121 @@ feature -- Constants
 
 feature {NONE} -- Showing
 
+feature -- Access: what a per-message menu needs
+
+	sender_of (a_event_id: INTEGER_64): INTEGER_64
+			-- Who said `a_event_id'; 0 for one this client never saw. What
+			-- the permission rule needs before it can grey a menu item.
+		do
+			across seen_events as e loop
+				if Result = 0 and then e.id = a_event_id then
+					Result := e.sender_id
+				end
+			end
+		ensure
+			non_negative: Result >= 0
+		end
+
+	body_of (a_event_id: INTEGER_64): STRING_32
+			-- What `a_event_id' says NOW - its latest edit when it has one,
+			-- so Edit loads the composer with the text on screen and not the
+			-- words it replaced. Empty for one this client never saw.
+		local
+			f: MESSAGE_FOLD
+		do
+			create f.make (seen_events)
+			if attached f.current_text (a_event_id) as t then
+				Result := t.twin
+			else
+				create Result.make_empty
+				across seen_events as e loop
+					if Result.is_empty and then e.id = a_event_id and then e.is_message then
+						Result := e.body.twin
+					end
+				end
+			end
+		end
+
+	is_message_deleted (a_event_id: INTEGER_64): BOOLEAN
+			-- Has `a_event_id' been tombstoned? Nothing may be done to a
+			-- deleted message: a delete is final.
+		local
+			f: MESSAGE_FOLD
+		do
+			create f.make (seen_events)
+			Result := f.is_deleted (a_event_id)
+		end
+
+	apply_fold
+			-- Fold every event this room has shown and give the view what a
+			-- reader should now see: edited text, tombstones, reaction rows
+			-- and reply quotes. The view ignores an id it never drew and one
+			-- already tombstoned, so this is safe to run again and again.
+		local
+			f: MESSAGE_FOLD
+			l_row: ARRAYED_LIST [TUPLE [emoji: STRING_32; tally: INTEGER; mine: BOOLEAN]]
+			l_me: INTEGER_64
+		do
+			create f.make (seen_events)
+			if attached client.me as m then
+				l_me := m.id
+			end
+			across f.standalone as e loop
+				if f.is_deleted (e.id) then
+					view.apply_delete (e.id)
+				else
+					if attached f.current_text (e.id) as t and then not t.is_empty then
+						view.apply_edit (e.id, t)
+					end
+					create l_row.make (4)
+					across f.reactions_on (e.id) as n loop
+						l_row.extend ([@n.key.twin, n, f.reacted (e.id, l_me, @n.key)])
+					end
+						-- UNCONDITIONALLY, empty row included: a row is replaced
+						-- wholesale, and the one moment an empty one matters is
+						-- the moment it BECAME empty - somebody took their only
+						-- reaction back. Skipping it there would leave the chip
+						-- drawn until an unrelated event happened to redraw it.
+					view.apply_reactions (e.id, l_row)
+					if f.reply_parent (e.id) > 0 and then attached quoted_parent (f.reply_parent (e.id)) as q then
+						view.apply_reply_quote (e.id, q.author, q.text)
+					end
+				end
+			end
+		ensure
+			nothing_added: view.shown_model |=| old view.shown_model
+		end
+
+	quoted_parent (a_id: INTEGER_64): detachable TUPLE [author, text: STRING_32]
+			-- Who said the message `a_id' is, and what it said - for the
+			-- one-line quote a reply carries. Void when this client never
+			-- saw the parent, which a page boundary makes ordinary.
+		do
+			across seen_events as e loop
+				if Result = Void and then e.id = a_id and then e.is_message then
+					Result := [name_of (e.sender_id), e.body.twin]
+				end
+			end
+		end
+
+	seen_events: ARRAYED_LIST [CHAT_EVENT]
+			-- Every event of the open room this client has pumped, oldest
+			-- first - what the fold needs, and the only place a reply can
+			-- find the words it quotes.
+		attribute
+			create Result.make (64)
+		end
+
+	kinds: CHAT_EVENT_KINDS
+		once
+			create Result
+		end
+
 	apply (a_page: CHAT_PAGE)
 			-- Show `a_page': every event of the open room, attributed, counted as unread when it is
 			-- another member's and the window is not in front; then the room's statuses.
 		local
-			l_mine, l_system: BOOLEAN
+			l_mine, l_system, l_folded: BOOLEAN
 			l_name: STRING_32
 			l_shown_before, l_applied, l_unread_before, l_others: INTEGER
 		do
@@ -382,21 +493,39 @@ feature {NONE} -- Showing
 			l_unread_before := unread
 			across a_page.events as e loop
 				if e.room_id = room_id then
-					l_mine := attached client.me as m and then m.id = e.sender_id
-					l_system := e.sender_id = 0
-					l_name := name_of (e.sender_id)
-					view.show_event (e, l_name, l_mine)
-					l_applied := l_applied + 1
+					seen_events.extend (e)
 					last_seen_id := last_seen_id.max (e.id)
-					if not l_mine and not l_system and not view.is_foreground then
-						unread := unread + 1
-						l_others := l_others + 1
-						notifier.notify (l_name, snippet_of (e))
+					if kinds.is_fold_kind (e.kind) then
+							-- An edit, a delete or a reaction CHANGES a bubble that
+							-- is already there. It never draws one of its own, and
+							-- it is nobody's unread: a reaction on an old message
+							-- is not a message.
+						l_folded := True
+					else
+						l_mine := attached client.me as m and then m.id = e.sender_id
+						l_system := e.sender_id = 0
+						l_name := name_of (e.sender_id)
+						view.show_event (e, l_name, l_mine)
+						l_applied := l_applied + 1
+						l_folded := True
+						if not l_mine and not l_system and not view.is_foreground then
+							unread := unread + 1
+							l_others := l_others + 1
+							notifier.notify (l_name, snippet_of (e))
+						end
 					end
 				end
 			end
 			check shown_all: view.shown_count = l_shown_before + l_applied end
 			check unread_exact: unread = l_unread_before + l_others end
+			if l_folded then
+					-- Re-fold everything this room has shown and push the result
+					-- onto the bubbles. MESSAGE_FOLD is the SHIPPED rule - last
+					-- edit wins, a delete is final, reactions dedupe per person
+					-- per emoji - and re-running it beats a second, private copy
+					-- of those rules living here and drifting from it.
+				apply_fold
+			end
 			across a_page.statuses as s loop
 				if s.room_id = room_id then
 					view.show_status (s.from_display_name + {STRING_32} " " + s.text)

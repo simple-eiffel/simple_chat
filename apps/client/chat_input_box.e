@@ -90,6 +90,12 @@ feature -- Input
 				if attached on_submit as a then
 					a.call
 				end
+			elseif a_code = 27 and then attached on_cancel as c then
+					-- Escape backs out of a reply or an edit. The parent takes
+					-- Escape as "drop the selection", which still happens: the
+					-- host is told first and the box behaves as it always did.
+				c.call
+				Precursor (a_code)
 			else
 				Precursor (a_code)
 			end
@@ -97,6 +103,19 @@ feature -- Input
 			sent_leaves_no_trailing_newline: is_sending_return (a_code) implies
 				(text.is_empty or else text.item (text.count) /= '%N')
 		end
+
+feature -- Element change
+
+	set_on_cancel (a_action: PROCEDURE)
+			-- What Escape does besides clearing the selection - backing out
+			-- of a reply or an edit, when the host is in one.
+		do
+			on_cancel := a_action
+		ensure
+			set: on_cancel = a_action
+		end
+
+	on_cancel: detachable PROCEDURE
 
 feature -- Layout
 

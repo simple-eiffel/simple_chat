@@ -342,6 +342,30 @@ close a menu without picking anything. This needed simple_shell **1.9.3**, which
 Alt+letter at last; `Alt+F4` still closes the window and `Alt+Space` still opens the system
 menu, because the shell deliberately leaves those to Windows.
 
+**The per-message menu.** Right-click a bubble. Under the Copy items you get **Reply**,
+eight emoji, **Edit** and **Delete**.
+
+- **Reply** puts `Replying to <name>: <the first 60 characters>` above the composer. Type
+  and press Return; the answer arrives carrying a one-line quote of what it answers.
+- **An emoji** puts a chip under the bubble. Click the chip to take it back; click one
+  somebody else started to join it. The number on it is how many people have it.
+- **Edit** — your own messages only — loads the words that are ON SCREEN into the composer
+  so you change them rather than retype them. Return sends the change; **Escape cancels**.
+  The bubble then reads the new words with `edited` under them, and so does everyone
+  else's copy of the room.
+- **Delete** asks first, in the strip above the composer: *Delete this message? Choose
+  Delete again to confirm.* The second Delete does it, and the bubble becomes `message
+  deleted` **without moving** — the order of a thread is part of its record, and a bubble
+  that vanished would silently rewrite who answered whom.
+
+**Check the greying while you are here.** On somebody else's message Edit is grey and
+Delete is live if you are an admin, grey if you are not — greyed, not hidden, on purpose.
+On a tombstone every one of the four is dead and the emoji are not offered at all.
+
+**If the chips draw as squares, look at the folder, not the code.** `SW_SHAPING` resolves
+emoji artwork BESIDE THE RUNNING EXECUTABLE. Run the installed client, or an EIFGENs build
+with `assets\noto-emoji` staged beside it. This has already cost one false alarm.
+
 **Check the lines while you are here.** Ask `@claude` for a numbered list — "@claude give me
 three steps for laying a course of block" — and look at the bubble. The steps must be on
 three LINES, and there must be no empty box anywhere in the reply. Those boxes were every

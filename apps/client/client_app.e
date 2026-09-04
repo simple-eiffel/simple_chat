@@ -355,11 +355,17 @@ feature -- Basic operations
 				view.set_room_title (l_list.first.name)
 				presenter.load_roster (room_id)
 				load_handles
+					-- The per-message menu: what its items DO, and the rule that
+					-- greys them. The rule is asked fresh on every open, so an
+					-- item greys the instant state turns against it.
+				view.thread.set_actions (agent begin_reply, agent begin_edit, agent confirm_delete, agent react_to)
+				view.thread.set_permissions (agent may_edit_bubble, agent may_delete_bubble)
 					-- The Room menu does by click what the composer does by verb.
 					-- Without these the items build DISABLED (their action is Void)
 					-- and a click does nothing at all, which is what Larry hit.
 				view.set_on_summary (agent ask_summary (0, 0, 0))
 				view.set_on_catch_up (agent catch_up_now)
+				view.set_on_cancel_compose (agent cancel_compose)
 				if not presenter.bot_members.is_empty then
 					view.show_hint (addressing_hint (presenter.bot_members))
 				end
@@ -414,6 +420,10 @@ feature -- Basic operations
 			if presenter.is_room_open and then client.is_logged_in and then not a_text.is_empty then
 				if is_summary_line (a_text) then
 					ask_summary (0, 0, summary_ask.minutes_of (a_text))
+				elseif editing_id > 0 then
+					send_edit (a_text)
+				elseif replying_to > 0 then
+					send_reply (a_text)
 				else
 					presenter.send (a_text)
 				end
@@ -421,6 +431,220 @@ feature -- Basic operations
 		ensure
 			nothing_shown_here: view.shown_model |=| old view.shown_model
 		end
+
+feature {NONE} -- The per-message menu
+
+	replying_to: INTEGER_64
+			-- The message the composer is answering; 0 when it is not.
+
+	editing_id: INTEGER_64
+			-- The message the composer is rewriting; 0 when it is not. The
+			-- two are exclusive by construction - beginning either clears
+			-- the other - because a composer that was both would have to
+			-- guess what Return meant.
+
+	pending_delete: INTEGER_64
+			-- The message a second Delete would tombstone. THE CONFIRM IS
+			-- IN THE PANE, not a modal: the first Delete says what will
+			-- happen and arms this, the second does it. A dialog that steals
+			-- the keyboard to ask "are you sure" is how a window stops
+			-- pumping, and this room has been bitten by that before.
+
+	bubble_event (a_bubble: INTEGER): INTEGER_64
+			-- The event id bubble `a_bubble' carries; 0 when there is none.
+		do
+			Result := view.event_of_bubble (a_bubble)
+		ensure
+			non_negative: Result >= 0
+		end
+
+	may_edit_bubble (a_bubble: INTEGER): BOOLEAN
+			-- ONLY THE AUTHOR, and never an administrator. The same rule the
+			-- server enforces: removing someone's words is moderation, but
+			-- rewriting them under their name is putting words in their
+			-- mouth. A client that greyed this differently would be lying
+			-- about what the server will accept.
+		local
+			l_id: INTEGER_64
+		do
+			l_id := bubble_event (a_bubble)
+			Result := l_id > 0 and then attached client.me as m
+				and then presenter.sender_of (l_id) = m.id
+				and then not presenter.is_message_deleted (l_id)
+		end
+
+	may_delete_bubble (a_bubble: INTEGER): BOOLEAN
+			-- The author, or an administrator.
+		local
+			l_id: INTEGER_64
+		do
+			l_id := bubble_event (a_bubble)
+			Result := l_id > 0 and then attached client.me as m
+				and then (presenter.sender_of (l_id) = m.id or m.is_admin)
+				and then not presenter.is_message_deleted (l_id)
+		end
+
+	begin_reply (a_bubble: INTEGER)
+			-- Aim the composer at a message and say so above it.
+		local
+			l_id: INTEGER_64
+		do
+			l_id := bubble_event (a_bubble)
+			if l_id > 0 and then not presenter.is_message_deleted (l_id) then
+				editing_id := 0
+				pending_delete := 0
+				replying_to := l_id
+				view.show_compose_strip (Text_replying_to + presenter.name_of (presenter.sender_of (l_id))
+					+ {STRING_32} ": " + elided (presenter.body_of (l_id)))
+			end
+		end
+
+	begin_edit (a_bubble: INTEGER)
+			-- Load the composer with what the message says NOW; Return sends
+			-- the edit.
+		local
+			l_id: INTEGER_64
+		do
+			l_id := bubble_event (a_bubble)
+			if may_edit_bubble (a_bubble) then
+				replying_to := 0
+				pending_delete := 0
+				editing_id := l_id
+				view.set_compose_text (presenter.body_of (l_id))
+				view.show_compose_strip (Text_editing)
+			end
+		end
+
+	cancel_compose
+			-- Out of reply or edit mode, composer cleared of an edit's text.
+		do
+			if editing_id > 0 then
+				view.set_compose_text ({STRING_32} "")
+			end
+			replying_to := 0
+			editing_id := 0
+			pending_delete := 0
+			view.show_compose_strip ({STRING_32} "")
+		ensure
+			plain: replying_to = 0 and editing_id = 0
+		end
+
+	confirm_delete (a_bubble: INTEGER)
+			-- First Delete arms and says so; second does it.
+		local
+			l_id: INTEGER_64
+		do
+			l_id := bubble_event (a_bubble)
+			if may_delete_bubble (a_bubble) then
+				if pending_delete = l_id then
+					pending_delete := 0
+					send_delete (l_id)
+				else
+					pending_delete := l_id
+					view.show_compose_strip (Text_confirm_delete)
+				end
+			end
+		end
+
+	react_to (a_bubble: INTEGER; a_emoji: STRING_32)
+			-- An empty emoji means the menu asked for the picker; a real one
+			-- means a chip was clicked or a choice made, and it TOGGLES -
+			-- the server keeps the last word per person per emoji.
+		local
+			l_id: INTEGER_64
+		do
+			l_id := bubble_event (a_bubble)
+			if l_id > 0 and then not presenter.is_message_deleted (l_id) then
+				if not a_emoji.is_empty then
+					send_reaction (l_id, a_emoji, not view.reaction_is_mine (l_id, a_emoji))
+				end
+			end
+		end
+
+feature {NONE} -- The per-message menu: the wire
+
+	send_edit (a_text: READABLE_STRING_GENERAL)
+		require
+			editing: editing_id > 0
+		local
+			l_result: CHAT_RESULT [CHAT_EVENT]
+			l_id: INTEGER_64
+		do
+			l_id := editing_id
+			cancel_compose
+			if client.is_logged_in and room_id > 0 and then not a_text.is_empty then
+				l_result := client.edit_message (room_id, l_id, a_text)
+				if not l_result.is_success and then attached l_result.error as e then
+					view.show_error (e.message)
+				end
+			end
+		ensure
+			plain_again: editing_id = 0
+		end
+
+	send_reply (a_text: READABLE_STRING_GENERAL)
+		require
+			replying: replying_to > 0
+		local
+			l_result: CHAT_RESULT [CHAT_EVENT]
+			l_id: INTEGER_64
+		do
+			l_id := replying_to
+			cancel_compose
+			if client.is_logged_in and room_id > 0 and then not a_text.is_empty then
+				l_result := client.post_reply (room_id, l_id, a_text)
+				if not l_result.is_success and then attached l_result.error as e then
+					view.show_error (e.message)
+				end
+			end
+		ensure
+			plain_again: replying_to = 0
+		end
+
+	send_delete (a_event_id: INTEGER_64)
+		require
+			positive: a_event_id > 0
+		local
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			view.show_compose_strip ({STRING_32} "")
+			if client.is_logged_in and room_id > 0 then
+				l_result := client.delete_message (room_id, a_event_id)
+				if not l_result.is_success and then attached l_result.error as e then
+					view.show_error (e.message)
+				end
+			end
+		end
+
+	send_reaction (a_event_id: INTEGER_64; a_emoji: READABLE_STRING_GENERAL; a_on: BOOLEAN)
+		require
+			positive: a_event_id > 0
+			emoji_given: not a_emoji.is_empty
+		local
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			if client.is_logged_in and room_id > 0 then
+				l_result := client.react_to_message (room_id, a_event_id, a_emoji, a_on)
+				if not l_result.is_success and then attached l_result.error as e then
+					view.show_error (e.message)
+				end
+			end
+		end
+
+	elided (a_text: READABLE_STRING_GENERAL): STRING_32
+			-- The head of `a_text' for the composer's strip - a quote that
+			-- ran on would push the composer off the window.
+		do
+			create Result.make_from_string_general (a_text)
+			if Result.count > Quote_maximum then
+				Result := Result.substring (1, Quote_maximum) + {STRING_32} "..."
+			end
+		end
+
+	Quote_maximum: INTEGER = 60
+	Text_replying_to: STRING_32 = "Replying to "
+	Text_editing: STRING_32 = "Editing your message - Return sends the change, Escape cancels."
+	Text_confirm_delete: STRING_32 = "Delete this message? Choose Delete again to confirm."
 
 feature {NONE} -- Summary and catch-up
 
