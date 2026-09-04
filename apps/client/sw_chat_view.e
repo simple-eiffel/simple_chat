@@ -124,6 +124,7 @@ feature {NONE} -- Initialization
 		do
 			create room_title.make_from_string_general (a_room_title)
 			create shown_ids.make (64)
+			create bubble_ids.make (64)
 			create errors.make (4)
 			create status_text.make_empty
 			create theme.make_dark
@@ -238,6 +239,15 @@ feature -- Access
 	shown_ids: ARRAYED_LIST [INTEGER_64]
 			-- Every id shown, in order.
 
+	bubble_ids: ARRAYED_LIST [INTEGER_64]
+			-- ONE ENTRY PER BUBBLE IN THE THREAD, in order: the event id the
+			-- bubble carries, or 0 for one that carries none (a hint). This
+			-- is the ONLY honest way to turn a thread index into an event id,
+			-- and the reason it exists is that `shown_ids' is not: a hint
+			-- draws a bubble and adds no id, so from the first hint onwards
+			-- the two lists disagree by one - silently, and worse the further
+			-- down the room a member clicks.
+
 	errors: ARRAYED_LIST [STRING_32]
 			-- Every error shown, in order (the last one is on screen).
 
@@ -318,6 +328,7 @@ feature -- Basic operations
 		do
 			thread.add_message (role_for (a_event, a_mine), bubble_text (a_event, a_sender_name))
 			shown_ids.extend (a_event.id)
+			bubble_ids.extend (a_event.id)
 			redraw
 		ensure then
 			bubbled: thread.count = old thread.count + 1
@@ -377,28 +388,30 @@ feature -- Basic operations
 
 	bubble_of (a_event_id: INTEGER_64): INTEGER
 			-- WHICH BUBBLE carries `a_event_id', 0 for one this view never
-			-- showed. `shown_ids' is filled by `show_event' in step with the
-			-- thread's own indices, so the two cannot drift.
+			-- showed. THE INDEX IS A THREAD INDEX, because that is what the
+			-- caller then hands to `thread.set_message' and friends - so it
+			-- is read out of `bubble_ids', which counts hints, and never out
+			-- of `shown_ids', which does not.
 		local
 			i: INTEGER
 		do
-			from i := 1 until i > shown_ids.count or Result > 0 loop
-				if shown_ids.i_th (i) = a_event_id then
+			from i := 1 until i > bubble_ids.count or Result > 0 loop
+				if bubble_ids.i_th (i) = a_event_id then
 					Result := i
 				end
 				i := i + 1
 			end
 		ensure
-			in_range: Result >= 0 and Result <= shown_ids.count
-			right_one: Result > 0 implies shown_ids.i_th (Result) = a_event_id
+			in_range: Result >= 0 and Result <= bubble_ids.count
+			right_one: Result > 0 implies bubble_ids.i_th (Result) = a_event_id
 		end
 
 	event_of_bubble (a_index: INTEGER): INTEGER_64
 			-- The event id bubble `a_index' carries; 0 when out of range.
 			-- What a right-click needs once `message_at' has named a bubble.
 		do
-			if a_index >= 1 and a_index <= shown_ids.count then
-				Result := shown_ids.i_th (a_index)
+			if a_index >= 1 and a_index <= bubble_ids.count then
+				Result := bubble_ids.i_th (a_index)
 			end
 		ensure
 			non_negative: Result >= 0
@@ -499,8 +512,15 @@ feature -- Basic operations
 			-- A system-role bubble in the thread - the same centred role a real
 			-- system event draws with, but never added to `shown_ids': it named
 			-- nobody's message and carries no server id.
+			--
+			-- IT IS STILL A BUBBLE THE POINTER CAN LAND ON, so it takes its
+			-- place in `bubble_ids' carrying 0. That list is what turns a
+			-- thread index into an event id, and a hint that was missing from
+			-- it put every message after it out of step - which is the defect
+			-- Larry hit: pick an emoji, and nothing whatever happens.
 		do
 			thread.add_message ({SW_CHAT_THREAD}.Role_system, a_text)
+			bubble_ids.extend (0)
 			hint_count := hint_count + 1
 			redraw
 		ensure then
@@ -955,6 +975,8 @@ feature -- Constants
 
 invariant
 	model_consistent: shown_model.count = shown_ids.count
+	one_entry_per_bubble: bubble_ids.count = thread.count
+	every_shown_id_has_a_bubble: shown_ids.count + hint_count = bubble_ids.count
 	unread_non_negative: unread >= 0
 	hint_count_non_negative: hint_count >= 0
 	titled: not room_title.is_empty
