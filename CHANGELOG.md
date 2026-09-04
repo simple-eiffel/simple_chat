@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **An open menu answers the keyboard** - rebuilt against simple_widgets
+  0.6.2. Down and Up walk the items and step over separators and greyed
+  entries, Home and End jump, Enter runs the highlighted item, Escape closes,
+  Left and Right move to the neighbouring menu and open it, wrapping at both
+  ends - whether the menu was opened by Alt+letter or by the mouse. Larry, in
+  the room on 2026-09-04: the menus opened and then ignored the arrow keys;
+  the library's popup dispatch had no branch for virtual-key events at all.
+  No chat source changed for this; the window's version text names the
+  library.
+
 ## [0.1.4] — 2026-09-03
 
 The window release: a menu bar with File, Edit, Room and Help - About names the version and the fleet it was built against; summary on demand and catch-up on return, each an answer to the person who asked and never a room event; real line breaks in the pane, a numbered list drawn as a list; selection and Copy from the thread; Ctrl and Alt keys that reach the menu; the assistant told it has no tools, and tool-call markup refused; the room's members addressed by handle. Built against simple_widgets 0.6.1, simple_shell 1.9.3, simple_console 1.2.0 and the UTF-8 simple_ai_client.
