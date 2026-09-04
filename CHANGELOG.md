@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-09-04
+
+The keyboard release: an open menu answers the arrow keys, Home, End, Enter and Escape, and Left and Right walk the menu bar. Rebuilt against simple_widgets 0.6.2; no chat source changed.
+
 ### Changed
 
 - **An open menu answers the keyboard** - rebuilt against simple_widgets
