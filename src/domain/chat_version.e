@@ -20,7 +20,7 @@ class
 
 feature -- Access
 
-	Product: STRING_32 = "0.1.5"
+	Product: STRING_32 = "0.2.0"
 			-- Keep in step with installer\SimpleChat.iss #define AppVersion.
 
 	Built_on: STRING_32 = "2026-09-03"
