@@ -65,6 +65,25 @@ the door `SW_WINDOW.activate_mnemonic` was listening at — so the pane register
 of its own, one per pad, exactly as the library's README invites a host to. If simple_widgets later
 routes an unclaimed Alt+letter to `activate_mnemonic` itself, those four come back out.
 
+**Right-click a bubble and the menu is about THAT message.** Reply, one of eight emoji,
+Edit, Delete — added to the library's own Copy items rather than replacing them. The pane
+draws the result of all four: an edited bubble reads the new words and says `edited` under
+them, a deleted one becomes a `message deleted` tombstone **that keeps its place in the**
+**order**, a reply carries a one-line quote of what it answers, and reactions sit under the
+bubble as chips you can click to toggle. Nothing is ever rewritten and nothing is ever
+removed: an edit, a delete and a reaction are new EVENTS naming the message they act on,
+and one pass (`MESSAGE_FOLD`) folds them into what a reader should see.
+
+The rule the menu greys by is the server's own — **the author may edit their own; the**
+**author or an administrator may delete; nobody may edit anyone else's words**, an
+administrator included. Removing someone's words is moderation; rewriting them under their
+own name is putting words in their mouth. A greyed item is still SHOWN, because a menu that
+hides what you may not do teaches nothing. Reply, Edit and Delete all aim the one composer
+at one message and a strip above it says which; Escape backs out. The delete confirm is in
+that strip and **not a modal** — a dialog that steals the keyboard is how a window stops
+pumping, and Windows discards the keystrokes of a window that stopped pumping. Offscreen:
+`.eiffel-workflow/evidence/message-fold-pane.png`.
+
 What no headless assault can prove is that the **pixels** are right; that is `RUNBOOK.md`, and it is
 the one thing still owed. Two limits are stated rather than hidden: an image event is shown as a
 named, sized attachment line and not as a picture (no WIC decoder is linked into this client), and

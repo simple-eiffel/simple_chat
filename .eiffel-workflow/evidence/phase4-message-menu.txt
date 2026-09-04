@@ -1,0 +1,230 @@
+================================================================================
+PHASE 4 - THE PER-MESSAGE MENU, STAGE 3: THE CLIENT
+branch phase4/message-menu, from main a509392
+2026-09-04
+================================================================================
+
+Larry asked for a Facebook-style per-message context menu: edit your own
+message, delete your own message, reply to a message, add an emoji reaction.
+He then settled the two questions that decide the shape of it:
+
+  "Delete leaves a tombstone - the bubble shows 'message deleted' rather than
+   vanishing, and history stays honest"
+  "Edit shows the current text, and the room can see it was edited"
+
+The work was split in three. Stage 1 (merged, PR #11) put the events, the fold
+and the four endpoints in the server. Stage 2 (simple_widgets 0.7.0, merged)
+taught SW_CHAT_THREAD to CHANGE a drawn bubble - set_message, mark_edited,
+tombstone, set_reactions, set_reply_quote, message_at, reaction_at. THIS is
+stage 3: the client that puts the two together.
+
+Everything below was run in the worktree D:/prod/simple_chat_wt_menu. No
+window was opened on the desktop and no keystroke was sent to one; every pane
+in here is an offscreen cairo surface, driven the way a member drives it.
+
+
+--------------------------------------------------------------------------------
+1. WHAT THE MEMBER GETS
+--------------------------------------------------------------------------------
+
+Right-click a bubble:
+
+  Copy / Copy message / Copy selection      (the library's own, kept)
+  ------------------------------------
+  Reply
+  (eight emoji, each an item of its own)
+  ------------------------------------
+  Edit
+  Delete
+
+The emoji are ITEMS and not a "React..." that opens a second popup: SW_MENU has
+no submenu, the window's popup door is its own, and eight choices read fine in
+a menu. One click is better than two.
+
+Reply, Edit and Delete all aim the ONE composer at ONE message, and a strip
+above it says which:
+
+  Replying to Nick: who is bringing the ladders?
+  Editing your message - Return sends the change, Escape cancels.
+  Delete this message? Choose Delete again to confirm.
+
+An empty strip costs no height, so it takes no room when nothing is pending.
+
+THE DELETE CONFIRM IS IN THE PANE, NOT A MODAL. The first Delete arms and says
+what will happen; the second does it. A dialog that steals the keyboard to ask
+"are you sure" is how a window stops pumping, Windows ghosts a window that
+stops pumping for ~5s and DISCARDS its keystrokes, and this room has been
+bitten by exactly that before.
+
+
+--------------------------------------------------------------------------------
+2. THE PERMISSION RULE, AND WHY A GREYED ITEM IS STILL SHOWN
+--------------------------------------------------------------------------------
+
+  the author            may edit their own
+  the author OR an admin may delete
+  NOBODY                may edit anyone else's, an administrator included
+
+Removing someone's words is moderation. Rewriting them under their own name is
+putting words in their mouth, and no role here carries that.
+
+The client asks the rule fresh every time the menu opens, through agents
+CLIENT_APP wires at open_room (may_edit_bubble / may_delete_bubble), so an item
+greys the instant state turns against it. MESSAGE_THREAD carries no idea of
+identity of its own and therefore cannot get the rule subtly different from the
+server's.
+
+A greyed item is SHOWN, not hidden. A menu that hides what you may not do
+teaches nothing; a member who wonders why Edit is grey on somebody else's
+message has learned the rule.
+
+Nothing at all is offered on a tombstone - not even greyed emoji. A delete is
+final: there is nothing left to edit, answer or react to, and a dead row of
+eight grey glyphs is noise.
+
+
+--------------------------------------------------------------------------------
+3. WHAT WAS MEASURED
+--------------------------------------------------------------------------------
+
+Fourteen assaults, 244 -> 258, zero skips, zero warnings.
+
+SEVEN through the presenter (CLIENT_ASSAULT), against MEMORY_CHAT_VIEW:
+
+  a_fold_event_changes_a_bubble_and_never_draws_one
+      an edit arrives on the same page as messages, changes the bubble it
+      names, and never becomes one of its own; the last edit wins
+  a_delete_is_final_even_against_a_later_edit
+      tombstoned, the later edit never lands, the bubble KEEPS ITS PLACE, and
+      the message after it is untouched
+  reactions_dedupe_per_person_and_the_readers_own_is_marked
+      three reaction events from two people = one chip, tally 2, marked mine;
+      then one off = tally 1; then the last off = THE ROW CLEARS
+  a_reply_draws_and_carries_the_quote_of_what_it_answers
+      a reply draws AND quotes; a parent off the page leaves it quoteless
+      rather than raising
+  a_fold_event_naming_nothing_is_dropped_in_silence
+      no target, a target off the page, a reaction with no emoji, a zero
+      target - all ignored, AND THE MEMBER READS NO ERROR
+  the_fold_is_forgotten_when_the_room_changes
+      seen_events is per-room, so one room's messages cannot answer another's
+  the_menu_asks_the_presenter_who_said_it_and_what_it_says_now
+      sender_of / body_of / is_message_deleted - and body_of answers the
+      LATEST text, so Edit loads what is on screen and not what it replaced
+
+SEVEN through the real pane (WINDOW_ASSAULT), CLIENT_APP over SW_CHAT_VIEW:
+
+  the_per_message_menu_greys_by_the_servers_own_rule
+  a_plain_member_may_do_nothing_to_anyone_elses_message
+  nothing_is_offered_on_a_tombstone
+  a_click_on_a_reaction_chip_toggles_that_one_emoji
+  the_compose_strip_says_what_return_will_do_and_escape_backs_out
+  return_sends_an_edit_or_a_reply_and_then_goes_back_to_plain
+  the_fold_reaches_the_real_pane
+
+Three things make that second set worth having:
+
+  * The app is built through open_room, never wired by hand. That is the
+    moment CLIENT_APP attaches the menu's actions and its permission rule, and
+    an assault that wired the agents itself would keep passing the day the app
+    stopped wiring them - which is EXACTLY the defect Larry found in the Room
+    menu ("Summarize the room now" was a dead item because set_on_summary
+    never landed).
+  * The menu is asked for at a point the pane's OWN hit-testing says is on the
+    bubble. bubble_boxes is feature {NONE}, as it should be, so the fixture
+    scans the pane with message_at and reaction_at - the same questions a
+    right-click and a click ask.
+  * Every action is reached BY INVOKING THE MENU ITEM, and only if the item is
+    live, because a member cannot click a greyed one either.
+
+Two arms only a second fixture can reach: signed in as an ADMIN, Delete on
+another's message is live and Edit is dead; signed in as a PLAIN MEMBER
+(plain_member_reply), both are dead on another's and both live on his own.
+
+Offscreen frame: evidence/message-fold-pane.png - three messages and a reply,
+one bubble reading "the roof job starts Tuesday / edited", one reading
+"message deleted" IN ITS PLACE in the order, and the reply carrying the
+one-line quote of what it answers.
+
+
+--------------------------------------------------------------------------------
+4. TWO THINGS FOUND ON THE WAY
+--------------------------------------------------------------------------------
+
+TAKING BACK YOUR ONLY REACTION LEFT THE CHIP ON SCREEN. CHAT_PRESENTER applied
+a reaction row only `if not l_row.is_empty', so the one moment an empty row
+matters - the moment it BECAME empty - was the one moment it was skipped, and
+the chip stayed until some unrelated event happened to redraw the bubble. The
+row is replaced wholesale now, empty included; the third leg of
+reactions_dedupe_per_person_and_the_readers_own_is_marked is the tripwire.
+
+"ESCAPE CANCELS" WAS A PROMISE THE CODE DID NOT KEEP. Text_editing told the
+member Escape would back out of an edit, and CHAT_INPUT_BOX handled only
+Return. Escape now calls an on_cancel hook the pane forwards to CLIENT_APP,
+and still does what it always did to the selection afterwards. The assault
+drives the real key pair (handle_key 27 then handle_char 27).
+
+
+--------------------------------------------------------------------------------
+5. WHAT IS NOT PROVEN HERE
+--------------------------------------------------------------------------------
+
+THERE IS NO SCREENSHOT OF THE MENU. SW_WINDOW.show_popup is feature {NONE} and
+only the window's own right-click dispatch (bubble_context) calls it, so an
+assault can build the menu and read every item but cannot make the window
+PAINT one. A frame written from the greying test would show the pane with no
+menu on it, named as though it showed the greying - worse than no frame at
+all, so the frame was deleted rather than shipped.
+
+What would fix it is an additive `simulate_context_click' beside the
+`simulate_wheel' and `simulate_key_down' simple_widgets already offers for
+driving a window headless. That is a library change, and so Larry's to gate;
+it is recorded in CHANGELOG under Known and not slipped in here.
+
+The pixels of the menu itself, and the emoji glyphs in it, remain Larry's
+console smoke (RUNBOOK.md). Note for that run: SW_SHAPING resolves emoji
+artwork BESIDE THE RUNNING EXECUTABLE, so a chip row drawn from an EIFGENs
+folder with no assets\noto-emoji beside it will show squares - a deployment
+fact, not a code defect, and one that has already cost a false alarm.
+
+
+--------------------------------------------------------------------------------
+6. CONTRACTS
+--------------------------------------------------------------------------------
+
+Additions only. Every touched file was diffed against a509392 for assertion
+tags; REMOVED: none, in all seven:
+
+  src/client/chat_client.e          src/client/chat_presenter.e
+  src/client/chat_view.e            src/client/memory_chat_view.e
+  apps/client/client_app.e          apps/client/sw_chat_view.e
+  apps/client/chat_input_box.e
+
+New class: apps/client/message_thread.e (MESSAGE_THREAD, inheriting
+SW_CHAT_THREAD and redefining context_menu and handle_click).
+
+The four new CHAT_VIEW features - apply_edit, apply_delete, apply_reactions,
+apply_reply_quote - each carry `nothing_added: shown_model |=| old
+shown_model'. A fold changes bubbles; it must never add one.
+
+
+--------------------------------------------------------------------------------
+7. THE RUNS
+--------------------------------------------------------------------------------
+
+  ec.sh test    -target simple_chat_server           built, E=0
+  ec.sh test    -target simple_chat_tests            built, E=0, 0 warnings
+  simple_chat_tests                                  258 passed, 0 failed
+  ec.sh test    -target simple_chat_doorbell_tests   built, E=0
+  simple_chat_doorbell_tests                         6 passed, 0 failed (4 s)
+  ec.sh release -target simple_chat_client           RELEASE COMPLETE, E=0
+  ec.sh release -target simple_chat_server           RELEASE COMPLETE, E=0
+
+Run from the project root, F_code only. cairo.dll on PATH from
+D:/prod/cairo-windows-1.17.2/lib/x64.
+
+One thing worth knowing for the next runner: the test executable does not
+always exit when the suite ends - a SCOOP processor keeps the process alive
+after "ALL TESTS PASSED", and a stale one will hold simple_chat.exe open and
+fail the NEXT link with LNK1104. Kill it before rebuilding. Pre-existing; not
+introduced here.

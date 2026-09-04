@@ -391,6 +391,109 @@ feature -- Posting
 			session_kept: is_logged_in and me = old me
 		end
 
+	edit_message (a_room_id, a_event_id: INTEGER_64; a_body: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
+			-- POST .../messages/{eid}/edit - a NEW event carrying the new
+			-- words. The original is never rewritten; the server folds this
+			-- over it, and only the author is allowed to send one.
+		require
+			logged_in: is_logged_in
+			positive_room: a_room_id > 0
+			positive_event: a_event_id > 0
+			body_given: not a_body.is_empty
+		do
+			Result := event_from_post (message_path (a_room_id, a_event_id, "/edit"), body_json (a_body))
+		end
+
+	delete_message (a_room_id, a_event_id: INTEGER_64): CHAT_RESULT [CHAT_EVENT]
+			-- POST .../messages/{eid}/delete - a TOMBSTONE. Nothing leaves
+			-- the log: the bubble will read "message deleted" rather than
+			-- vanish, so a conversation that answered it still makes sense.
+		require
+			logged_in: is_logged_in
+			positive_room: a_room_id > 0
+			positive_event: a_event_id > 0
+		do
+			Result := event_from_post (message_path (a_room_id, a_event_id, "/delete"), empty_json)
+		end
+
+	react_to_message (a_room_id, a_event_id: INTEGER_64; a_emoji: READABLE_STRING_GENERAL; a_on: BOOLEAN): CHAT_RESULT [CHAT_EVENT]
+			-- POST .../messages/{eid}/reactions - one person's emoji, on or
+			-- off. The server keeps the last word per person per emoji, so a
+			-- client that sends the same thing twice cannot double-count.
+		require
+			logged_in: is_logged_in
+			positive_room: a_room_id > 0
+			positive_event: a_event_id > 0
+			emoji_given: not a_emoji.is_empty
+		local
+			l_json: SIMPLE_JSON_OBJECT
+		do
+			create l_json.make
+			l_json.put_string (a_emoji.to_string_32, Key_emoji).do_nothing
+			l_json.put_boolean (a_on, Key_on).do_nothing
+			Result := event_from_post (message_path (a_room_id, a_event_id, "/reactions"), l_json)
+		end
+
+	post_reply (a_room_id, a_parent_id: INTEGER_64; a_body: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
+			-- POST .../messages/{eid}/replies - an ordinary message that
+			-- names the one it answers.
+		require
+			logged_in: is_logged_in
+			positive_room: a_room_id > 0
+			positive_parent: a_parent_id > 0
+			body_given: not a_body.is_empty
+		do
+			Result := event_from_post (message_path (a_room_id, a_parent_id, "/replies"), body_json (a_body))
+		end
+
+	message_path (a_room_id, a_event_id: INTEGER_64; a_suffix: READABLE_STRING_8): STRING_8
+			-- /rooms/<room>/messages/<event><suffix> - THE one formula the
+			-- four message actions share.
+		require
+			positive_room: a_room_id > 0
+			positive_event: a_event_id > 0
+			rooted: a_suffix.starts_with ("/")
+		do
+			Result := room_path (a_room_id, "/messages/") + a_event_id.out + a_suffix
+		ensure
+			rooted: Result.starts_with ("/rooms/")
+			names_the_message: Result.has_substring ("/messages/" + a_event_id.out)
+		end
+
+	event_from_post (a_path: READABLE_STRING_8; a_json: SIMPLE_JSON_OBJECT): CHAT_RESULT [CHAT_EVENT]
+			-- POST `a_json' to `a_path' and decode the event it answers.
+			-- The four message actions all answer 201 with one event, so
+			-- they all come back through here rather than four copies.
+		require
+			rooted: a_path.starts_with ("/")
+		local
+			l_reply: HTTP_REPLY
+		do
+			l_reply := exchange ("POST", a_path, authorized_headers, codec.json.bytes_of (a_json), Default_timeout_seconds)
+			if l_reply.is_success and then attached codec.event (l_reply.body) as e then
+				create Result.make_success (e)
+			elseif l_reply.is_success then
+				create Result.make_error (unexpected_answer)
+			else
+				create Result.make_error (error_of (l_reply))
+			end
+		end
+
+	body_json (a_body: READABLE_STRING_GENERAL): SIMPLE_JSON_OBJECT
+		do
+			create Result.make
+			Result.put_string (a_body.to_string_32, Key_body).do_nothing
+		end
+
+	empty_json: SIMPLE_JSON_OBJECT
+		do
+			create Result.make
+		end
+
+	Key_emoji: STRING_32 = "emoji"
+	Key_on: STRING_32 = "on"
+
+
 	post_message (a_room_id: INTEGER_64; a_body: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
 			-- POST /rooms/{id}/messages {"body": ...}; 201 with the stored event. An echo
 			-- for another room, or of another kind, is a 502 result.

@@ -111,6 +111,72 @@ feature -- Basic operations
 			steady: not flips_on_show implies is_foreground = old is_foreground
 		end
 
+	apply_edit (a_event_id: INTEGER_64; a_text: READABLE_STRING_GENERAL)
+			-- Recorded, and only for a message this view actually showed and
+			-- has not tombstoned - the same two guards the real view applies,
+			-- so an assault against this one is an assault against that one.
+		do
+			if shown_ids.has (a_event_id) and then not deleted_ids.has (a_event_id) then
+				edited_text.force (a_text.to_string_32, a_event_id)
+			end
+		end
+
+	apply_delete (a_event_id: INTEGER_64)
+		do
+			if shown_ids.has (a_event_id) then
+				deleted_ids.extend (a_event_id)
+			end
+		end
+
+	apply_reactions (a_event_id: INTEGER_64; a_list: LIST [TUPLE [emoji: STRING_32; tally: INTEGER; mine: BOOLEAN]])
+		local
+			l_copy: ARRAYED_LIST [TUPLE [emoji: STRING_32; tally: INTEGER; mine: BOOLEAN]]
+		do
+			if shown_ids.has (a_event_id) and then not deleted_ids.has (a_event_id) then
+				create l_copy.make (a_list.count)
+				across a_list as r loop
+					l_copy.extend ([r.emoji.twin, r.tally, r.mine])
+				end
+				reaction_rows.force (l_copy, a_event_id)
+			end
+		end
+
+	apply_reply_quote (a_event_id: INTEGER_64; a_author, a_text: READABLE_STRING_GENERAL)
+		do
+			if shown_ids.has (a_event_id) and then not deleted_ids.has (a_event_id) then
+				quotes.force (a_author.to_string_32 + {STRING_32} ": " + a_text.to_string_32, a_event_id)
+			end
+		end
+
+feature -- What the fold did (for the assaults)
+
+	edited_text: HASH_TABLE [STRING_32, INTEGER_64]
+		attribute
+			create Result.make (4)
+		end
+
+	deleted_ids: ARRAYED_LIST [INTEGER_64]
+		attribute
+			create Result.make (4)
+		end
+
+	reaction_rows: HASH_TABLE [ARRAYED_LIST [TUPLE [emoji: STRING_32; tally: INTEGER; mine: BOOLEAN]], INTEGER_64]
+		attribute
+			create Result.make (4)
+		end
+
+	quotes: HASH_TABLE [STRING_32, INTEGER_64]
+		attribute
+			create Result.make (4)
+		end
+
+	is_tombstoned (a_event_id: INTEGER_64): BOOLEAN
+		do
+			Result := deleted_ids.has (a_event_id)
+		end
+
+feature -- Showing
+
 	show_status (a_text: READABLE_STRING_GENERAL)
 		do
 			status := a_text.to_string_32

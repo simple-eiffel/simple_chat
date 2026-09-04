@@ -1360,7 +1360,289 @@ feature -- Phase 1c: the re-review's repairs
 			assert ("the shape under a 503 is not alive; under a 200 it is", not l_endpoint.is_local and l_locator.found_alive and l_locator.last_probe_alive and l_locator.probe_count = 2 and l_locator.last_probe_body.same_string (health_reply))
 		end
 
+feature -- The per-message fold: an edit, a delete, a reaction, a reply
+
+	test_a_fold_event_changes_a_bubble_and_never_draws_one
+			-- An edit is an event like any other and arrives on the same page
+			-- as messages. It must CHANGE the bubble it names and never become
+			-- one of its own: a room that drew its own edit events would be
+			-- showing the reader its plumbing.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			v: MEMORY_CHAT_VIEW
+			n: MEMORY_NOTIFIER
+			pr: CHAT_PRESENTER
+			b: EVENT_INBOX
+		do
+			create t.make
+			c := logged_in_client (t)
+			create v.make
+			create n.make
+			create pr.make (c, v, n)
+			create b.make
+			pr.open_room (1, 0, b)
+			b.put (wire_page (wire_message (1, 9, "the roof job starts Monday") + ","
+				+ wire_edit (2, 9, 1, "the roof job starts Tuesday"), ""))
+			pr.pump
+			assert ("ONE bubble - the edit did not draw one of its own", v.shown_count = 1)
+			assert ("and the bubble now reads the new words",
+				attached v.edited_text.item (1) as l_t and then l_t.same_string ({STRING_32} "the roof job starts Tuesday"))
+			assert ("the edit is not an unread message either", pr.unread = 0)
+			b.put (wire_page (wire_edit (3, 9, 1, "the roof job starts Wednesday"), ""))
+			pr.pump
+			assert ("the LAST edit wins - order is the arbiter",
+				attached v.edited_text.item (1) as l_t2 and then l_t2.same_string ({STRING_32} "the roof job starts Wednesday"))
+			assert ("still one bubble", v.shown_count = 1)
+		end
+
+	test_a_delete_is_final_even_against_a_later_edit
+			-- The rule the room hangs on: an author who withdrew their words
+			-- must not have them resurrected by an edit that arrives after. And
+			-- the bubble KEEPS ITS PLACE - a vanished bubble silently rewrites
+			-- who answered whom.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			v: MEMORY_CHAT_VIEW
+			n: MEMORY_NOTIFIER
+			pr: CHAT_PRESENTER
+			b: EVENT_INBOX
+		do
+			create t.make
+			c := logged_in_client (t)
+			create v.make
+			create n.make
+			create pr.make (c, v, n)
+			create b.make
+			pr.open_room (1, 0, b)
+			b.put (wire_page (wire_message (1, 9, "something regretted") + ","
+				+ wire_message (2, 9, "and the next thing said") + ","
+				+ wire_delete (3, 9, 1) + ","
+				+ wire_edit (4, 9, 1, "a resurrection attempt"), ""))
+			pr.pump
+			assert ("the bubble is a tombstone", v.is_tombstoned (1))
+			assert ("and the later edit never reached it", not v.edited_text.has (1))
+			assert ("both messages still hold their places", v.shown_count = 2 and v.shown_ids [1] = 1 and v.shown_ids [2] = 2)
+			assert ("the message after it is untouched", not v.is_tombstoned (2))
+			assert ("nothing reacts to a tombstone either", not v.reaction_rows.has (1))
+			assert ("and it takes no quote", not v.quotes.has (1))
+		end
+
+	test_reactions_dedupe_per_person_and_the_readers_own_is_marked
+			-- The chips carry the tally the fold computed, and the reader's own
+			-- is marked so a click knows whether it ADDS or TAKES AWAY. Taking
+			-- the last one back must clear the row, not leave a stale chip.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			v: MEMORY_CHAT_VIEW
+			n: MEMORY_NOTIFIER
+			pr: CHAT_PRESENTER
+			b: EVENT_INBOX
+		do
+			create t.make
+			c := logged_in_client (t)
+			create v.make
+			create n.make
+			create pr.make (c, v, n)
+			create b.make
+			pr.open_room (1, 0, b)
+				-- user 5 is the reader (`logged_in_client'); 9 is somebody else
+			b.put (wire_page (wire_message (1, 9, "gutters on Friday") + ","
+				+ wire_reaction (2, 5, 1, "thumb", True) + ","
+				+ wire_reaction (3, 9, 1, "thumb", True) + ","
+				+ wire_reaction (4, 9, 1, "thumb", True), ""))
+			pr.pump
+			assert ("still one bubble - three reactions drew none", v.shown_count = 1)
+			if attached v.reaction_rows.item (1) as l_row then
+				assert ("one chip for the one emoji", l_row.count = 1)
+				assert ("two people, not three events", l_row.first.tally = 2)
+				assert ("and marked as the reader's own", l_row.first.mine)
+			else
+				assert ("a reaction row reached the bubble", False)
+			end
+			b.put (wire_page (wire_reaction (5, 9, 1, "thumb", False), ""))
+			pr.pump
+			if attached v.reaction_rows.item (1) as l_row2 then
+				assert ("the other person's is gone, the reader's stands",
+					l_row2.count = 1 and l_row2.first.tally = 1 and l_row2.first.mine)
+			end
+			b.put (wire_page (wire_reaction (6, 5, 1, "thumb", False), ""))
+			pr.pump
+			if attached v.reaction_rows.item (1) as l_row3 then
+				assert ("THE LAST ONE BACK CLEARS THE ROW - no stale chip", l_row3.is_empty)
+			else
+				assert ("the row was cleared, not abandoned", False)
+			end
+		end
+
+	test_a_reply_draws_and_carries_the_quote_of_what_it_answers
+			-- A reply is a message: it draws like one AND shows a one-line
+			-- quote of its parent, so the thread reads without hunting upwards.
+			-- A parent this client never pumped leaves the reply quoteless
+			-- rather than raising - a page boundary makes that ordinary.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			v: MEMORY_CHAT_VIEW
+			n: MEMORY_NOTIFIER
+			pr: CHAT_PRESENTER
+			b: EVENT_INBOX
+		do
+			create t.make
+			c := logged_in_client (t)
+			create v.make
+			create n.make
+			create pr.make (c, v, n)
+			create b.make
+			pr.remember (create {CHAT_MEMBER}.make (9, "nick", {STRING_32} "Nick", False, False))
+			pr.open_room (1, 0, b)
+			b.put (wire_page (wire_message (1, 9, "who is bringing the ladders?") + ","
+				+ wire_reply (2, 5, 1, "Dave is") + ","
+				+ wire_reply (3, 5, 77, "answering something off the page"), ""))
+			pr.pump
+			assert ("all three draw - a reply is a message", v.shown_count = 3)
+			assert ("the reply quotes who it answers and what they said",
+				attached v.quotes.item (2) as q and then q.same_string ({STRING_32} "Nick: who is bringing the ladders?"))
+			assert ("the parent quotes nothing", not v.quotes.has (1))
+			assert ("a parent off the page leaves the reply quoteless, not broken", not v.quotes.has (3))
+		end
+
+	test_a_fold_event_naming_nothing_is_dropped_in_silence
+			-- A room renders whatever the log holds. A malformed payload, a
+			-- target this client never saw, a target that is not a message: all
+			-- are ignored, and NONE of them is an error the member has to read.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			v: MEMORY_CHAT_VIEW
+			n: MEMORY_NOTIFIER
+			pr: CHAT_PRESENTER
+			b: EVENT_INBOX
+		do
+			create t.make
+			c := logged_in_client (t)
+			create v.make
+			create n.make
+			create pr.make (c, v, n)
+			create b.make
+			pr.open_room (1, 0, b)
+			b.put (wire_page (wire_message (1, 9, "the only real message") + ","
+				+ wire_fold (2, 9, "edit", "names no target", "{}") + ","
+				+ wire_edit (3, 9, 404, "a target off the page") + ","
+				+ wire_fold (4, 9, "reaction", "", "{%"target%":1}") + ","
+				+ wire_delete (5, 9, 0), ""))
+			pr.pump
+			assert ("one bubble, and nothing folded into it",
+				v.shown_count = 1 and not v.edited_text.has (1) and not v.is_tombstoned (1))
+			assert ("a reaction with no emoji tallies nothing",
+				not attached v.reaction_rows.item (1) as l_row or else l_row.is_empty)
+			assert ("AND THE MEMBER READ NO ERROR", v.errors.is_empty)
+		end
+
+	test_the_fold_is_forgotten_when_the_room_changes
+			-- `seen_events' is the only place a reply can find the words it
+			-- quotes, so it is per-room: reopening must not let the old room's
+			-- messages answer the new room's targets.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			v: MEMORY_CHAT_VIEW
+			n: MEMORY_NOTIFIER
+			pr: CHAT_PRESENTER
+			b, b2: EVENT_INBOX
+		do
+			create t.make
+			c := logged_in_client (t)
+			create v.make
+			create n.make
+			create pr.make (c, v, n)
+			create b.make
+			pr.open_room (1, 0, b)
+			b.put (wire_page (wire_message (1, 9, "the first room's words"), ""))
+			pr.pump
+			assert ("the first room knows who said it", pr.sender_of (1) = 9)
+			t.script (200, "")
+			pr.close_room
+			create b2.make
+			pr.open_room (2, 0, b2)
+			assert ("REOPENING FORGOT THE OLD ROOM", pr.sender_of (1) = 0)
+			assert ("and has nothing to quote from it", pr.body_of (1).is_empty)
+		end
+
+	test_the_menu_asks_the_presenter_who_said_it_and_what_it_says_now
+			-- What a per-message menu needs before it can grey anything, and
+			-- what Edit needs before it can load the composer: the LATEST text,
+			-- not the words it replaced.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			v: MEMORY_CHAT_VIEW
+			n: MEMORY_NOTIFIER
+			pr: CHAT_PRESENTER
+			b: EVENT_INBOX
+		do
+			create t.make
+			c := logged_in_client (t)
+			create v.make
+			create n.make
+			create pr.make (c, v, n)
+			create b.make
+			pr.open_room (1, 0, b)
+			b.put (wire_page (wire_message (1, 5, "my own words") + ","
+				+ wire_message (2, 9, "somebody else's") + ","
+				+ wire_edit (3, 5, 1, "my own words, corrected") + ","
+				+ wire_delete (4, 9, 2), ""))
+			pr.pump
+			assert ("mine is mine", pr.sender_of (1) = 5)
+			assert ("theirs is theirs", pr.sender_of (2) = 9)
+			assert ("one never seen belongs to nobody", pr.sender_of (404) = 0)
+			assert ("EDIT LOADS THE TEXT ON SCREEN, not the words it replaced",
+				pr.body_of (1).same_string ({STRING_32} "my own words, corrected"))
+			assert ("an unedited message answers its own body",
+				pr.body_of (2).same_string ({STRING_32} "somebody else's"))
+			assert ("the tombstone is known as one", pr.is_message_deleted (2))
+			assert ("and a live message is not", not pr.is_message_deleted (1))
+		end
+
+
 feature {NONE} -- Fixtures
+
+	wire_fold (a_id, a_sender: INTEGER_64; a_kind, a_body, a_payload: STRING_8): STRING_8
+			-- One event in wire form, room 1, carrying `a_payload' - the object
+			-- a fold reads its target, emoji and flag out of.
+		do
+			Result := "{%"id%":" + a_id.out + ",%"room_id%":1,%"sender_id%":" + a_sender.out
+				+ ",%"kind%":%"" + a_kind + "%",%"created_at%":%"2026-08-29T12:00:00%",%"body%":%"" + a_body
+				+ "%",%"attachment%":null,%"payload%":" + a_payload + ",%"is_bot%":false}"
+		end
+
+	wire_edit (a_id, a_sender, a_target: INTEGER_64; a_body: STRING_8): STRING_8
+		do
+			Result := wire_fold (a_id, a_sender, "edit", a_body, "{%"target%":" + a_target.out + "}")
+		end
+
+	wire_delete (a_id, a_sender, a_target: INTEGER_64): STRING_8
+		do
+			Result := wire_fold (a_id, a_sender, "delete", "", "{%"target%":" + a_target.out + "}")
+		end
+
+	wire_reaction (a_id, a_sender, a_target: INTEGER_64; a_emoji: STRING_8; a_on: BOOLEAN): STRING_8
+			-- The emoji is any non-empty string to the fold, so the assaults
+			-- name them in ASCII and stay readable in a diff. The real glyphs
+			-- are drawn and proven in the window assault.
+		do
+			Result := wire_fold (a_id, a_sender, "reaction", "", "{%"target%":" + a_target.out
+				+ ",%"emoji%":%"" + a_emoji + "%",%"on%":" + a_on.out.as_lower + "}")
+		end
+
+	wire_reply (a_id, a_sender, a_parent: INTEGER_64; a_body: STRING_8): STRING_8
+			-- A reply is a MESSAGE that names a parent - it draws its own bubble.
+		do
+			Result := wire_fold (a_id, a_sender, "message", a_body, "{%"reply_to%":" + a_parent.out + "}")
+		end
+
 
 	loopback: CHAT_ENDPOINT
 		do

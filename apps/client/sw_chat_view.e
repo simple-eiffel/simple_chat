@@ -147,6 +147,8 @@ feature {NONE} -- Initialization
 			create unread_label.make_ui ("")
 			create connection_label.make_ui (Text_unreachable)
 			connection_label.set_muted (True)
+			create {STATUS_LINE} compose_strip.make_ui ("")
+			compose_strip.set_muted (True)
 			create {STATUS_LINE} status_label.make_ui ("")
 			status_label.set_muted (True)
 			create {STATUS_LINE} error_label.make_ui ("")
@@ -166,6 +168,7 @@ feature {NONE} -- Initialization
 			l_root.put (l_bar)
 			l_root.put (l_header)
 			l_root.put (thread)
+			l_root.put (compose_strip)
 			l_root.put (status_label)
 			l_root.put (error_label)
 			l_root.put (l_composer)
@@ -175,6 +178,7 @@ feature {NONE} -- Initialization
 				-- The agents come LAST, and that is void safety, not taste: an agent on
 				-- Current lets Current escape, so every attribute has to be set first.
 			input.set_on_submit (agent submit)
+			input.set_on_cancel (agent cancel_compose_now)
 			send_button.set_on_click (agent submit)
 				-- The menu builders are agents on Current too, so they belong here
 				-- with the rest and not beside the widget that holds them.
@@ -210,7 +214,7 @@ feature -- Access
 	window: SW_WINDOW
 			-- The native window and its message pump; `run' shows it.
 
-	thread: SW_CHAT_THREAD
+	thread: MESSAGE_THREAD
 			-- The bubbles, laid out by simple_shaping.
 
 	input: CHAT_INPUT_BOX
@@ -318,6 +322,146 @@ feature -- Basic operations
 		ensure then
 			bubbled: thread.count = old thread.count + 1
 		end
+
+	apply_edit (a_event_id: INTEGER_64; a_text: READABLE_STRING_GENERAL)
+			-- The new words, on the bubble that already carries this id.
+			-- `Role_keep' keeps the speaker: an edit changes what was said,
+			-- never who said it.
+		local
+			i: INTEGER
+		do
+			i := bubble_of (a_event_id)
+			if i > 0 and then not thread.is_tombstone (i) then
+				thread.set_message (i, {SW_CHAT_THREAD}.Role_keep, a_text)
+				if not thread.is_edited (i) then
+					thread.mark_edited (i)
+				end
+				redraw
+			end
+		end
+
+	apply_delete (a_event_id: INTEGER_64)
+			-- A tombstone, never a gap: the bubble keeps its place so the
+			-- order of the thread still says who answered whom.
+		local
+			i: INTEGER
+		do
+			i := bubble_of (a_event_id)
+			if i > 0 and then not thread.is_tombstone (i) then
+				thread.tombstone (i)
+				redraw
+			end
+		end
+
+	apply_reactions (a_event_id: INTEGER_64; a_list: LIST [TUPLE [emoji: STRING_32; tally: INTEGER; mine: BOOLEAN]])
+		local
+			i: INTEGER
+		do
+			i := bubble_of (a_event_id)
+			if i > 0 and then not thread.is_tombstone (i) then
+				thread.set_reactions (i, a_list)
+				redraw
+			end
+		end
+
+	apply_reply_quote (a_event_id: INTEGER_64; a_author, a_text: READABLE_STRING_GENERAL)
+		local
+			i: INTEGER
+		do
+			i := bubble_of (a_event_id)
+			if i > 0 and then not thread.is_tombstone (i) then
+				thread.set_reply_quote (i, a_author, a_text)
+				redraw
+			end
+		end
+
+	bubble_of (a_event_id: INTEGER_64): INTEGER
+			-- WHICH BUBBLE carries `a_event_id', 0 for one this view never
+			-- showed. `shown_ids' is filled by `show_event' in step with the
+			-- thread's own indices, so the two cannot drift.
+		local
+			i: INTEGER
+		do
+			from i := 1 until i > shown_ids.count or Result > 0 loop
+				if shown_ids.i_th (i) = a_event_id then
+					Result := i
+				end
+				i := i + 1
+			end
+		ensure
+			in_range: Result >= 0 and Result <= shown_ids.count
+			right_one: Result > 0 implies shown_ids.i_th (Result) = a_event_id
+		end
+
+	event_of_bubble (a_index: INTEGER): INTEGER_64
+			-- The event id bubble `a_index' carries; 0 when out of range.
+			-- What a right-click needs once `message_at' has named a bubble.
+		do
+			if a_index >= 1 and a_index <= shown_ids.count then
+				Result := shown_ids.i_th (a_index)
+			end
+		ensure
+			non_negative: Result >= 0
+		end
+
+	set_on_cancel_compose (a_action: PROCEDURE)
+			-- What Escape in the composer backs out of; the host owns it.
+		do
+			on_cancel_compose := a_action
+		ensure
+			set: on_cancel_compose = a_action
+		end
+
+	on_cancel_compose: detachable PROCEDURE
+
+	cancel_compose_now
+		do
+			if attached on_cancel_compose as c then
+				c.call
+			end
+		end
+
+	show_compose_strip (a_text: READABLE_STRING_GENERAL)
+			-- The line above the composer that says what Return will do -
+			-- who is being replied to, that an edit is in progress, or that a
+			-- delete wants confirming. An empty string clears it, and an
+			-- empty STATUS_LINE costs no height, so the strip takes no room
+			-- at all when nothing is pending.
+		do
+			compose_strip.set_text (a_text.to_string_32)
+			redraw
+		ensure
+			nothing_shown: shown_model |=| old shown_model
+		end
+
+	set_compose_text (a_text: READABLE_STRING_GENERAL)
+			-- Put `a_text' in the composer - what Edit does so the member
+			-- changes the words rather than retyping them.
+		do
+			input.set_text (a_text.to_string_32)
+			redraw
+		ensure
+			nothing_shown: shown_model |=| old shown_model
+		end
+
+	reaction_is_mine (a_event_id: INTEGER_64; a_emoji: READABLE_STRING_32): BOOLEAN
+			-- Has the reader already got `a_emoji' on this message? What
+			-- decides whether a click ADDS or TAKES AWAY.
+		local
+			i: INTEGER
+		do
+			i := bubble_of (a_event_id)
+			if i > 0 then
+				across thread.reactions_of (i) as r loop
+					if r.emoji.same_string (a_emoji) and then r.mine then
+						Result := True
+					end
+				end
+			end
+		end
+
+	compose_strip: STATUS_LINE
+			-- The line above the composer; empty when nothing is pending.
 
 	show_status (a_text: READABLE_STRING_GENERAL)
 			-- An ephemeral line; replaces the previous one.

@@ -40,7 +40,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Four endpoints** — `POST /rooms/{id}/messages/{eid}/edit`, `/delete`,
   `/reactions`, `/replies` — and **five assaults**, 239 → **244**, zero skips.
 
+- **The per-message menu, and the room can see it — the client half.** Right-click a
+  bubble and the menu names what you may do to *that* message: **Reply**, one of
+  eight emoji, **Edit**, **Delete**. The pane draws the result of all four —
+  an edited bubble reads the new words and says `edited` under them, a deleted one
+  becomes a `message deleted` tombstone **that keeps its place in the order**, a
+  reply carries a one-line quote of what it answers, and reactions sit under the
+  bubble as chips carrying the tally.
+
+  **A greyed item is still shown.** A menu that hides what you may not do teaches
+  nothing; a member who wonders why Edit is grey on somebody else's message has
+  just learned the rule. The rule is asked fresh every time the menu opens, so an
+  item greys the instant state turns against it — and the rule asked is the
+  server's own, never a second copy that could drift from it.
+
+- **A click on a chip toggles that one emoji** — no menu, one click, and which way
+  it goes is decided by the row that is **drawn**, so the pane and the wire cannot
+  disagree about what the click meant.
+
+- **The compose strip says what Return will do.** Reply, Edit and Delete all aim
+  the one composer at one message, and the line above it says which: who is being
+  answered, that an edit is in progress, or that a delete wants confirming.
+  Escape backs out of any of them. Edit loads the words that are **on screen**, so
+  they are changed rather than retyped, and after either an edit or a reply the
+  composer goes back to meaning an ordinary message — a composer that stayed aimed
+  would silently rewrite the next thing typed into it.
+
+- **The delete confirm is in the pane, not a modal.** The first Delete says what
+  will happen; the second does it. A dialog that steals the keyboard to ask "are
+  you sure" is how a window stops pumping, and Windows discards the keystrokes of
+  a window that stopped pumping. This room has been bitten by that before.
+
+- **Fourteen assaults**, 244 → **258**, zero skips. Seven drive the fold through
+  the presenter; seven drive the real pane through `CLIENT_APP` — signed in as an
+  administrator and again as a plain member, the menu asked for at a point the
+  pane's own hit-testing says is on the bubble, and every action reached **by
+  invoking the menu item**, so none of them would still pass the day the menu
+  stopped calling what it says it calls. Offscreen frame:
+  `evidence/message-fold-pane.png`.
+
 ### Fixed
+
+- **Taking back your only reaction left the chip on screen.** The client applied a
+  reaction row only when it had something in it, so the one moment an empty row
+  matters — the moment it *became* empty — was the one moment it was skipped, and
+  the chip stayed until some unrelated event happened to redraw the bubble. A row
+  is replaced wholesale, empty included.
 
 - **`CHAT_EVENT` carried a second copy of the list of valid event kinds.** The
   moment three kinds were added to the shared `CHAT_EVENT_KINDS`, the two
@@ -52,11 +97,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known
 
-- **Nothing of this is visible yet.** The client cannot show an edit, a tombstone
-  or a reaction until `SW_CHAT_THREAD` can CHANGE a drawn bubble — today its public
-  model is `add_message` and `append_to_last` and nothing else. That is stage 2, in
-  simple_widgets (`set_message` with a revision bump, tombstone rendering, a
-  reaction row, `message_at`); stage 3 wires the menu here once it lands.
+- **The greying is proven by assertion, not by a picture.**
+  `SW_WINDOW.show_popup` is private and only the window's own right-click dispatch
+  calls it, so an assault can build the menu and read every item but cannot make
+  the window PAINT one. What would fix it is an additive `simulate_context_click`
+  beside the `simulate_wheel` and `simulate_key_down` simple_widgets already offers
+  for driving a window headless — a library change, and so Larry's to gate.
 
 
 ## [0.1.5] — 2026-09-04
