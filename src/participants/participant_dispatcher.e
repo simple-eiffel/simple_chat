@@ -527,6 +527,16 @@ feature -- Basic operations
 						create l_request.make_addressed (a_asker_id, display_name_of (api, a_asker_id), Summary_instruction,
 							a_room_id, room_name_of (api, a_room_id), l_target.max_characters, Void)
 						l_request.set_context (l_lines)
+							-- PRIVATE, and the participant must be told so. A
+							-- summary is one member's own and posted nowhere,
+							-- so a participant that keeps an engine session per
+							-- room may neither resume the room's into this ask
+							-- nor keep this ask's as the room's. Unmarked, the
+							-- CLI is resumed into its own transcript of the
+							-- room's earlier turns and summarises THAT - the
+							-- session, not the messages handed to it - which is
+							-- exactly what "@claude sum" came back with.
+						l_request.set_private
 						l_answer := l_target.answer (l_request)
 						if l_answer.is_success and then not l_answer.text.is_empty then
 							Result := l_answer.text.twin
@@ -1710,6 +1720,8 @@ feature {NONE} -- Population (Task 7 item 5)
 feature -- Constants
 
 	Context_line_maximum: INTEGER = 400
+			-- The longest a single window line may be: a reminder of what was
+			-- said, not the whole of a long message.
 
 	Summary_ok: INTEGER = 200
 	Summary_nothing_to_say: INTEGER = 204
@@ -1719,12 +1731,17 @@ feature -- Constants
 			-- What `summary_of' did, in the status the asker's own request
 			-- will carry back.
 
-	Summary_instruction: STRING_32 = "Summarise the conversation above for someone who has been away: what was decided, what is still open, and anything addressed to me. Plain text, no preamble, no greeting."
+	Summary_instruction: STRING_32 = "Summarise ONLY the room messages listed above, for someone who has been away: what was decided, what is still open, and anything addressed to me. Those messages are the whole of what you are summarising - do not summarise this session, your own working context, or anything that is not one of them. Plain text, no preamble, no greeting."
 			-- The whole of a summary request. The transcript itself travels as
 			-- the request's context lines, which is what the engine already
 			-- reads for a follow-up.
-			-- The longest a single window line may be: a reminder of what was
-			-- said, not the whole of a long message.
+			--
+			-- IT NAMES ITS SOURCE ON PURPOSE. "The conversation above" has two
+			-- referents when the engine is a Claude Code CLI, whose own word
+			-- for its working context is "session" - and it answered about the
+			-- session. `set_private' takes the second transcript away; this
+			-- sentence makes sure the first is the one named even when some
+			-- later engine has a context of its own.
 
 	Max_queue_depth: INTEGER = 8
 			-- Requests waiting for one participant beyond which the next is refused.

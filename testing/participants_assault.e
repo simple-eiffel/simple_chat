@@ -821,6 +821,94 @@ feature -- Dispatcher
 			assert ("the dispatcher was not woken", d.wake_count = 0 and not d.has_pending)
 		end
 
+	test_summary_is_a_private_ask_and_names_its_source
+			-- THE DEFECT LARRY REPORTED. "@claude sum" came back with a
+			-- summary of the Claude Code SESSION, not of the room.
+			--
+			-- The transcript was never missing: it was in the prompt all
+			-- along. What was missing was any mark on the request saying
+			-- this ask is one member's own - so the participant resumed the
+			-- room's CLI session into it, the engine held its OWN transcript
+			-- of the room's earlier turns as well as the one in the prompt,
+			-- and answered out of the nearer of the two.
+			--
+			-- So: every summary request carries `is_private', an ordinary
+			-- addressed question never does, and the instruction says in
+			-- words which transcript is the subject.
+		local
+			d: PARTICIPANT_DISPATCHER
+			l_text: STRING_32
+		do
+			d := posting_dispatcher (0)
+			append_ask ({STRING_32} "the roof is finished")
+			append_ask ({STRING_32} "and the gutters go on Friday")
+			l_text := d.summary_of (1, 0, 0, last_nick_id, 0)
+			assert ("the engine answered", d.last_summary_status = {PARTICIPANT_DISPATCHER}.Summary_ok and not l_text.is_empty)
+			assert ("THE SUMMARY REQUEST IS PRIVATE",
+				attached last_mock as m and then attached m.last_request as q and then q.is_private)
+			assert ("and it carried the room's own messages, not an empty window",
+				attached last_mock as m2 and then attached m2.last_request as q2 and then
+				(across q2.context_lines as l some l.has_substring ({STRING_32} "the roof is finished") end
+				 and across q2.context_lines as l some l.has_substring ({STRING_32} "gutters") end))
+			d.handle_event (message (900, 1, last_nick_id, {STRING_32} "@mock and what about the drain?", False))
+			assert ("an ordinary question is NOT private - the room may see it and the room's session is its own",
+				attached last_mock as m3 and then attached m3.last_request as q3 and then not q3.is_private)
+			assert ("the instruction names the room messages as the whole of the subject",
+				{PARTICIPANT_DISPATCHER}.Summary_instruction.has_substring ({STRING_32} "ONLY the room messages listed above")
+				and {PARTICIPANT_DISPATCHER}.Summary_instruction.has_substring ({STRING_32} "do not summarise this session"))
+		end
+
+	test_a_private_ask_neither_resumes_a_session_nor_becomes_one
+			-- THE OTHER HALF OF THE SAME DEFECT, at the participant.
+			--
+			-- `--resume' is what put a second transcript in front of the
+			-- engine, so a private ask must be given none: whatever session
+			-- the room holds, `session_to_resume_for' answers Void for a
+			-- summary and the CLI runs with the prompt alone.
+			--
+			-- And nothing may be kept from it either. A summary is not the
+			-- room's conversation; were its session remembered, the next
+			-- member's question would continue from another member's private
+			-- catch-up - the same crossing, running the other way.
+		local
+			c: CLAUDE_CODE_PARTICIPANT
+			l_room, l_private: PARTICIPANT_REQUEST
+			l_kept, l_other: STRING_32
+		do
+			c := claude_participant
+			l_kept := {STRING_32} "11111111-2222-3333-4444-555555555555"
+			l_other := {STRING_32} "99999999-8888-7777-6666-555555555555"
+			l_room := request ({STRING_32} "and its cube root?", Void)
+			l_private := request ({STRING_32} "Summarise the room", Void)
+			l_private.set_private
+			assert ("marked, and only the one marked", l_private.is_private and not l_room.is_private)
+
+			assert ("with no session kept, neither resumes anything",
+				c.session_to_resume_for (l_room) = Void and c.session_to_resume_for (l_private) = Void)
+			c.remember_session (1, l_kept)
+			assert ("an ordinary question continues the room's session",
+				attached c.session_to_resume_for (l_room) as r and then r.same_string (l_kept))
+			assert ("A SUMMARY RESUMES NOTHING, however live the room's session is",
+				c.session_to_resume_for (l_private) = Void)
+
+			c.note_session_from (l_private, l_other, False)
+			assert ("AND KEEPS NOTHING: the room's session is untouched by a summary",
+				attached c.session_of (1) as s1 and then s1.same_string (l_kept) and c.sessions_model.count = 1)
+			c.note_session_from (l_private, Void, True)
+			assert ("nor does a failed summary end the room's session",
+				attached c.session_of (1) as s2 and then s2.same_string (l_kept))
+
+			c.note_session_from (l_room, l_other, True)
+			assert ("an ordinary turn still keeps what the CLI reported",
+				attached c.session_of (1) as s3 and then s3.same_string (l_other))
+			c.note_session_from (l_room, Void, True)
+			assert ("and a resumed turn that answered nothing still drops it", c.session_of (1) = Void)
+			c.remember_session (2, l_kept)
+			c.note_session_from (l_room, Void, False)
+			assert ("a fresh turn that answered nothing drops nothing",
+				attached c.session_of (2) as s4 and then s4.same_string (l_kept))
+		end
+
 	test_summary_spends_its_own_budget
 			-- A summary is charged under "s:", an answer under "p:". Catching up
 			-- on what was missed must never cost a member the right to ask a

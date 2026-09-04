@@ -12,6 +12,15 @@ note
 		empty unless the dispatcher fills it (`set_context'), and it is
 		never part of `text': the question stays exactly what was asked.
 
+		`is_private' marks an ask that is ONE MEMBER'S OWN and never the
+		room's - a summary, drawn in the asker's window and posted nowhere.
+		It is False for every request the room can see. A participant that
+		keeps an engine conversation per room reads it and keeps none: a
+		private ask must neither continue the room's session nor become it,
+		or the engine answers out of a transcript nobody asked it to
+		summarise. That is what Larry saw - "@claude sum" came back with a
+		summary of the CLI's own session rather than the room's.
+
 		`make' builds a request from someone the store does not know
 		(`asker_id' = 0: previews and tests); the dispatcher always uses
 		`make_addressed', whose asker is a stored member and therefore has a
@@ -82,6 +91,7 @@ feature {NONE} -- Initialization
 				via := v.to_string_32
 			end
 			create context_lines.make (0)
+			is_private := False
 		end
 
 feature -- Access
@@ -103,6 +113,18 @@ feature -- Access
 
 feature -- Element change
 
+	set_private
+			-- Mark this ask one member's own: answered to the asker alone,
+			-- so no engine session may be continued into it and none kept
+			-- from it.
+		do
+			is_private := True
+		ensure
+			private: is_private
+			text_untouched: text.same_string (old text)
+			context_kept: context_lines.count = old context_lines.count
+		end
+
 	set_context (a_lines: ARRAYED_LIST [STRING_32])
 			-- Give this request `a_lines' as the room's recent conversation.
 		require
@@ -120,6 +142,14 @@ feature -- Element change
 		end
 
 feature -- Status report
+
+	is_private: BOOLEAN
+			-- Is this ask one member's own - a summary, answered into the
+			-- asker's window and never posted to the room? A participant
+			-- that remembers a conversation per room must neither resume
+			-- one into a private ask nor keep one from it: what it is to
+			-- work from is `context_lines' and nothing else. False for
+			-- every ordinary request.
 
 	is_asker_known: BOOLEAN
 			-- Is the asker a stored member (one with a rate-limit key)?

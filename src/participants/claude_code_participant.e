@@ -35,6 +35,17 @@ note
 		the room itself) in front of the question, so a follow-up is
 		answerable even on a fresh session, after a restart, or when a resume
 		fails.
+
+		A PRIVATE ASK CARRIES NO SESSION AT ALL. A summary is one member's
+		own: the dispatcher marks its request `is_private' and hands it the
+		room transcript it is to summarise. `session_to_resume_for' returns
+		Void for it - the CLI is given no --resume, so the only conversation
+		it can see is the transcript in the prompt - and `note_session_from'
+		keeps nothing from it, so a private catch-up never becomes what the
+		room's next question continues from. Without both halves the engine
+		holds two candidate transcripts and answers out of its own: that is
+		"@claude sum" coming back with a summary of the CLI session instead
+		of the room.
 	]"
 	author: "Larry Rix"
 
@@ -136,6 +147,31 @@ feature -- Access
 		ensure
 			consistent: (Result /= Void) = sessions_model.domain.has (a_room_id)
 			from_model: attached Result as s implies s.same_string (sessions_model [a_room_id])
+		end
+
+	session_to_resume_for (a_request: PARTICIPANT_REQUEST): detachable STRING_32
+			-- The CLI session `a_request' may continue with --resume: the
+			-- one kept for its room, when that room has a valid one.
+			--
+			-- VOID FOR A PRIVATE ASK, always. A summary is answered to one
+			-- member and posted nowhere, and the conversation it is to
+			-- summarise travels in the request as `context_lines'. Resumed
+			-- into the room's session, the CLI would hold a second
+			-- transcript - its own - nearer to hand than the one in the
+			-- prompt, and that is the one it answered out of when Larry
+			-- typed "@claude sum".
+		require
+			positive_room: a_request.room_id > 0
+		do
+			if not a_request.is_private and then attached session_of (a_request.room_id) as l_session
+				and then client.is_valid_session_id (l_session)
+			then
+				Result := l_session
+			end
+		ensure
+			never_for_a_private_ask: a_request.is_private implies Result = Void
+			the_rooms_own: attached Result as r implies (attached session_of (a_request.room_id) as k and then r.same_string (k))
+			resumable: attached Result as r implies client.is_valid_session_id (r)
 		end
 
 feature -- Status report
@@ -260,6 +296,38 @@ feature -- Element change
 			others_kept: sessions_model |=| (old sessions_model).removed (a_room_id)
 		end
 
+	note_session_from (a_request: PARTICIPANT_REQUEST; a_session_id: detachable READABLE_STRING_GENERAL; a_resumed: BOOLEAN)
+			-- Keep, or drop, the session of `a_request''s room now that the
+			-- turn is over: `a_session_id' is what the CLI reported, Void
+			-- when it reported nothing. A turn that answered nothing after
+			-- resuming drops the kept session, so a session the CLI will
+			-- not resume is never asked for twice.
+			--
+			-- A PRIVATE ASK CHANGES NOTHING. A summary is not the room's
+			-- conversation, so it may neither become it nor end it: kept,
+			-- it would be what the next member's question continues from.
+		require
+			positive_room: a_request.room_id > 0
+		do
+			if a_request.is_private then
+					-- Nothing: the room's session is not a summary's to set or clear.
+			elseif attached a_session_id as l_id and then client.is_valid_session_id (l_id) then
+				remember_session (a_request.room_id, l_id)
+			elseif a_resumed and then sessions.has (a_request.room_id) then
+				forget_session (a_request.room_id)
+			end
+		ensure
+			private_changes_nothing: a_request.is_private implies sessions_model |=| old sessions_model
+			kept: (not a_request.is_private and then attached a_session_id as l_id and then client.is_valid_session_id (l_id)) implies
+				sessions_model |=| (old sessions_model).updated (a_request.room_id, l_id.to_string_32)
+			dropped_only_after_a_resume: (not a_request.is_private and a_resumed
+				and then not (attached a_session_id as l_bad and then client.is_valid_session_id (l_bad))) implies
+				sessions_model |=| (old sessions_model).removed (a_request.room_id)
+			untouched_when_there_was_nothing_to_note: (not a_request.is_private and not a_resumed
+				and then not (attached a_session_id as l_none and then client.is_valid_session_id (l_none))) implies
+				sessions_model |=| old sessions_model
+		end
+
 feature -- Basic operations
 
 	answer (a_request: PARTICIPANT_REQUEST): PARTICIPANT_ANSWER
@@ -271,10 +339,12 @@ feature -- Basic operations
 			-- persona is `persona_of' (--append-system-prompt-file), the
 			-- prompt `contextual_prompt_of' - the room's recent messages, then
 			-- the question; the room's conversation continues through
-			-- --resume with `session_of (a_request.room_id)' and a
-			-- successful reply's session id is remembered per room, while a
-			-- turn that answered nothing drops the kept session so the next
-			-- one starts fresh on the context window alone. The
+			-- --resume with `session_to_resume_for', and `note_session_from'
+			-- keeps a successful reply's session id per room while a turn
+			-- that answered nothing drops the kept session, so the next one
+			-- starts fresh on the context window alone. A PRIVATE request
+			-- (a summary) resumes nothing and is remembered nowhere: the
+			-- conversation it is to work from is in the request itself. The
 			-- installed CLI does offer --json-schema for structured output;
 			-- v1 deliberately sends no schema and takes the whole result
 			-- text as the answer - `image_path' stays Void, so nothing is
@@ -290,7 +360,7 @@ feature -- Basic operations
 			create l_started.make_now
 			if not l_failed then
 				calls := calls + 1
-				if attached session_of (a_request.room_id) as l_session and then client.is_valid_session_id (l_session) then
+				if attached session_to_resume_for (a_request) as l_session then
 					client.set_resume_session (l_session)
 					l_resumed := True
 				else
@@ -300,15 +370,13 @@ feature -- Basic operations
 			end
 			create l_now.make_now
 			record_run ((l_now.to_timestamp - l_started.to_timestamp).to_integer_32.max (0))
-			if attached l_response as l_ok and then l_ok.is_success and then
-				attached client.last_session_id as l_id and then client.is_valid_session_id (l_id)
-			then
-				remember_session (a_request.room_id, l_id)
-			elseif l_resumed and then sessions.has (a_request.room_id) then
-					-- The resume did not answer: the session may be gone, or
-					-- the CLI refused it. Never ask for it again - the next
-					-- turn starts fresh, carrying the context window.
-				forget_session (a_request.room_id)
+			if attached l_response as l_ok and then l_ok.is_success then
+				note_session_from (a_request, client.last_session_id, l_resumed)
+			else
+					-- The turn answered nothing. Had it resumed, the session
+					-- may be gone or the CLI refused it: never ask for it
+					-- again - the next turn starts fresh on the window alone.
+				note_session_from (a_request, Void, l_resumed)
 			end
 			if l_failed or l_response = Void then
 				create Result.make_error (unavailable_error ("the engine raised instead of answering"))
