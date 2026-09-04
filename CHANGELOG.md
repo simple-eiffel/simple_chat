@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-04
+
+The message release: right-click any message to reply, react with an emoji, edit your own, or delete your own - an admin may delete anyone's but never edit another's words. Edits show as edits, a deleted message becomes a visible 'message deleted' in its place, replies quote their parent, reactions are chips you can click. Underneath: three new event kinds folded over the room's append-only log, and a thread that can change a bubble it has drawn (simple_widgets 0.7.0).
+
 ### Added
 
 - **Edit, delete, reply and react — the server half.** Four things you can do to a
@@ -103,7 +107,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the window PAINT one. What would fix it is an additive `simulate_context_click`
   beside the `simulate_wheel` and `simulate_key_down` simple_widgets already offers
   for driving a window headless — a library change, and so Larry's to gate.
-
 
 ## [0.1.5] — 2026-09-04
 
