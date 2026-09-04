@@ -744,6 +744,109 @@ feature -- The per-message menu: what is offered, and to whom
 				l_handled and t.last_request.body.has_substring (Wire_on_true))
 		end
 
+feature -- The room Larry actually has: a bot in the roster, and a hint above every message
+
+	test_choosing_an_emoji_in_a_room_with_a_bot_really_posts_it
+			-- LARRY'S DEFECT, on the installed 0.2.1: pick an emoji from a
+			-- message's menu and nothing happens - no chip, no error.
+			--
+			-- The room he has is the room this test builds: @claude is in the
+			-- roster, so `open_room' shows ONE HINT BUBBLE above everything.
+			-- `show_hint' adds that bubble to the thread and - by its own
+			-- comment - never to `shown_ids'. From then on the two lists are
+			-- off by one, and `message_at' (a THREAD index) is handed to
+			-- `event_of_bubble' (a `shown_ids' index). The newest message's
+			-- thread index runs off the end of `shown_ids', which answers 0,
+			-- and every gate in `react_to' refuses in silence.
+			--
+			-- Stage 3's fixtures used a roster with NO bot, purely to keep
+			-- the indices simple. That choice is what hid this.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+			m: detachable SW_MENU
+			l_emoji: STRING_32
+		do
+			t := scripted_transport
+			app := room_app_with_bot (t, "reactbot", member_reply)
+			assert ("the bot put one hint bubble in the room", app.view.hint_count = 1)
+			feed (t, app, wire_said (1, 9, "who is bringing the ladders?") + "," + wire_said (2, 5, "Dave is"))
+			assert ("three bubbles: the hint and two messages", app.view.thread.count = 3)
+			assert ("but only two carry server ids", app.view.shown_count = 2)
+
+			l_emoji := app.view.thread.emoji_choices.first
+			m := menu_on (app, 3)
+			assert ("the menu opened on the NEWEST message", m /= Void)
+			t.script (200, wire_reaction_echo (3, 5, 2))
+			invoke (m, l_emoji)
+			assert ("A REACTION REALLY WENT OUT for the message that was right-clicked",
+				t.last_request.url.ends_with ("/rooms/4/messages/2/reactions"))
+		end
+
+	test_the_menu_acts_on_the_message_it_was_opened_on_not_its_neighbour
+			-- Worse than doing nothing: with the lists off by one, an action
+			-- that DID get through landed on the wrong message. Delete is the
+			-- one that matters - an administrator tombstoning the bubble
+			-- ABOVE the one he right-clicked is data loss, silently.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+		do
+			t := scripted_transport
+			app := room_app_with_bot (t, "reactwrong", member_reply)
+			feed (t, app, wire_said (1, 9, "keep this one") + "," + wire_said (2, 9, "delete this one"))
+			t.script (200, wire_delete_event (3, 5, 2))
+			invoke (menu_on (app, 3), {STRING_32} "Delete")
+			invoke (menu_on (app, 3), {STRING_32} "Delete")
+			assert ("DELETE HIT THE MESSAGE THAT WAS RIGHT-CLICKED, not its neighbour",
+				t.last_request.url.ends_with ("/rooms/4/messages/2/delete"))
+		end
+
+	test_reply_and_edit_also_name_the_right_message_under_a_hint
+			-- The same mapping serves Reply and Edit, so the same fault
+			-- misaddressed both: Edit would load the words of the message
+			-- ABOVE the one whose menu was open.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+		do
+			t := scripted_transport
+			app := room_app_with_bot (t, "replyedit", member_reply)
+			feed (t, app, wire_said (1, 9, "the first thing said") + "," + wire_said (2, 5, "my own words"))
+
+			invoke (menu_on (app, 3), {STRING_32} "Edit")
+			assert ("EDIT LOADED THE WORDS OF THE BUBBLE THAT WAS CLICKED",
+				app.view.input.text.same_string ({STRING_32} "my own words"))
+			app.view.input.handle_key (27, False)
+			app.view.input.handle_char (27)
+
+			invoke (menu_on (app, 2), {STRING_32} "Reply")
+			assert ("REPLY QUOTED THE BUBBLE THAT WAS CLICKED",
+				app.view.compose_strip.text.has_substring ({STRING_32} "the first thing said"))
+		end
+
+	test_a_refusal_is_never_silent
+			-- Larry's whole report was "nothing happens". Whatever the
+			-- reason, the member must be told one: a gate that refuses
+			-- without a word is indistinguishable from a dead menu item, and
+			-- that is what cost a release.
+		local
+			app: CLIENT_APP
+			t: MEMORY_HTTP_TRANSPORT
+		do
+			t := scripted_transport
+			app := room_app_with_bot (t, "refusal", member_reply)
+			feed (t, app, wire_said (1, 9, "the only real message"))
+				-- bubble 1 is the BOT HINT: a real bubble the pointer can
+				-- land on, carrying no server id at all. The menu offers its
+				-- emoji, and every one of them used to do nothing whatever.
+			assert ("the hint is a bubble like any other to the pointer",
+				app.view.thread.count = 2 and app.view.event_of_bubble (1) = 0)
+			invoke (menu_on (app, 1), app.view.thread.emoji_choices.first)
+			assert ("THE MEMBER IS TOLD WHY, in one line",
+				not app.view.status_text.is_empty)
+		end
+
 feature -- The compose strip: what Return will do, and how to back out
 
 	test_the_compose_strip_says_what_return_will_do_and_escape_backs_out
@@ -894,6 +997,25 @@ feature {NONE} -- The per-message fixtures
 	scripted_transport: MEMORY_HTTP_TRANSPORT
 		do
 			create Result.make
+		end
+
+	room_app_with_bot (a_transport: MEMORY_HTTP_TRANSPORT; a_tag: STRING_8; a_me: STRING_8): CLIENT_APP
+			-- `room_app', but with @claude in the roster - which is the room
+			-- Larry actually has, and the room the plain fixture never built.
+			-- One bot means one HINT BUBBLE, and a hint is a bubble the
+			-- pointer can land on that carries no server id.
+		local
+			l_why: detachable STRING_32
+		do
+			create Result.make_for_test (a_transport, scratch_config (a_tag))
+			a_transport.script (200, "{%"token%":%"" + Hex_64 + "%",%"member%":" + a_me + "}")
+			l_why := Result.attempt_login (Loopback_url, "larry", {STRING_32} "right")
+			check logged_in: Result.client.is_logged_in and l_why = Void end
+			a_transport.script (200, "[{%"id%":4,%"name%":%"main%"}]")
+			a_transport.script (200, "{%"members%":[" + a_me + "," + bot_member_reply + "]}")
+			Result.open_room
+			check opened: Result.presenter.is_room_open and Result.room_id = 4 end
+			check hinted: Result.view.hint_count = 1 end
 		end
 
 	room_app (a_transport: MEMORY_HTTP_TRANSPORT; a_tag: STRING_8; a_me: STRING_8): CLIENT_APP

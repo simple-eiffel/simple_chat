@@ -204,6 +204,10 @@ feature {NONE} -- Initialization
 			run_test (agent (create {WINDOW_ASSAULT}).test_the_compose_strip_says_what_return_will_do_and_escape_backs_out, "the_compose_strip_says_what_return_will_do_and_escape_backs_out")
 			run_test (agent (create {WINDOW_ASSAULT}).test_return_sends_an_edit_or_a_reply_and_then_goes_back_to_plain, "return_sends_an_edit_or_a_reply_and_then_goes_back_to_plain")
 			run_test (agent (create {WINDOW_ASSAULT}).test_the_fold_reaches_the_real_pane, "the_fold_reaches_the_real_pane")
+			run_test (agent (create {WINDOW_ASSAULT}).test_choosing_an_emoji_in_a_room_with_a_bot_really_posts_it, "choosing_an_emoji_in_a_room_with_a_bot_really_posts_it")
+			run_test (agent (create {WINDOW_ASSAULT}).test_the_menu_acts_on_the_message_it_was_opened_on_not_its_neighbour, "the_menu_acts_on_the_message_it_was_opened_on_not_its_neighbour")
+			run_test (agent (create {WINDOW_ASSAULT}).test_reply_and_edit_also_name_the_right_message_under_a_hint, "reply_and_edit_also_name_the_right_message_under_a_hint")
+			run_test (agent (create {WINDOW_ASSAULT}).test_a_refusal_is_never_silent, "a_refusal_is_never_silent")
 
 			print ("=== THE FREEZE (phase4/freeze) ===%N")
 			run_test (agent (create {FREEZE_ASSAULT}).test_an_eiffel_sleep_on_another_processor_never_stops_the_allocator, "an_eiffel_sleep_on_another_processor_never_stops_the_allocator")

@@ -490,7 +490,11 @@ feature {NONE} -- The per-message menu
 			l_id: INTEGER_64
 		do
 			l_id := bubble_event (a_bubble)
-			if l_id > 0 and then not presenter.is_message_deleted (l_id) then
+			if l_id = 0 then
+				view.show_status (Text_not_a_message)
+			elseif presenter.is_message_deleted (l_id) then
+				view.show_status (Text_message_withdrawn)
+			else
 				editing_id := 0
 				pending_delete := 0
 				replying_to := l_id
@@ -506,7 +510,11 @@ feature {NONE} -- The per-message menu
 			l_id: INTEGER_64
 		do
 			l_id := bubble_event (a_bubble)
-			if may_edit_bubble (a_bubble) then
+			if l_id = 0 then
+				view.show_status (Text_not_a_message)
+			elseif not may_edit_bubble (a_bubble) then
+				view.show_status (Text_not_yours_to_edit)
+			else
 				replying_to := 0
 				pending_delete := 0
 				editing_id := l_id
@@ -535,14 +543,16 @@ feature {NONE} -- The per-message menu
 			l_id: INTEGER_64
 		do
 			l_id := bubble_event (a_bubble)
-			if may_delete_bubble (a_bubble) then
-				if pending_delete = l_id then
-					pending_delete := 0
-					send_delete (l_id)
-				else
-					pending_delete := l_id
-					view.show_compose_strip (Text_confirm_delete)
-				end
+			if l_id = 0 then
+				view.show_status (Text_not_a_message)
+			elseif not may_delete_bubble (a_bubble) then
+				view.show_status (Text_not_yours_to_delete)
+			elseif pending_delete = l_id then
+				pending_delete := 0
+				send_delete (l_id)
+			else
+				pending_delete := l_id
+				view.show_compose_strip (Text_confirm_delete)
 			end
 		end
 
@@ -554,10 +564,14 @@ feature {NONE} -- The per-message menu
 			l_id: INTEGER_64
 		do
 			l_id := bubble_event (a_bubble)
-			if l_id > 0 and then not presenter.is_message_deleted (l_id) then
-				if not a_emoji.is_empty then
-					send_reaction (l_id, a_emoji, not view.reaction_is_mine (l_id, a_emoji))
-				end
+			if a_emoji.is_empty then
+				view.show_status (Text_no_emoji)
+			elseif l_id = 0 then
+				view.show_status (Text_not_a_message)
+			elseif presenter.is_message_deleted (l_id) then
+				view.show_status (Text_message_withdrawn)
+			else
+				send_reaction (l_id, a_emoji, not view.reaction_is_mine (l_id, a_emoji))
 			end
 		end
 
@@ -623,7 +637,9 @@ feature {NONE} -- The per-message menu: the wire
 		local
 			l_result: CHAT_RESULT [CHAT_EVENT]
 		do
-			if client.is_logged_in and room_id > 0 then
+			if not client.is_logged_in or room_id = 0 then
+				view.show_status (Text_no_room)
+			else
 				l_result := client.react_to_message (room_id, a_event_id, a_emoji, a_on)
 				if not l_result.is_success and then attached l_result.error as e then
 					view.show_error (e.message)
@@ -645,6 +661,19 @@ feature {NONE} -- The per-message menu: the wire
 	Text_replying_to: STRING_32 = "Replying to "
 	Text_editing: STRING_32 = "Editing your message - Return sends the change, Escape cancels."
 	Text_confirm_delete: STRING_32 = "Delete this message? Choose Delete again to confirm."
+
+			-- WHY A REFUSAL REFUSED. Larry's whole report of this feature was
+			-- "nothing happens": every gate below used to fall out of an `if'
+			-- without a word, which a member cannot tell from a dead menu
+			-- item. Each one now says its reason on the status line. None of
+			-- them is an ERROR - the member did nothing wrong - so none of
+			-- them goes to `show_error'.
+	Text_not_a_message: STRING_32 = "That bubble is a notice, not a message - there is nothing to act on."
+	Text_message_withdrawn: STRING_32 = "That message was deleted; nothing can be added to it."
+	Text_not_yours_to_edit: STRING_32 = "Only the person who wrote a message may edit it."
+	Text_not_yours_to_delete: STRING_32 = "Only the author or an administrator may delete a message."
+	Text_no_emoji: STRING_32 = "No emoji was chosen."
+	Text_no_room: STRING_32 = "Not signed in to a room - nothing can be sent."
 
 feature {NONE} -- Summary and catch-up
 

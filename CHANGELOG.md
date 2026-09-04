@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Choosing an emoji from a message's menu did nothing — no chip, no error.**
+  Larry, on the installed 0.2.1. The cause was not the menu and not the widget:
+  simple_widgets was cleared by measurement, every painted row being the row a
+  click finds. It was this client's own bookkeeping.
+
+  `SW_CHAT_VIEW` kept `shown_ids`, one entry per event it had drawn. But
+  `show_hint` draws a bubble and — by its own comment — **never adds to
+  `shown_ids`**. The per-message menu asks `message_at` for a **thread** index
+  and hands it to `event_of_bubble`, which reads `shown_ids`. From the first
+  hint onwards the two lists disagree by one.
+
+  **A room with a bot in the roster gets a hint bubble at the top**, which is
+  the room Larry has. So every menu action was off by one, and on the newest
+  message the index ran past the end of `shown_ids`, which answered 0 — and
+  every gate in `react_to` refused in silence. Worse than nothing happening:
+  an action that *did* get through landed on the neighbouring message, so an
+  administrator's Delete could tombstone the bubble **above** the one he
+  right-clicked. The same mapping serves Reply, Edit, Delete, the chips, the
+  tombstones and the greying, so all of them were misaddressed together.
+
+  The fix is a `bubble_ids` list kept in step with the **thread** — one entry
+  per bubble, 0 for a hint — and two invariants that forbid the drift ever
+  returning: `one_entry_per_bubble` and `every_shown_id_has_a_bubble`.
+  `shown_ids` and `shown_model` are untouched, so nothing that counts *events*
+  changed meaning.
+
+  Why the stage-3 assaults missed it: **they built a roster with no bot**,
+  purely to keep the indices simple. That one convenience is what hid the
+  defect. The four new assaults use the room Larry actually has.
+
+- **No gate refuses in silence any more.** Larry's entire report was "nothing
+  happens", which a member cannot tell from a dead menu item — and that
+  ambiguity is what cost a release. Every gate in the per-message path now says
+  its reason on the status line: that bubble is a notice and not a message,
+  that message was withdrawn, only the author may edit, only the author or an
+  administrator may delete, no emoji was chosen, not signed in to a room. None
+  of them is an *error* — the member did nothing wrong — so none goes to
+  `show_error`.
+
 ## [0.2.1] — 2026-09-04
 
 The emoji release: the right-click menu's emoji are pictures, not boxes - rebuilt against simple_widgets 0.7.2; the greying rule is proven by a painted menu in the test suite.
