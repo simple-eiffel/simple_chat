@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The per-message menu is now proven by a picture, not just an assertion.**
+  0.2.0 shipped with a gap named in its own notes: `SW_WINDOW.show_popup` was
+  private and only the window's own right-click dispatch called it, so the
+  assault could build the menu and read every item off it but could never make
+  the window PAINT one. The frame written at the time showed the pane with no
+  menu on it, and was deleted rather than shipped under a name that claimed
+  otherwise.
+
+  simple_widgets 0.7.1 closes it with `simulate_context_click`, so `menu_on`
+  now opens the menu **by a real right-click** — event 11 through the shipped
+  dispatch — and reads it back off the window as `open_popup`. Everything
+  between the click and the painted menu is under test rather than assumed:
+  that `target_at` finds the widget, that `bubble_context` walks to the first
+  ancestor offering a menu, that the thread takes the focus a right-click gives
+  it, that the menu is placed. All four greying assaults — author, other
+  member, plain member, tombstone — ride the new door, and Escape closes what
+  the pointer opened.
+
+  Evidence: `evidence/message-menu-greying-2x.png` — an open context menu,
+  painted at the room's own 2x, with **Edit drawn dim** on somebody else's
+  message and **Delete drawn live** because this reader is an administrator.
+  `SW_MENU` renders a disabled item in `ink_muted` rather than `ink`, which is
+  the greying rule made visible.
+
+### Known
+
+- **The menu's eight emoji draw as empty boxes — found by looking at the frame,
+  which is the entire reason for demanding one.** No assertion could see this:
+  every one of the eight items is present, enabled, and carries the right
+  emoji string, so the greying assaults pass exactly as they should. The
+  picture shows eight identical squares labelled `react`.
+
+  It is **not** the known "artwork lives beside the running binary" deployment
+  fact. Staging `assets
+oto-emoji` beside the test executable changed nothing,
+  which is what ruled that out. The cause is one layer down: `SW_MENU.draw`
+  paints its labels with the painter's plain `text`, while `SW_CHAT_THREAD`
+  uses `draw_shaped_layout` whenever `SW_PAINTER.has_shaping` — and the
+  shaping kit is what resolves colour-emoji artwork. **A menu never asks the
+  shaping kit**, so it cannot draw an emoji, in this harness or in the shipped
+  client.
+
+  That makes the emoji picker in the per-message menu unusable as it stands,
+  and it is a simple_widgets change to fix (a shaped path in `SW_MENU.draw`),
+  so it is written down here rather than slipped into this branch. Everything
+  else about the menu — the items, the greying, the actions, the chips already
+  drawn under a bubble by the thread — is unaffected.
+
 ## [0.2.0] — 2026-09-04
 
 The message release: right-click any message to reply, react with an emoji, edit your own, or delete your own - an admin may delete anyone's but never edit another's words. Edits show as edits, a deleted message becomes a visible 'message deleted' in its place, replies quote their parent, reactions are chips you can click. Underneath: three new event kinds folded over the room's append-only log, and a thread that can change a bubble it has drawn (simple_widgets 0.7.0).
@@ -98,15 +148,6 @@ The message release: right-click any message to reply, react with an emoji, edit
   on exactly that. The duplicate is gone rather than extended: `is_known_kind` now
   delegates, so there is ONE definition. A list written twice is a list that will
   drift, and this one already had.
-
-### Known
-
-- **The greying is proven by assertion, not by a picture.**
-  `SW_WINDOW.show_popup` is private and only the window's own right-click dispatch
-  calls it, so an assault can build the menu and read every item but cannot make
-  the window PAINT one. What would fix it is an additive `simulate_context_click`
-  beside the `simulate_wheel` and `simulate_key_down` simple_widgets already offers
-  for driving a window headless — a library change, and so Larry's to gate.
 
 ## [0.1.5] — 2026-09-04
 
