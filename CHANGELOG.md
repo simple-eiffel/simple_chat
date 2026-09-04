@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-04
+
+The addressing release: the per-message menu acts on the message under the pointer in every room shape - a hint bubble had put every action one message out of step, so that an emoji on the newest message did nothing and a Delete could have tombstoned its neighbour - and every refusal from the menu now states its reason. Rebuilt against simple_widgets 0.7.2.
+
 ### Fixed
 
 - **Choosing an emoji from a message's menu did nothing — no chip, no error.**
