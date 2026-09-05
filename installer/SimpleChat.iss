@@ -45,7 +45,16 @@
 ;   elevation and survives uninstall, which is exactly what the room needs.
 ; ===========================================================================
 
-#define AppVersion     "0.3.1"
+#define AppVersion     "0.3.2"
+; The room a friend's installer offers on its "Your room" page. Empty by default;
+; a host building an installer for their own circle passes
+;     ISCC /DDEFAULT_ROOM=rixchat.duckdns.org
+; and the page comes prefilled. At run time /ROOM=name overrides it (silent
+; installs included). The value lands in the member's client.toml as
+; server_urls, so the sign-in window opens with the server already there.
+#ifndef DEFAULT_ROOM
+  #define DEFAULT_ROOM ""
+#endif
 #define AppPublisher   "Larry Rix"
 #define AppExe         "SimpleChat.exe"
 #define ServerExe      "SimpleChatServer.exe"
@@ -574,6 +583,9 @@ var
     without depending on whether an AfterInstall runs for an entry that
     `onlyifdoesntexist' skipped. }
   ServerTomlExistedBefore: Boolean;
+  { The "Your room" page and what it settled on: a bare host name, or ''. }
+  RoomPage: TInputQueryWizardPage;
+  RoomAddress: String;
 
   { True when a server was running FROM THIS INSTALL'S FOLDER when the install
     began. Recorded at ssInstall, before a single file is copied, and never
@@ -889,10 +901,113 @@ begin
     Log('SimpleChat: @claude could not be written into ' + Cfg + '.');
 end;
 
+{ ---------------------------------------------------------------------------
+  THE "YOUR ROOM" PAGE. A friend types the address the host gave them once,
+  here, and the sign-in window opens with the server already filled in - so
+  the two things a friend ever types in SimpleChat are a username and a
+  password. The address is cleaned (scheme, slashes, spaces, case) and must
+  look like a host name; a host installing for themselves leaves it empty.
+  --------------------------------------------------------------------------- }
+function CleanRoom(S: String): String;
+begin
+  Result := Lowercase(Trim(S));
+  if Pos('https://', Result) = 1 then Result := Copy(Result, 9, Length(Result));
+  if Pos('http://', Result) = 1 then Result := Copy(Result, 8, Length(Result));
+  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
+    Result := Copy(Result, 1, Length(Result) - 1);
+  Result := Trim(Result);
+end;
+
+function RoomLooksLikeAHost(S: String): Boolean;
+var
+  I: Integer;
+  C: Char;
+begin
+  Result := (Length(S) >= 3) and (Length(S) <= 253) and (Pos('.', S) > 0)
+            and (S[1] <> '.') and (S[1] <> '-') and (S[Length(S)] <> '.');
+  for I := 1 to Length(S) do
+  begin
+    C := S[I];
+    if not (((C >= 'a') and (C <= 'z')) or ((C >= '0') and (C <= '9')) or (C = '.') or (C = '-')) then
+      Result := False;
+  end;
+end;
+
+procedure InitializeWizard;
+begin
+  RoomPage := CreateInputQueryPage(wpSelectComponents,
+    'Your room', 'Where is the chat room you are joining?',
+    'Type the address your host gave you. It looks like  rixchat.duckdns.org  ' +
+    '(no https://, no slashes). Leave it empty if you are the host of this room, ' +
+    'or if you would rather type it in the sign-in window later.');
+  RoomPage.Add('Room address:', False);
+  RoomPage.Values[0] := ExpandConstant('{param:ROOM|{#DEFAULT_ROOM}}');
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = RoomPage.ID then
+  begin
+    RoomAddress := CleanRoom(RoomPage.Values[0]);
+    if (RoomAddress <> '') and not RoomLooksLikeAHost(RoomAddress) then
+    begin
+      MsgBox('That does not look like a room address.' + #13#10#13#10 +
+             'It should look like  rixchat.duckdns.org  - letters, digits, dots and dashes, ' +
+             'nothing else. Leave the box empty to type it in the sign-in window instead.',
+             mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+end;
+
+{ Write server_urls into this member's client.toml: replace the line if one is
+  there (a friend re-running the installer with a new address means it), append
+  it otherwise. The file itself is laid down by [Files] before ssPostInstall. }
+procedure WriteRoomIntoClientConfig;
+var
+  Path: String;
+  Lines: TArrayOfString;
+  I, N: Integer;
+  Found: Boolean;
+  Line: String;
+begin
+  Path := ExpandConstant('{userappdata}\{#ClientCfgDir}\client.toml');
+  Line := 'server_urls = ["https://' + RoomAddress + '"]';
+  if not LoadStringsFromFile(Path, Lines) then
+    SetArrayLength(Lines, 0);
+  Found := False;
+  N := GetArrayLength(Lines);
+  for I := 0 to N - 1 do
+    if Pos('server_urls', Trim(Lines[I])) = 1 then
+    begin
+      Lines[I] := Line;
+      Found := True;
+    end;
+  if not Found then
+  begin
+    SetArrayLength(Lines, N + 1);
+    Lines[N] := Line;
+  end;
+  if SaveStringsToFile(Path, Lines, False) then
+    Log('SimpleChat: client.toml now names the room ' + RoomAddress)
+  else
+    Log('SimpleChat: could not write ' + Path + '; the member types the address in the sign-in window');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Msg: String;
 begin
+  if CurStep = ssPostInstall then
+  begin
+    { A silent install never showed the page; the parameter alone speaks. }
+    if RoomAddress = '' then
+      RoomAddress := CleanRoom(ExpandConstant('{param:ROOM|{#DEFAULT_ROOM}}'));
+    if (RoomAddress <> '') and RoomLooksLikeAHost(RoomAddress) then
+      WriteRoomIntoClientConfig;
+  end;
+
   { Before a single file is copied: did this PC already have a server config? }
   if CurStep = ssInstall then
     ServerTomlExistedBefore := FileExists(ExpandConstant('{#ServerRoot}\server.toml'));

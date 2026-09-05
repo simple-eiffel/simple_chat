@@ -1607,6 +1607,104 @@ feature -- The per-message fold: an edit, a delete, a reaction, a reply
 		end
 
 
+feature -- The administrator's wire: a member made through the running room
+
+	test_admin_create_user_sends_the_three_fields_and_reads_the_member_back
+			-- POST /admin/users as the signed-in administrator: username, display
+			-- name and password in the body, the bearer where it always is, the
+			-- password in no URL; 201 comes back as the new member.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			r: CHAT_RESULT [CHAT_MEMBER]
+		do
+			create t.make
+			c := logged_in_client (t)
+			t.script (201, "{%"id%":7,%"username%":%"nick%",%"display_name%":%"Nick G%",%"is_admin%":false,%"is_bot%":false}")
+			r := c.admin_create_user ("nick", {STRING_32} "Nick G", {STRING_32} "correct horse battery staple")
+			assert ("the member came back", r.is_success and then attached r.value as m
+				and then (m.id = 7 and m.username.same_string ("nick") and not m.is_admin and not m.is_bot))
+			assert ("POST /admin/users", t.last_request.method.same_string ("POST")
+				and t.last_request.url.same_string ("http://127.0.0.1:8080/admin/users"))
+			assert ("as the administrator", t.last_request.has_header ("Authorization")
+				and then t.last_request.header ("Authorization").same_string ("Bearer " + hex64))
+			assert ("the three fields in the body, the password nowhere else",
+				t.last_request.body.has_substring ("%"username%":%"nick%"")
+				and t.last_request.body.has_substring ("%"display_name%":%"Nick G%"")
+				and t.last_request.body.has_substring ("%"password%":%"correct horse battery staple%"")
+				and not t.last_request.url.has_substring ("battery"))
+			assert ("still signed in, still the same me", c.is_logged_in)
+		end
+
+	test_admin_create_user_carries_the_rooms_refusal
+			-- A taken name is the server's 409, with the server's words.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			r: CHAT_RESULT [CHAT_MEMBER]
+		do
+			create t.make
+			c := logged_in_client (t)
+			t.script (409, "{%"code%":%"taken%",%"message%":%"That username is taken.%"}")
+			r := c.admin_create_user ("nick", {STRING_32} "Nick", {STRING_32} "correct horse battery staple")
+			assert ("a 409 result carrying the server's reason", not r.is_success and is_error_status (r.error, 409)
+				and then attached r.error as e and then e.message.has_substring ({STRING_32} "taken"))
+			assert ("still signed in", c.is_logged_in)
+		end
+
+	test_admin_users_reads_the_rooms_accounts_people_and_bots
+			-- GET /admin/users as the administrator: {"users": [...]} comes back
+			-- as the members in the server's order, bots included, and a bare
+			-- array is refused as malformed (the /participants lesson).
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			r: CHAT_RESULT [ARRAYED_LIST [CHAT_MEMBER]]
+		do
+			create t.make
+			c := logged_in_client (t)
+			t.script (200, "{%"users%":[{%"id%":5,%"username%":%"larry%",%"display_name%":%"Larry%",%"is_admin%":true,%"is_bot%":false},"
+				+ "{%"id%":7,%"username%":%"nick%",%"display_name%":%"Nick%",%"is_admin%":false,%"is_bot%":false},"
+				+ "{%"id%":2,%"username%":%"claude_bot%",%"display_name%":%"Claude%",%"is_admin%":false,%"is_bot%":true}]}")
+			r := c.admin_users
+			assert ("three accounts, in the server's order", r.is_success and then attached r.value as l
+				and then (l.count = 3 and l [1].username.same_string ("larry") and l [2].id = 7 and l [3].is_bot))
+			assert ("GET /admin/users as the administrator", t.last_request.method.same_string ("GET")
+				and t.last_request.url.same_string ("http://127.0.0.1:8080/admin/users")
+				and then t.last_request.header ("Authorization").same_string ("Bearer " + hex64))
+			t.script (200, "[{%"id%":5,%"username%":%"larry%",%"display_name%":%"Larry%",%"is_admin%":true,%"is_bot%":false}]")
+			r := c.admin_users
+			assert ("a bare array is not the shape, and is an error not a raise", not r.is_success)
+			assert ("still signed in", c.is_logged_in)
+		end
+
+	test_admin_reset_password_posts_under_the_users_id_and_carries_a_refusal
+			-- POST /admin/users/{id}/password with the password in the body and
+			-- in no URL; 200 is True; a 404 (nobody, or a bot) is carried.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			c: CHAT_CLIENT
+			r: CHAT_RESULT [CHAT_MEMBER]
+			l_nick, l_nobody: CHAT_MEMBER
+		do
+			create t.make
+			c := logged_in_client (t)
+			create l_nick.make (7, "nick", {STRING_32} "Nick", False, False)
+			create l_nobody.make (99, "nobody", {STRING_32} "Nobody", False, False)
+			t.script (200, "{}")
+			r := c.admin_reset_password (l_nick, {STRING_32} "correct horse battery staple")
+			assert ("reset, and the person handed back", r.is_success and then r.value = l_nick)
+			assert ("POST /admin/users/7/password", t.last_request.method.same_string ("POST")
+				and t.last_request.url.same_string ("http://127.0.0.1:8080/admin/users/7/password"))
+			assert ("the password in the body and in no URL",
+				t.last_request.body.has_substring ("%"password%":%"correct horse battery staple%"")
+				and not t.last_request.url.has_substring ("battery"))
+			t.script (404, "{%"code%":%"not_found%",%"message%":%"No such person.%"}")
+			r := c.admin_reset_password (l_nobody, {STRING_32} "correct horse battery staple")
+			assert ("a 404 carried with the server's words", not r.is_success and is_error_status (r.error, 404))
+			assert ("still signed in", c.is_logged_in)
+		end
+
 feature {NONE} -- Fixtures
 
 	wire_fold (a_id, a_sender: INTEGER_64; a_kind, a_body, a_payload: STRING_8): STRING_8

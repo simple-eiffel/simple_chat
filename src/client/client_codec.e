@@ -112,6 +112,19 @@ feature -- Decoding (never raises)
 			retry
 		end
 
+	users (a_bytes: READABLE_STRING_8): detachable ARRAYED_LIST [CHAT_MEMBER]
+			-- The administrator's account list, {"users": [...]}; Void when malformed, never a raise.
+		local
+			l_failed: BOOLEAN
+		do
+			if not l_failed then
+				Result := json.users_from_bytes (a_bytes)
+			end
+		rescue
+			l_failed := True
+			retry
+		end
+
 	login (a_bytes: READABLE_STRING_8): detachable TUPLE [token: STRING_8; member: CHAT_MEMBER]
 			-- The token and member of a login reply; the token's shape is the caller's to check.
 		local

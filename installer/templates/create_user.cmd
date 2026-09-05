@@ -30,23 +30,18 @@ echo   Create an account for someone
 echo   -----------------------------
 echo.
 
-REM The store is SQLite in WAL mode, which does allow a second process to open
-REM it - but nothing here sets a busy timeout, so a write that races the
-REM running server's can come back SQLITE_BUSY and the account is simply not
-REM created. Stopping first is the reliable order.
+REM Since 0.3.2 the server executable decides the path itself: if the room is
+REM RUNNING it asks for an administrator's username and password and makes the
+REM account THROUGH the room (its own admin API, no second handle on the
+REM database); if the room is stopped it opens the database directly, as it
+REM always did. Nothing here needs to stop or start anything.
 "%SYS%\tasklist.exe" /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | "%SYS%\find.exe" /i "SimpleChatServer.exe" >nul
 if not errorlevel 1 (
-    echo   The server is RUNNING.
+    echo   The room is running, so you will first be asked to sign in as an
+    echo   administrator ^(your own username and password^); the account is then
+    echo   created through the room, with nothing stopped.
     echo.
-    echo   Stop it first ^("Stop server" in the Start Menu^), create the
-    echo   account, then start it again. Creating an account while the server
-    echo   is running can fail silently on a database lock.
-    echo.
-    "%SYS%\chcp.com" %OLDCP% >nul
-    pause
-    exit /b 1
 )
-
 echo   The username is what they type to log in. It must be 1 to 32
 echo   characters of a-z, 0-9 and underscore - no capitals, no spaces.
 echo.

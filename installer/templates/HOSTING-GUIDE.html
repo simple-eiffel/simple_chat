@@ -140,7 +140,10 @@ It will tell you whether it came up. At this point the room works
 <h2>2a. Making accounts for your friends</h2>
 
 <p>Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr; <strong>Create user</strong>,
-once per person.</p>
+once per person. <strong>The room can stay running:</strong> when it is, the console first
+asks for <em>your own</em> username and password (you are the administrator) and makes the
+account through the room; when it is stopped, it opens the database directly. Either way,
+nothing to stop and nothing to restart.</p>
 
 <p><strong>There is no sign-up page, and that is deliberate.</strong> Nobody can create
 an account on your room but you. It asks for three things:</p>
@@ -152,13 +155,29 @@ an account on your room but you. It asks for three things:</p>
 <tr><td><strong>Password</strong></td><td>Typed twice. It is visible on screen as you type; it is never stored, only a PBKDF2 hash at 600,000 iterations.</td></tr>
 </table>
 
-<p>Then tell them their username, their password and the address of your room.
-They install SimpleChat, leave the hosting box unticked, and log in.</p>
+<p>Then send them <strong>three things</strong>: the installer link, the address of your
+room, and their username and password (the password by a different route than the
+rest, if you like). Word for word, this is the whole of what a friend has to do:</p>
+
+<ol>
+  <li>Download and run
+      <code>https://github.com/simple-eiffel/simple_chat/releases/latest/download/SimpleChat-Setup.exe</code>
+      &mdash; Next, Next; leave the hosting box <strong>unticked</strong>.</li>
+  <li>On the page that asks <strong>Your room</strong>, type the address you gave them &mdash;
+      <code>rixchat.duckdns.org</code>, no <code>https://</code> &mdash; and Next to the end.</li>
+  <li>SimpleChat opens with the server already filled in. They type their username and
+      password, tick <strong>Remember me on this PC</strong>, and they are in.</li>
+</ol>
+
+<p>If you build the installer yourself, <code>ISCC /DDEFAULT_ROOM=rixchat.duckdns.org</code>
+prefills that page, so step 2 becomes "Next".</p>
 
 <h2>2b. When somebody forgets their password</h2>
 
 <p>Start Menu &rarr; <strong>SimpleChat Server</strong> &rarr;
 <strong>Reset a password</strong>. Type the username, then the new password twice.
+<strong>The room can stay running</strong> &mdash; when it is, the console first asks
+for your own username and password and does the reset through the room.
 It does not ask for a display name &mdash; the account already has one, and this
 never renames anybody.</p>
 
@@ -320,9 +339,9 @@ Caddy's business, and it renews itself from now on.</p>
 text like <code>{"store":true,"last_event_id":0}</code>. That is the room answering from the
 outside world.</p>
 
-<p>Now your friends install SimpleChat (leaving the hosting box unticked), put
-<code>https://rixchat.duckdns.org</code> in the <strong>Server</strong> box on the login
-window, and they are in.</p>
+<p>Now your friends install SimpleChat (leaving the hosting box unticked), give the
+installer your room's address on its <strong>Your room</strong> page, and sign in &mdash;
+section 2a has the three lines to send them.</p>
 
 <h2>4. Keeping it running</h2>
 

@@ -58,6 +58,41 @@ feature -- Tests
 			assert ("stop without a child is harmless", not d.has_child_process)
 		end
 
+	test_room_probe_believes_only_a_health_reply
+			-- Up means a health-shaped 200 from the loopback port: another
+			-- program's 200 is not the room, and a refused connection is not
+			-- the room; neither raises.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			p: ROOM_PROBE
+		do
+			create t.make
+			create p.make (t)
+			t.script (200, "{%"store%":true,%"last_event_id%":0}")
+			assert ("a health reply on the loopback port means up", p.is_up (8090))
+			assert ("asked exactly there", t.last_request.method.same_string ("GET")
+				and t.last_request.url.same_string ("http://127.0.0.1:8090/health"))
+			t.script (200, "<html>somebody else's 200</html>")
+			assert ("another program's 200 is not the room", not p.is_up (8090))
+			t.script_failure ({STRING_32} "connection refused")
+			assert ("nothing listening is not the room", not p.is_up (8090))
+			assert ("three probes, counted", p.probe_count = 3)
+		end
+
+	test_room_probe_over_winhttp_finds_no_room_on_a_silent_port
+			-- The production transport against a port nobody listens on: False,
+			-- at once, without raising - the case --create-user meets when the
+			-- server is stopped, which must fall through to the database.
+		local
+			w: WINHTTP_TRANSPORT
+			p: ROOM_PROBE
+		do
+			create w.make
+			create p.make (w)
+			assert ("a silent port is not the room", not p.is_up (18299))
+			assert ("counted", p.probe_count = 1)
+		end
+
 	test_hostnames_are_validated
 		local
 			c: SERVER_CONFIG

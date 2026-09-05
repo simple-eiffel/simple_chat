@@ -360,6 +360,36 @@ feature -- Decoding
 			end
 		end
 
+	users_from_bytes (a_bytes: READABLE_STRING_8): detachable ARRAYED_LIST [CHAT_MEMBER]
+			-- {"users": [...]} - the administrator's list, people and bots alike;
+			-- Void when the shape is wrong or any member is malformed. The same
+			-- shape as `members_from_bytes' under the other key: an object
+			-- wrapping an array, never a bare array (the /participants lesson).
+		local
+			i: INTEGER
+			l_ok: BOOLEAN
+		do
+			if attached object_from_bytes (a_bytes) as o and then attached o.array_item (Key_users) as arr then
+				l_ok := True
+				create Result.make (arr.count)
+				from
+					i := 1
+				until
+					i > arr.count or not l_ok
+				loop
+					if attached arr.object_item (i) as mo and then attached member_from_json (mo) as m then
+						Result.extend (m)
+					else
+						l_ok := False
+					end
+					i := i + 1
+				end
+				if not l_ok then
+					Result := Void
+				end
+			end
+		end
+
 	login_from_bytes (a_bytes: READABLE_STRING_8): detachable TUPLE [token: STRING_8; member: CHAT_MEMBER]
 			-- A 64-hex token and a member, or Void.
 		do
