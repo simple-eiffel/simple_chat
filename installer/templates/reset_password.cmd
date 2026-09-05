@@ -35,24 +35,17 @@ echo   Reset someone's password
 echo   ------------------------
 echo.
 
-REM The store is SQLite in WAL mode, which does allow a second process to open
-REM it - but nothing here sets a busy timeout, so a write that races the running
-REM server's can come back SQLITE_BUSY. For a reset that is the worse case: the
-REM new password would never land, the old one would still work, and the
-REM sessions the running server is holding would never be signed out. Stopping
-REM first is the reliable order.
+REM Since 0.3.2 the server executable decides the path itself: if the room is
+REM RUNNING it asks for an administrator's username and password and resets
+REM THROUGH the room (its own admin API - which also signs out every session
+REM that member had); if the room is stopped it opens the database directly,
+REM as it always did. Nothing here needs to stop or start anything.
 "%SYS%\tasklist.exe" /fi "IMAGENAME eq SimpleChatServer.exe" 2>nul | "%SYS%\find.exe" /i "SimpleChatServer.exe" >nul
 if not errorlevel 1 (
-    echo   The server is RUNNING.
+    echo   The room is running, so you will first be asked to sign in as an
+    echo   administrator ^(your own username and password^); the reset then goes
+    echo   through the room, with nothing stopped.
     echo.
-    echo   Stop it first ^("Stop server" in the Start Menu^), reset the
-    echo   password, then start it again. Resetting while the server is
-    echo   running can fail silently on a database lock - and it would leave
-    echo   the old password working and everyone still signed in.
-    echo.
-    "%SYS%\chcp.com" %OLDCP% >nul
-    pause
-    exit /b 1
 )
 
 echo   Whose password is this? Type the username they log in with - 1 to 32

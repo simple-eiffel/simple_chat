@@ -1,5 +1,5 @@
-SimpleChat 0.1.0
-================
+SimpleChat
+==========
 
 A private group chat for a circle of friends. One of you hosts the room on
 their own PC; everybody else connects to it. No company in the middle, no
@@ -11,9 +11,14 @@ JUST USING THE CHAT
 
 Start Menu -> SimpleChat.
 
-The first time, put the address your host gave you in the "Server" box - it
-looks like  https://something.duckdns.org  - then your username and password.
-Tick "Remember me on this PC" and you will not be asked again on this PC.
+If you gave the installer your room's address on its "Your room" page, the
+"Server" box is already filled in; otherwise put the address your host gave
+you there - it looks like  https://something.duckdns.org . Then your username
+and password. Tick "Remember me on this PC" and you will not be asked again on
+this PC.
+
+The latest installer is always at
+    https://github.com/simple-eiffel/simple_chat/releases/latest/download/SimpleChat-Setup.exe
 
 Your settings live in
     %APPDATA%\simple_chat\client.toml
@@ -51,8 +56,10 @@ namely
 Accounts are made by you, never signed up for: "Create first admin" once, then
 "Create user" for each friend. If somebody forgets their password - including
 you - "Reset a password" gives them a new one and signs out everyone who was
-logged in as them. Stop the server before any of the three: they open the
-database directly and refuse to run while it is up.
+logged in as them. "Create user" and "Reset a password" work while the room
+is running (each asks for your own administrator password first); only
+"Create first admin" opens the database directly - there is no room to ask
+yet - and wants the server stopped.
 
 
 WHERE THINGS ARE

@@ -289,6 +289,10 @@ feature -- Commands
 			if not l_config.is_valid then
 				print ("--create-user: the configuration is refused; fix it first:%N")
 				print_errors (l_config)
+			elseif room_is_up (l_config.port) then
+					-- The room is running: go through it, and open no second
+					-- handle on its database.
+				create_member_through_the_room (a_username, l_config)
 			elseif attached new_service (l_config) as l_service then
 				if not l_service.store.has_admin then
 						-- An ordinary member before there is anyone to administer
@@ -354,6 +358,206 @@ feature -- Commands
 			end
 		end
 
+	create_member_through_the_room (a_username: READABLE_STRING_8; a_config: SERVER_CONFIG)
+			-- The room is running, so the account is made THROUGH it, as an
+			-- administrator, and no second process opens the database. The old
+			-- order - stop the server, create the account, start it again -
+			-- is one nobody follows twice. `signed_in_administrator' asks who
+			-- is doing this; then the new member's display name and password
+			-- twice, the same questions the direct path asks, in the same words.
+		require
+			acceptable: is_acceptable_username (a_username)
+			valid: a_config.is_valid
+		local
+			l_display: STRING_32
+			l_first, l_second: detachable STRING_32
+			l_created: CHAT_RESULT [CHAT_MEMBER]
+		do
+			if attached signed_in_administrator (a_config, "--create-user") as l_client then
+				print ("Display name (press Enter to use %"" + a_username + "%"): ")
+				io.read_line
+				l_display := line_read_text
+				if l_display.is_empty then
+					l_display := a_username.to_string_32
+				end
+				print ("Password (at least " + a_config.password_minimum.out + " characters, shown as dots): ")
+				l_first := hidden_line
+				if l_first /= Void then
+					print ("Again: ")
+					l_second := hidden_line
+				end
+				if attached l_first as l_typed and then attached l_second as l_again then
+					if not passwords_acceptable (l_typed, l_again, a_config.password_minimum) then
+						if not l_typed.same_string (l_again) then
+							print ("--create-user: the two entries do not match; nothing was created.%N")
+						else
+							print ("--create-user: the password must be at least " + a_config.password_minimum.out + " characters; nothing was created.%N")
+						end
+					else
+						l_created := l_client.admin_create_user (a_username, l_display, l_typed)
+						if l_created.is_success then
+							print ("--create-user: member %"" + a_username + "%" created, through the running room.%N")
+						elseif attached l_created.error as l_error then
+							print ("--create-user: refused - ")
+							print_line_32 (l_error.message)
+						end
+					end
+				else
+					print ("--create-user: no password was given (standard input ended before one arrived); nothing was created.%N")
+				end
+				l_client.logout
+			end
+		end
+
+	reset_password_through_the_room (a_username: READABLE_STRING_8; a_config: SERVER_CONFIG)
+			-- The room is running, so the reset goes THROUGH it: an
+			-- administrator signs in, the account is found in the room's own
+			-- list, the new password is asked twice in the same words as the
+			-- direct path, and the room resets it - signing out every live
+			-- session that member had, as CHAT_SERVICE.reset_password always
+			-- has. A bot has no password and is refused as before. Nothing
+			-- here opens the database, so nothing here races the server.
+		require
+			acceptable: is_acceptable_username (a_username)
+			valid: a_config.is_valid
+		local
+			l_users: CHAT_RESULT [ARRAYED_LIST [CHAT_MEMBER]]
+			l_target: detachable CHAT_MEMBER
+			l_first, l_second: detachable STRING_32
+			l_done: CHAT_RESULT [CHAT_MEMBER]
+		do
+			if attached signed_in_administrator (a_config, "--reset-password") as l_client then
+				l_users := l_client.admin_users
+				if not l_users.is_success then
+					print ("--reset-password: the room would not list its accounts - ")
+					if attached l_users.error as l_error then
+						print_line_32 (l_error.message)
+					else
+						print ("%N")
+					end
+				else
+					if attached l_users.value as l_list then
+						across l_list as ic loop
+							if ic.username.same_string (a_username) then
+								l_target := ic
+							end
+						end
+					end
+					if not attached l_target as u then
+						print ("--reset-password: this room has no member %"" + a_username + "%"; nothing was changed.%N")
+					elseif u.is_bot then
+						print ("--reset-password: %"" + a_username + "%" is a bot; a bot has no password, only a token. Revoke and reissue that token instead; nothing was changed.%N")
+					else
+						print ("New password for %"" + a_username + "%" (at least " + a_config.password_minimum.out + " characters, shown as dots): ")
+						l_first := hidden_line
+						if l_first /= Void then
+							print ("Again: ")
+							l_second := hidden_line
+						end
+						if attached l_first as l_typed and then attached l_second as l_again then
+							if not passwords_acceptable (l_typed, l_again, a_config.password_minimum) then
+								if not l_typed.same_string (l_again) then
+									print ("--reset-password: the two entries do not match; nothing was changed.%N")
+								else
+									print ("--reset-password: the password must be at least " + a_config.password_minimum.out + " characters; nothing was changed.%N")
+								end
+							else
+								l_done := l_client.admin_reset_password (u, l_typed)
+								if l_done.is_success then
+									print ("--reset-password: the password for %"" + a_username + "%" was reset, through the running room, and every live session that member had was signed out.%N")
+								elseif attached l_done.error as l_error then
+									print ("--reset-password: refused - ")
+									print_line_32 (l_error.message)
+								end
+							end
+						else
+							print ("--reset-password: no password was given (standard input ended before one arrived); nothing was changed.%N")
+						end
+					end
+				end
+				l_client.logout
+			end
+		end
+
+	signed_in_administrator (a_config: SERVER_CONFIG; a_flag: STRING_8): detachable CHAT_CLIENT
+			-- A CHAT_CLIENT signed in to the running room as an administrator
+			-- asked for at the console; Void - with the reason printed under
+			-- `a_flag' - when there is no such sign-in, or it is not an
+			-- administrator's. The caller signs it out when it is done.
+		require
+			valid: a_config.is_valid
+			flag_given: not a_flag.is_empty
+		local
+			l_transport: WINHTTP_TRANSPORT
+			l_client: CHAT_CLIENT
+			l_admin: STRING_32
+			l_secret: detachable STRING_32
+			l_login: CHAT_RESULT [CHAT_MEMBER]
+		do
+			print ("The room is running on port " + a_config.port.out + ", so this goes through it.%N")
+			print ("Sign in as an administrator first.%N")
+			print ("Administrator username: ")
+			io.read_line
+			l_admin := line_read_text
+			if not is_acceptable_username (l_admin) then
+				print (a_flag + ": that is not a username (1..32 characters of a-z, 0-9 and underscore); nothing was changed.%N")
+			else
+				print ("Administrator password (shown as dots): ")
+				l_secret := hidden_line
+				if not attached l_secret as l_admin_password then
+					print (a_flag + ": no password was given (standard input ended before one arrived); nothing was changed.%N")
+				else
+					create l_transport.make
+					create l_client.make (l_transport, create {CHAT_ENDPOINT}.make (room_base_url (a_config.port)))
+					l_login := l_client.login (l_admin.to_string_8, l_admin_password)
+					if not l_login.is_success then
+						print (a_flag + ": the room refused that sign-in - ")
+						if attached l_login.error as l_error then
+							print_line_32 (l_error.message)
+						else
+							print ("%N")
+						end
+					elseif not (attached l_client.me as l_me and then l_me.is_admin) then
+						print (a_flag + ": that account is not an administrator; nothing was changed.%N")
+						l_client.logout
+					else
+						Result := l_client
+					end
+				end
+			end
+		ensure
+			an_administrator_or_nothing: attached Result as r implies (r.is_logged_in and then attached r.me as m and then m.is_admin)
+		end
+
+	room_is_up (a_port: INTEGER): BOOLEAN
+			-- Does a room answer /health on `a_port' right now? ROOM_PROBE over
+			-- WinHTTP: the honest test, and a fast one when nothing listens.
+		require
+			valid_port: a_port > 0 and a_port <= 65535
+		local
+			l_transport: WINHTTP_TRANSPORT
+			l_probe: ROOM_PROBE
+		do
+			create l_transport.make
+			create l_probe.make (l_transport)
+			Result := l_probe.is_up (a_port)
+		end
+
+	room_base_url (a_port: INTEGER): STRING_8
+			-- Where the running room is spoken to: ROOM_PROBE's loopback address.
+		require
+			valid_port: a_port > 0 and a_port <= 65535
+		local
+			l_transport: WINHTTP_TRANSPORT
+			l_probe: ROOM_PROBE
+		do
+			create l_transport.make
+			create l_probe.make (l_transport)
+			Result := l_probe.base_url (a_port)
+		ensure
+			loopback: Result.starts_with ("http://127.0.0.1:")
+		end
+
 	reset_member_password (a_username: READABLE_STRING_8; a_config_path: READABLE_STRING_GENERAL)
 			-- Prompt for a new password twice, then give it to the EXISTING
 			-- member `a_username' through CHAT_SERVICE.reset_password,
@@ -403,6 +607,10 @@ feature -- Commands
 			if not l_config.is_valid then
 				print ("--reset-password: the configuration is refused; fix it first:%N")
 				print_errors (l_config)
+			elseif room_is_up (l_config.port) then
+					-- The room is running: go through it, and open no second
+					-- handle on its database.
+				reset_password_through_the_room (a_username, l_config)
 			elseif attached new_service (l_config) as l_service then
 				l_user := l_service.store.user_by_username (a_username)
 				if attached l_user as u then
@@ -469,6 +677,8 @@ feature -- Commands
 			print ("simple_chat_server --reset-password <username> [simple_chat_server.toml]%N")
 			print ("%N")
 			print ("The two create flags ask for a display name, then for the password twice;%N")
+			print ("--create-user and --reset-password, while the room is RUNNING, ask first for an%N")
+			print ("administrator's username and password and act through the room; stopped, they open the database.%N")
 			print ("--reset-password asks for the password twice and for no display name.%N")
 			print ("NO PASSWORD ECHOES: it is read with simple_console.read_masked_line, which shows one dot per key and%N")
 			print ("leaves Backspace and Enter working and puts the console mode back. Standard%N")

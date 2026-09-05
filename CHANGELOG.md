@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-09-05
+
+The invitation release: a friend types a username and a password, and the host never stops the room to make either.
+
+### Added
+
+- **"Create user" works while the room is running.** `--create-user` now asks the
+  room first (`ROOM_PROBE`: `GET /health` on the loopback port, believed only
+  when the body is CHAT_API's own health shape - `tasklist` can only say that
+  *some* server executable is running somewhere). If the room answers, the
+  account is made **through it**: the console asks for an administrator's
+  username and masked password, signs in over WinHTTP, checks `is_admin`, then
+  asks the member's display name and password twice exactly as before and calls
+  the admin API. No second process opens the database. If the room is stopped,
+  the direct path runs unchanged. `create_user.cmd` no longer refuses a running
+  server; it says which path is about to happen.
+- **"Reset a password" works while the room is running, the same way:** an
+  administrator signs in, the account is found in the room's own list
+  (`GET /admin/users`), the new password is asked twice, and the room resets
+  it (`POST /admin/users/{id}/password`) - signing out every live session that
+  member had, exactly as the direct path always did. A bot is refused as
+  before. `reset_password.cmd` no longer demands a stop. Only *Create first
+  admin* still opens the database directly: there is no room to ask yet.
+- `CHAT_CLIENT.admin_users` (`{"users": [...]}`, people and bots, a bare array
+  refused as malformed) and `admin_reset_password (id, password)`;
+  `CHAT_JSON.users_from_bytes` / `CLIENT_CODEC.users` beside their `members`
+  twins. `SERVER_APP.signed_in_administrator` is the one console sign-in both
+  commands share.
+- `CHAT_CLIENT.admin_create_user (username, display_name, password)`:
+  `POST /admin/users` as the signed-in administrator, the password in the body
+  and in no URL, `201` read back as the member, the server's refusal carried.
+- `WINHTTP_TRANSPORT` moves from `apps\client` to `src\client`, where
+  `HTTP_TRANSPORT` already lives, so the server executable can speak to a room
+  the same way the window does.
+- **The installer asks "Your room".** A page after the components: the address
+  the host gave (`rixchat.duckdns.org`; scheme, slashes, spaces and case are
+  cleaned off, and it must look like a host name). It is written into the
+  member's `client.toml` as `server_urls = ["https://…"]` at `ssPostInstall` -
+  replacing the line if one is there, appending otherwise - so the sign-in
+  window opens with the server filled in and a friend types a username and a
+  password, nothing else. `ISCC /DDEFAULT_ROOM=rixchat.duckdns.org` prefills
+  the page for an installer built for one circle; `/ROOM=` overrides at run
+  time, silent installs included. Empty means what it always meant.
+- The hosting guide's section 2a is now the word-for-word note to send a
+  friend: the release link, the room address, the username and password;
+  the friend's README says where the latest installer always is.
+
+### Added (tests)
+
+- `ROOM_PROBE` over the scripted transport: a health-shaped 200 is up, another
+  program's 200 is not, a refused connection is not, each counted; and over the
+  real WinHTTP transport against a silent port: False at once, no exception.
+- `admin_create_user` on the wire: method, path, bearer, the three fields in
+  the body and the password in no URL, the member read back; a 409 carried with
+  the server's words. `admin_users`: three accounts back in order, bots
+  included, a bare array an error and not a raise. `admin_reset_password`:
+  the id in the path, the password in the body and in no URL, a 404 carried.
+
 ## [0.3.1] — 2026-09-05
 
 The certificate release: Caddy's log goes to a file, so the front door can actually finish obtaining a certificate.

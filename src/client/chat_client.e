@@ -523,6 +523,84 @@ feature -- Posting
 			session_kept: is_logged_in and me = old me
 		end
 
+	admin_create_user (a_username: READABLE_STRING_8; a_display_name, a_password: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_MEMBER]
+			-- POST /admin/users {"username", "display_name", "password"} as the
+			-- signed-in administrator; 201 with the new member. The password
+			-- travels in the body over the same wire a login's does, never in a
+			-- URL. 400 for a bad field, 409 for a taken name, 403 for somebody
+			-- who is not an administrator - each the server's own reason, carried.
+		require
+			logged_in: is_logged_in
+			username_given: not a_username.is_empty
+			display_given: not a_display_name.is_empty
+			password_given: not a_password.is_empty
+		local
+			l_json: SIMPLE_JSON_OBJECT
+			l_reply: HTTP_REPLY
+		do
+			create l_json.make
+			l_json.put_string (a_username.to_string_32, Key_username).do_nothing
+			l_json.put_string (a_display_name.to_string_32, Key_display_name).do_nothing
+			l_json.put_string (a_password.to_string_32, Key_password).do_nothing
+			l_reply := exchange ("POST", Path_admin_users, authorized_headers, codec.json.bytes_of (l_json), Default_timeout_seconds)
+			if l_reply.is_success and then attached codec.member (l_reply.body) as m then
+				create Result.make_success (m)
+			else
+				create Result.make_error (error_of (l_reply))
+			end
+		ensure
+			session_kept: is_logged_in and me = old me
+			named_on_success: (Result.is_success and then attached Result.value as m) implies m.username.same_string (a_username)
+		end
+
+	admin_users: CHAT_RESULT [ARRAYED_LIST [CHAT_MEMBER]]
+			-- GET /admin/users as the signed-in administrator: every account this
+			-- room has, people and bots, in the server's order.
+		require
+			logged_in: is_logged_in
+		local
+			l_reply: HTTP_REPLY
+		do
+			l_reply := exchange ("GET", Path_admin_users, authorized_headers, Void, Default_timeout_seconds)
+			if l_reply.is_success and then attached codec.users (l_reply.body) as l_list then
+				create Result.make_success (l_list)
+			else
+				create Result.make_error (error_of (l_reply))
+			end
+		ensure
+			session_kept: is_logged_in and me = old me
+		end
+
+	admin_reset_password (a_user: CHAT_MEMBER; a_password: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_MEMBER]
+			-- POST /admin/users/{id}/password {"password"}: 200, and every live
+			-- session that person had is signed out by the server - the success
+			-- carries `a_user' back, the person whose password it now is (the
+			-- server answers an empty object, and a result cannot carry an
+			-- expanded value with no value); 404 for nobody or a bot, 400 for a
+			-- password too short - the reason carried. The password travels in
+			-- the body and in no URL.
+		require
+			logged_in: is_logged_in
+			a_person: a_user.id > 0 and not a_user.is_bot
+			password_given: not a_password.is_empty
+		local
+			l_json: SIMPLE_JSON_OBJECT
+			l_reply: HTTP_REPLY
+		do
+			create l_json.make
+			l_json.put_string (a_password.to_string_32, Key_password).do_nothing
+			l_reply := exchange ("POST", Path_admin_users + "/" + a_user.id.out + "/password", authorized_headers,
+				codec.json.bytes_of (l_json), Default_timeout_seconds)
+			if l_reply.is_success then
+				create Result.make_success (a_user)
+			else
+				create Result.make_error (error_of (l_reply))
+			end
+		ensure
+			session_kept: is_logged_in and me = old me
+			the_person_on_success: Result.is_success implies Result.value = a_user
+		end
+
 	post_image (a_room_id: INTEGER_64; a_bytes: SPECIAL [NATURAL_8]; a_file_name: READABLE_STRING_GENERAL; a_caption: READABLE_STRING_GENERAL): CHAT_RESULT [CHAT_EVENT]
 			-- POST /rooms/{id}/images: `a_bytes' ARE the body (that is what the
 			-- request handler reads), the name and the caption ride on X-File-Name
@@ -618,6 +696,8 @@ feature -- Constants
 	Key_username: STRING_32 = "username"
 	Key_password: STRING_32 = "password"
 	Key_body: STRING_32 = "body"
+	Key_display_name: STRING_32 = "display_name"
+	Path_admin_users: STRING_8 = "/admin/users"
 	Key_since: STRING_32 = "since"
 	Key_until: STRING_32 = "until"
 	Key_minutes: STRING_32 = "minutes"
