@@ -200,6 +200,19 @@ a newline in the message instead of sending it, so a multi-line question stays o
 message. Enter with nothing typed, or with only Shift+Enter'd blank lines, sends
 nothing.
 
+**Paste a picture.** Take a screenshot (`Win+Shift+S`, or PrtScn) or "Copy image"
+in a browser, click in the composer and press **Ctrl+V**. Nothing is posted yet: a
+line above the composer says *Pasted picture, 640 x 480 (123 KB) - Return sends it,
+with whatever is typed as its caption; Escape discards it.* Type a caption if you
+want one, press **Enter**, and the picture goes up as `pasted-YYYYMMDD-HHMMSS.png`
+with your text as its caption. **Escape** throws it away. Text on the clipboard
+wins over a picture beside it - a word copied out of Word travels with a rendering
+of itself, and you meant the word - so Ctrl+V with text pastes text exactly as
+before. A picture the server refuses (too big) puts its reason on the error line
+and gives you your caption back. Until the inline decoder lands, everyone - you
+included - sees the posted picture as a `[image] pasted-....png (123 KB)` line
+carrying its caption; the bytes are on the server, only the drawing is missing.
+
 Your own line comes back **through the poller**, not from the composer — that is the
 design, and it is also the proof: if the bubble appears on the right, the whole loop
 (post → server → event log → long-poll → inbox → presenter → pane) ran.

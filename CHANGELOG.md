@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-05
+
+The paste release: a picture on the clipboard goes into the room with Ctrl+V and Return.
+
+### Added
+
+- **Ctrl+V with a picture on the clipboard posts it.** The first half of FR-005
+  that a member could actually use: the server has taken PNG/JPEG uploads by
+  signature since Phase 4, `CHAT_CLIENT.post_image` has put them on the wire
+  since Task 9b, and until today nothing in the window called it. Now a
+  screenshot, a snip or a browser's "Copy image", pasted into the composer, is
+  **held**: the line above the composer says *Pasted picture, 640 x 480
+  (123 KB) - Return sends it, with whatever is typed as its caption; Escape
+  discards it.* Return posts the PNG bytes as `pasted-YYYYMMDD-HHMMSS.png` with
+  the composer's text - empty or not - as the caption; Escape throws it away. A
+  held picture is a composer mode like a reply or an edit: taking one ends
+  either of those, and beginning either ends it (`CLIENT_APP.take_pasted_image`,
+  `cancel_compose`).
+
+  **Text wins.** A word copied out of a document often travels with a rendering
+  of itself, and a member who pastes a word means the word; a screenshot travels
+  alone. So the picture is taken only when nothing else is on the clipboard, and
+  Ctrl+V with text pastes text exactly as it always did
+  (`SW_CHAT_VIEW.route_paste`; the reasoning is in `CLIPBOARD_IMAGE_SOURCE`'s
+  class note).
+
+  A refusal (413, say) puts the server's reason on the error line and gives the
+  caption back to the composer; the picture is not kept - a paste is cheap to do
+  again, a stale one is a surprise. A picture that cannot be read says so on the
+  status line rather than silently pasting nothing.
+
+- `CLIPBOARD_IMAGE_SOURCE` (deferred: `has_image`, `has_text`, `width`, `height`,
+  `png_bytes`, never raises), `SHELL_CLIPBOARD_IMAGE` over simple_shell 1.10.0's
+  new `SHELL_CLIPBOARD.image_into` and simple_cairo's PNG writer (a relative,
+  ASCII scratch name in the working directory CLIENT_APP already moved to
+  `%APPDATA%\simple_chat` - cairo's writer takes a one-byte-per-character path,
+  and a member's profile folder need not be spellable that way), and
+  `MEMORY_CLIPBOARD_IMAGE` for the assault, so no test writes to the clipboard
+  Larry is using while the suite runs - except the one that proves the shipped
+  path end to end, which puts back the text it found.
+
+- simple_shell 1.10.0: `SHELL_CLIPBOARD.image_into` - the library could put a
+  bitmap and read its size back, but no caller could get at the pixels. simple_cairo
+  is now named explicitly on the client and tests targets.
+
+### Added (tests)
+
+- Six assaults in `WINDOW_ASSAULT`, driving `CLIENT_APP` over the REAL window
+  offscreen: the held picture, the strip's wording, nothing on the wire until
+  Return, then `POST /rooms/4/images` with the PNG bytes as the body first to last,
+  a dated `pasted-*.png` name and the caption percent-encoded on `X-Caption`; text
+  beside a picture pastes text and never even reads the picture; Escape discards
+  and a bare Return then sends nothing; a 413 puts the reason on the error line
+  and the caption back in the composer; an unreadable picture is said, not
+  swallowed; and the REAL clipboard - a 4x3 bitmap put through simple_shell -
+  comes back through `SHELL_CLIPBOARD_IMAGE` as PNG bytes whose IHDR says 4 x 3,
+  scratch file gone. Suite: **272 passed, 0 failed, zero SKIP**.
+
+### Changed
+
+- `CLIENT_APP.cancel_compose` gains one postcondition, `no_picture` - the one
+  existing clause strengthened on this branch; everything else is on new features.
+- `CHAT_VERSION`: 0.3.0, against simple_shell 1.10.0 and simple_web 0.4.0.
+
+### Known
+
+- The receiving side still draws an image event as a `[image] name (size)` line:
+  the inline decoder is the next item, not this one.
+
 ## [0.2.4] — 2026-09-05
 
 The listener release: the server is bound to 127.0.0.1 at the socket, not merely in a configuration class.

@@ -73,6 +73,10 @@
 		<root class="CLIENT_APP" feature="make"/>
 		<setting name="console_application" value="false"/>
 		<library name="simple_shell" location="$SIMPLE_EIFFEL/simple_shell/simple_shell.ecf"/>
+		<!-- simple_cairo is named EXPLICITLY, as simple_shaping is on the tests target: an
+		     indirectly included library's classes are not in this system's universe, and
+		     SHELL_CLIPBOARD_IMAGE builds the CAIRO_SURFACE a pasted picture is encoded through. -->
+		<library name="simple_cairo" location="$SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf"/>
 		<library name="simple_widgets" location="$SIMPLE_EIFFEL/simple_widgets/simple_widgets.ecf">
 			<!-- SW_LOCALE.format_number carries an unused local of the library's own; keep this
 			     project's build at zero warnings, as simple_toml is kept. -->
@@ -97,6 +101,7 @@
 		     the SHAPED_LAYOUT the pane's own kit produces for the acceptance line. -->
 		<library name="simple_shell" location="$SIMPLE_EIFFEL/simple_shell/simple_shell.ecf"/>
 		<library name="simple_shaping" location="$SIMPLE_EIFFEL/simple_shaping/simple_shaping.ecf"/>
+		<library name="simple_cairo" location="$SIMPLE_EIFFEL/simple_cairo/simple_cairo.ecf"/>
 		<!-- The tests target compiles apps\server\ too, so it needs what
 		     SERVER_APP needs: simple_console, for the no-echo password reads. -->
 		<library name="simple_console" location="$SIMPLE_EIFFEL/simple_console/simple_console.ecf"/>

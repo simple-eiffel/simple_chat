@@ -154,6 +154,7 @@ feature {NONE} -- Initialization
 			status_label.set_muted (True)
 			create {STATUS_LINE} error_label.make_ui ("")
 			create input.make_wrapping ("")
+			create {SHELL_CLIPBOARD_IMAGE} image_source.make
 			input.set_grow (1.0)
 			create send_button.make_primary (Text_send, Void)
 			create l_header.make
@@ -292,6 +293,64 @@ feature -- Element change
 			on_send := a_action
 		ensure
 			set: on_send = a_action
+		end
+
+	on_paste_image: detachable PROCEDURE [SPECIAL [NATURAL_8], INTEGER, INTEGER]
+			-- What a pasted picture is handed to: the PNG bytes, the width and
+			-- the height. The host owns it; a view with none pastes text only.
+
+	set_on_paste_image (a_action: PROCEDURE [SPECIAL [NATURAL_8], INTEGER, INTEGER])
+			-- What `route_paste' hands a picture to.
+		do
+			on_paste_image := a_action
+		ensure
+			set: on_paste_image = a_action
+		end
+
+	image_source: CLIPBOARD_IMAGE_SOURCE
+			-- Where a pasted picture is read from: the real clipboard, unless an
+			-- assault has handed in a scripted one.
+
+	set_image_source (a_source: CLIPBOARD_IMAGE_SOURCE)
+			-- Read pasted pictures from `a_source'.
+		do
+			image_source := a_source
+		ensure
+			set: image_source = a_source
+		end
+
+	paste_image_count: INTEGER
+			-- How many pictures `route_paste' has handed to the host.
+
+	empty_send_armed: BOOLEAN
+			-- May Return send with nothing typed? Only while the host holds a
+			-- picture for it; a bare Return on an empty composer is otherwise
+			-- nothing, as it always was.
+
+	arm_empty_send (a_on: BOOLEAN)
+			-- Let (or stop letting) a bare Return through to `on_send'.
+		do
+			empty_send_armed := a_on
+		ensure
+			set: empty_send_armed = a_on
+		end
+
+	compose_strip_text: STRING_32
+			-- What the line above the composer says; empty when nothing is pending.
+		do
+			Result := compose_strip.text.twin
+		end
+
+	compose_text: STRING_32
+			-- What is typed in the composer right now.
+		do
+			Result := input.text.twin
+		end
+
+	error_text: STRING_32
+			-- What the error line says; empty when nothing is wrong.
+		do
+			Result := error_label.text.twin
 		end
 
 	set_room_title (a_title: READABLE_STRING_GENERAL)
@@ -668,12 +727,31 @@ feature -- Keyboard routing
 		end
 
 	route_paste
-			-- Ctrl+V, and Edit > Paste.
+			-- Ctrl+V, and Edit > Paste. A picture on the clipboard WITH NOTHING
+			-- ELSE beside it goes to the host as PNG bytes (CLIPBOARD_IMAGE_SOURCE
+			-- says why text wins); everything else pastes as text, as it always
+			-- did. A picture that cannot be read says so on the status line and
+			-- pastes nothing: a paste that silently did nothing is the kind of
+			-- defect this room has been bitten by before.
+		local
+			l_bytes: SPECIAL [NATURAL_8]
 		do
 			if can_paste then
-				input.paste_clipboard
+				if image_source.has_image and then not image_source.has_text and then attached on_paste_image as a then
+					l_bytes := image_source.png_bytes
+					if l_bytes.count = 0 then
+						show_status (Text_unreadable_image)
+					else
+						paste_image_count := paste_image_count + 1
+						a.call ([l_bytes, image_source.width, image_source.height])
+					end
+				else
+					input.paste_clipboard
+				end
 				redraw
 			end
+		ensure
+			at_most_one_picture: paste_image_count <= old paste_image_count + 1
 		end
 
 	route_select_all
@@ -776,6 +854,7 @@ feature -- Constants
 	Text_key_copy: STRING_32 = "Ctrl+C"
 	Text_item_paste: STRING_32 = "&Paste"
 	Text_key_paste: STRING_32 = "Ctrl+V"
+	Text_unreadable_image: STRING_32 = "The picture on the clipboard could not be read, so nothing was pasted."
 	Text_item_select_all: STRING_32 = "Select &All"
 	Text_key_select_all: STRING_32 = "Ctrl+A"
 	Text_item_summarize: STRING_32 = "&Summarize the room now"
@@ -832,15 +911,17 @@ feature {NONE} -- The header strip
 			no_badge_at_zero: unread = 0 implies unread_label.text.is_empty
 		end
 
-feature {NONE} -- Sending
+feature -- Sending
 
 	submit
-			-- The composer's line goes to the host; an empty line goes nowhere.
+			-- The composer's line goes to the host; an empty line goes nowhere -
+			-- unless a picture is held for it (`empty_send_armed'), when the
+			-- empty line is the caption it will carry.
 		local
 			l_text: STRING_32
 		do
 			l_text := input.text.twin
-			if not l_text.is_empty and then attached on_send as a then
+			if (not l_text.is_empty or empty_send_armed) and then attached on_send as a then
 				input.set_text ({STRING_32} "")
 				a.call ([l_text])
 				redraw

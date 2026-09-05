@@ -1025,6 +1025,230 @@ feature -- The compose strip: what Return will do, and how to back out
 			-- gave `simulate_context_click' a way to make the window present
 			-- a popup - `show_popup' is the window's own.
 
+feature -- A pasted picture
+
+	test_pasting_a_picture_holds_it_for_return_and_posts_it_with_the_caption
+			-- Ctrl+V with a bitmap alone on the clipboard: the picture is held,
+			-- the strip above the composer says what Return will do, nothing has
+			-- gone to the server; then Return posts the PNG bytes as the body of
+			-- POST /rooms/4/images, under a dated name, with the composer's text
+			-- as the caption - and the composer is plain again.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			app: CLIENT_APP
+			src: MEMORY_CLIPBOARD_IMAGE
+			l_png: SPECIAL [NATURAL_8]
+			l_before: INTEGER
+		do
+			create t.make
+			app := room_app (t, "paste", member_reply)
+			create src.make
+			l_png := png_fixture (300)
+			src.set_image (l_png, 640, 480)
+			app.view.set_image_source (src)
+			l_before := t.exchange_count
+			app.view.route_paste
+			assert ("the picture was handed over, once", app.view.paste_image_count = 1 and src.reads = 1)
+			assert ("and is held for Return", attached app.pending_image as p and then p = l_png)
+			assert ("the strip says what Return will do", app.view.compose_strip_text.has_substring ({STRING_32} "640 x 480"))
+			assert ("nothing went to the server yet", t.exchange_count = l_before)
+			app.view.set_compose_text ({STRING_32} "look at this")
+			t.script (201, wire_pasted_image (9, 4, 5, "pasted-20260905-120000.png", "look at this"))
+			app.view.submit
+			assert ("POST /rooms/4/images went out", t.exchange_count = l_before + 1
+				and then t.last_request.method.same_string ("POST") and then t.last_request.url.ends_with ("/rooms/4/images"))
+			assert ("the PNG bytes are the body, first to last", t.last_request.body.count = l_png.count
+				and then t.last_request.body.code (1) = 0x89
+				and then t.last_request.body.code (l_png.count) = l_png [l_png.count - 1].to_natural_32)
+			assert ("named as a paste, dated, PNG", t.last_request.has_header ("X-File-Name")
+				and then t.last_request.header ("X-File-Name").starts_with ("pasted-")
+				and then t.last_request.header ("X-File-Name").ends_with (".png")
+				and then t.last_request.header ("X-File-Name").count = ("pasted-20260905-120000.png").count)
+			assert ("the composer's text is the caption", t.last_request.has_header ("X-Caption")
+				and then t.last_request.header ("X-Caption").same_string ("look%%20at%%20this"))
+			assert ("plain again: nothing held, strip clear, Return needs words once more",
+				app.pending_image = Void and not app.view.empty_send_armed and app.view.compose_strip_text.is_empty)
+			app.presenter.close_room
+		end
+
+	test_text_beside_a_picture_pastes_the_text_and_holds_no_picture
+			-- A word copied out of a document travels with a rendering of
+			-- itself; the member means the word. With text on offer the
+			-- picture is never even read, and nothing is held.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			app: CLIENT_APP
+			src: MEMORY_CLIPBOARD_IMAGE
+		do
+			create t.make
+			app := room_app (t, "pastetext", member_reply)
+			create src.make
+			src.set_image (png_fixture (64), 8, 8)
+			src.set_text (True)
+			app.view.set_image_source (src)
+			app.view.route_paste
+			assert ("no picture taken, none even read", app.view.paste_image_count = 0 and src.reads = 0)
+			assert ("nothing held, nothing armed, nothing said above the composer",
+				app.pending_image = Void and not app.view.empty_send_armed and app.view.compose_strip_text.is_empty)
+			app.presenter.close_room
+		end
+
+	test_escape_discards_a_held_picture_and_a_bare_return_then_sends_nothing
+			-- Escape is the way out of every composer mode, this one included;
+			-- and once out, an empty Return is nothing again.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			app: CLIENT_APP
+			src: MEMORY_CLIPBOARD_IMAGE
+			l_before: INTEGER
+		do
+			create t.make
+			app := room_app (t, "pasteesc", member_reply)
+			create src.make
+			src.set_image (png_fixture (120), 32, 16)
+			app.view.set_image_source (src)
+			app.view.route_paste
+			assert ("held", attached app.pending_image and app.view.empty_send_armed)
+			app.view.cancel_compose_now
+			assert ("discarded: nothing held, nothing armed, strip clear",
+				app.pending_image = Void and not app.view.empty_send_armed and app.view.compose_strip_text.is_empty)
+			l_before := t.exchange_count
+			app.view.submit
+			assert ("a bare Return sends nothing", t.exchange_count = l_before)
+			app.presenter.close_room
+		end
+
+	test_a_refused_picture_reports_the_servers_reason_and_gives_the_caption_back
+			-- The server says no (too large, say): its reason goes on the error
+			-- line, the caption `submit' emptied comes back to the composer, and
+			-- the picture is not kept - a paste is cheap to do again.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			app: CLIENT_APP
+			src: MEMORY_CLIPBOARD_IMAGE
+		do
+			create t.make
+			app := room_app (t, "pasterefused", member_reply)
+			create src.make
+			src.set_image (png_fixture (200), 4000, 3000)
+			app.view.set_image_source (src)
+			app.view.route_paste
+			app.view.set_compose_text ({STRING_32} "too big I guess")
+			t.script (413, "{%"code%":%"too_large%",%"message%":%"The upload is larger than the server allows.%"}")
+			app.view.submit
+			assert ("the server's reason is on the error line", app.view.error_text.has_substring ({STRING_32} "larger"))
+			assert ("the caption came back to the composer", app.view.compose_text.same_string ({STRING_32} "too big I guess"))
+			assert ("the picture is not kept", app.pending_image = Void and not app.view.empty_send_armed)
+			app.presenter.close_room
+		end
+
+	test_an_unreadable_picture_says_so_and_holds_nothing
+			-- A bitmap the source cannot turn into PNG bytes is reported on the
+			-- status line, never swallowed, and never held.
+		local
+			t: MEMORY_HTTP_TRANSPORT
+			app: CLIENT_APP
+			src: MEMORY_CLIPBOARD_IMAGE
+		do
+			create t.make
+			app := room_app (t, "pastebad", member_reply)
+			create src.make
+			src.set_image (create {SPECIAL [NATURAL_8]}.make_empty (0), 10, 10)
+			app.view.set_image_source (src)
+			app.view.route_paste
+			assert ("said on the status line", app.view.status_text.has_substring ({STRING_32} "could not be read"))
+			assert ("nothing held, nothing handed over",
+				app.pending_image = Void and app.view.paste_image_count = 0 and not app.view.empty_send_armed)
+			app.presenter.close_room
+		end
+
+	test_the_real_clipboard_bitmap_comes_back_as_a_png_of_its_own_size
+			-- The shipped source, end to end: a 4x3 bitmap put on the REAL
+			-- clipboard through simple_shell comes back through
+			-- SHELL_CLIPBOARD_IMAGE as PNG bytes whose IHDR says 4 x 3, and the
+			-- scratch file is gone. Text that was on the clipboard before, if
+			-- any, is put back afterwards.
+		local
+			l_clip: SHELL_CLIPBOARD
+			l_before: STRING_32
+			l_bits: MANAGED_POINTER
+			i: INTEGER
+			l_real: SHELL_CLIPBOARD_IMAGE
+			l_png: SPECIAL [NATURAL_8]
+			l_scratch: RAW_FILE
+		do
+			create l_clip
+			l_before := l_clip.text
+			create l_bits.make (4 * 4 * 3)
+			from
+				i := 0
+			until
+				i >= 12
+			loop
+				l_bits.put_natural_32 ({NATURAL_32} 0x00336699, i * 4)
+				i := i + 1
+			end
+			l_clip.set_image (l_bits.item, 4, 3, 16)
+			create l_real.make
+			assert ("a picture, and no text beside it", l_real.has_image and not l_real.has_text)
+			assert ("sized as put", l_real.width = 4 and l_real.height = 3)
+			l_png := l_real.png_bytes
+			assert ("PNG bytes came back", l_png.count > 8 and l_real.is_png (l_png))
+			assert ("whose IHDR says 4 x 3", big_endian_32 (l_png, 16) = 4 and big_endian_32 (l_png, 20) = 3)
+			create l_scratch.make_with_name ("pasted-image.tmp.png")
+			assert ("and the scratch file is gone", not l_scratch.exists)
+			if not l_before.is_empty then
+				l_clip.set_text (l_before)
+			end
+		end
+
+	png_fixture (a_count: INTEGER): SPECIAL [NATURAL_8]
+			-- `a_count' bytes opening with the PNG signature - enough for a
+			-- scripted transport, which stores and never decodes.
+		require
+			enough: a_count >= 8
+		local
+			i: INTEGER
+		do
+			create Result.make_filled (0, a_count)
+			Result.put ({NATURAL_8} 0x89, 0)
+			Result.put ({NATURAL_8} 0x50, 1)
+			Result.put ({NATURAL_8} 0x4E, 2)
+			Result.put ({NATURAL_8} 0x47, 3)
+			Result.put ({NATURAL_8} 0x0D, 4)
+			Result.put ({NATURAL_8} 0x0A, 5)
+			Result.put ({NATURAL_8} 0x1A, 6)
+			Result.put ({NATURAL_8} 0x0A, 7)
+			from
+				i := 8
+			until
+				i >= a_count
+			loop
+				Result.put ((i \\ 251).to_natural_8, i)
+				i := i + 1
+			end
+		ensure
+			sized: Result.count = a_count
+		end
+
+	big_endian_32 (a_bytes: SPECIAL [NATURAL_8]; a_at: INTEGER): INTEGER
+			-- The big-endian 32-bit number at `a_at' - how PNG writes its IHDR sizes.
+		require
+			in_range: a_at >= 0 and a_at + 3 < a_bytes.count
+		do
+			Result := a_bytes [a_at].to_integer_32 * 0x1000000 + a_bytes [a_at + 1].to_integer_32 * 0x10000
+				+ a_bytes [a_at + 2].to_integer_32 * 0x100 + a_bytes [a_at + 3].to_integer_32
+		end
+
+	wire_pasted_image (a_id, a_room, a_sender: INTEGER_64; a_name, a_caption: STRING_8): STRING_8
+			-- One image event in wire form for room `a_room', carrying a stored PNG attachment.
+		do
+			Result := "{%"id%":" + a_id.out + ",%"room_id%":" + a_room.out + ",%"sender_id%":" + a_sender.out
+				+ ",%"kind%":%"image%",%"created_at%":%"2026-09-05T12:00:00%",%"body%":%"" + a_caption
+				+ "%",%"attachment%":{%"id%":3,%"mime%":%"image/png%",%"size%":300,%"name%":%"" + a_name
+				+ "%",%"sha256%":%"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789%"},%"payload%":{},%"is_bot%":false}"
+		end
+
 feature {NONE} -- The per-message fixtures
 
 	scripted_transport: MEMORY_HTTP_TRANSPORT
