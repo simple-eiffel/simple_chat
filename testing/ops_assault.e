@@ -30,6 +30,9 @@ inherit
 feature -- Tests
 
 	test_caddyfile_is_one_loopback_site_with_admin_off
+			-- And, since 0.3.1, with Caddy's log sent to a file beside the
+			-- Caddyfile: the supervisor never drains the child's stderr pipe,
+			-- and a Caddy that fills it stops mid-certificate (class note).
 		local
 			c: SERVER_CONFIG
 			d: CADDY_FRONT_DOOR
@@ -39,10 +42,16 @@ feature -- Tests
 			c.set_front_door ({SERVER_CONFIG}.Door_caddy, "rixchat.duckdns.org")
 			create d.make (c)
 			l_text := d.caddyfile_text
-			assert ("admin off first", l_text.starts_with ("{%N    admin off%N}%N"))
+			assert ("admin off first", l_text.starts_with ("{%N    admin off%N    log {"))
+			assert ("the log goes to a file, quoted, forward slashes, beside the Caddyfile",
+				l_text.has_substring ("output file %"") and l_text.has_substring ("/caddy.log%" {")
+				and not l_text.has ('\') and d.caddy_log_path.ends_with ({STRING_32} "caddy.log"))
+			assert ("rolled, so a year of Caddy does not fill the disk", l_text.has_substring ("roll_size 2MiB") and l_text.has_substring ("roll_keep 3"))
 			assert ("site named", l_text.has_substring ("rixchat.duckdns.org {"))
 			assert ("loopback upstream", l_text.has_substring ("reverse_proxy 127.0.0.1:8080"))
-			assert ("exactly one site", l_text.occurrences ('{') = 3)
+			assert ("exactly one site, braces balanced", l_text.substring_index ("rixchat.duckdns.org {", 1) > 0
+				and then l_text.substring_index ("rixchat.duckdns.org {", l_text.substring_index ("rixchat.duckdns.org {", 1) + 1) = 0
+				and l_text.occurrences ('{') = l_text.occurrences ('}') and l_text.occurrences ('{') = 5)
 			assert ("absolute executable", d.executable.has (':') or d.executable.starts_with ("/"))
 			assert ("no child before start", not d.has_child_process and not d.is_serving)
 			d.stop

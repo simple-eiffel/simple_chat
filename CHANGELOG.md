@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-05
+
+The certificate release: Caddy's log goes to a file, so the front door can actually finish obtaining a certificate.
+
+### Fixed
+
+- **The Caddy front door never got its certificate.** Found the hour the room
+  first went public, on `rixchat.duckdns.org`: the router forwarded, the
+  firewall allowed, the name resolved, Caddy held 443 and 80 and had a
+  Let's Encrypt account - and for three minutes kept re-taking its issue lock
+  with no certificate, answering every TLS hello with an `InternalError`
+  alert. The same `caddy.exe` with the same Caddyfile, run by hand with its
+  output drained, had the certificate in 75 seconds.
+
+  `CADDY_FRONT_DOOR` starts Caddy through `SIMPLE_ASYNC_PROCESS`, which hands
+  the child piped stdout and stderr, and the supervisor reads neither. Caddy
+  logs to stderr by default, and generously while it obtains a certificate.
+  A pipe nobody drains is full at 4 KB; the next write blocks; the goroutine
+  fetching the certificate stops - and Caddy stays alive, still holds its
+  ports, and never finishes. This project met the same wedge with its own
+  server in the test suite and wrote it down; the front door was launched the
+  same way and nobody looked.
+
+  The Caddyfile the server writes now opens with a global `log` block sending
+  Caddy's default logger to `<data>\caddy.log` (rolled at 2 MiB, three kept):
+  only Caddy's few pre-config lines still reach the pipe, a few hundred bytes.
+  The path is written as one quoted token with forward slashes - a backslash
+  inside a quoted Caddyfile token is an escape - in UTF-8. A host also gets a
+  Caddy log to read, beside `server.log`.
+
+### Changed
+
+- `CADDY_FRONT_DOOR.caddyfile_text`: two postconditions restated to fit the
+  new block (`admin_off` checks the prefix `{ admin off`; `single_site` counts
+  the site header once with balanced braces, instead of "three braces"), one
+  added (`logs_to_file`). `caddy_log_path` and `caddy_log_token` are new.
+- `CHAT_VERSION`: 0.3.1.
+
 ## [0.3.0] — 2026-09-05
 
 The paste release: a picture on the clipboard goes into the room with Ctrl+V and Return.

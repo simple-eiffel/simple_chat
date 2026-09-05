@@ -10,6 +10,21 @@ note
 		The generated Caddyfile has exactly one site, proxies only to
 		127.0.0.1, and turns Caddy's admin API off.
 
+		CADDY'S LOG GOES TO A FILE, NEVER TO THE PIPE. SIMPLE_ASYNC_PROCESS
+		hands the child piped stdout and stderr, and this supervisor reads
+		neither; Caddy logs to stderr by default, and generously while it
+		obtains a certificate. A pipe nobody drains is full at 4 KB, the
+		next write blocks, and the goroutine that was fetching the
+		certificate stops - Caddy stays alive, still holds 443 and 80,
+		answers every TLS hello with an InternalError alert, and never
+		finishes. Found live on 2026-09-05 on rixchat.duckdns.org: three
+		minutes of a fresh issue lock and no certificate; the same Caddy
+		run by hand with its output drained had one in 75 seconds. So the
+		Caddyfile's global block sends the default logger to
+		`caddy_log_path' (rolled at 2 MiB, three kept), which also gives
+		the host a Caddy log to read. Only Caddy's few pre-config lines
+		still reach the pipe, well under its capacity.
+
 		`has_child_process' means alive: it is read from the child process
 		handle itself, never from a remembered flag. `check_health' reports
 		an exited child honestly - the exit code lands in `last_error' and
@@ -42,6 +57,7 @@ feature {NONE} -- Initialization
 			upstream_port := a_config.port
 			create l_env
 			caddyfile_path := l_env.current_working_path.extended (a_config.data_dir).extended ("Caddyfile").name
+			caddy_log_path := l_env.current_working_path.extended (a_config.data_dir).extended ("caddy.log").name
 			executable := l_env.current_working_path.extended ("caddy.exe").name
 		ensure
 			name_set: public_name.same_string (a_config.public_name)
@@ -59,27 +75,57 @@ feature -- Access
 	caddyfile_path: STRING_32
 			-- Where the generated Caddyfile is written (under the data folder).
 
+	caddy_log_path: STRING_32
+			-- Where Caddy is told to write its own log (beside the Caddyfile).
+
 	executable: STRING_32
 			-- The absolute path of caddy.exe.
 
 	caddyfile_text: STRING_8
-			-- The configuration Caddy runs: admin API off, TLS for `public_name',
-			-- one site, proxy to localhost, SSE passed through unbuffered.
+			-- The configuration Caddy runs: admin API off, its log to a file
+			-- (see the class note), TLS for `public_name', one site, proxy to
+			-- localhost, SSE passed through unbuffered.
 		do
-			create Result.make (160)
-			Result.append ("{%N    admin off%N}%N")
+			create Result.make (320)
+			Result.append ("{%N    admin off%N    log {%N        output file ")
+			Result.append (caddy_log_token)
+			Result.append (" {%N            roll_size 2MiB%N            roll_keep 3%N        }%N    }%N}%N")
 			Result.append (public_name)
 			Result.append (" {%N    reverse_proxy 127.0.0.1:")
 			Result.append (upstream_port.out)
 			Result.append (" {%N        flush_interval -1%N    }%N}%N")
 		ensure
-			admin_off: Result.starts_with ("{%N    admin off%N}%N")
+			admin_off: Result.starts_with ("{%N    admin off%N")
+			logs_to_file: Result.has_substring ("output file " + caddy_log_token)
 			names_site: Result.has_substring (public_name + " {")
 			targets_upstream: Result.has_substring ("reverse_proxy 127.0.0.1:" + upstream_port.out)
-			single_site: Result.occurrences ('{') = 3 and Result.occurrences ('}') = 3
+			single_site: Result.substring_index (public_name + " {", 1) > 0 and then Result.substring_index (public_name + " {", Result.substring_index (public_name + " {", 1) + 1) = 0
+			balanced: Result.occurrences ('{') = Result.occurrences ('}')
 			one_proxy: (Result.count - Result.substring_index ("reverse_proxy", 1)) >= 0 and then Result.substring_index ("reverse_proxy", Result.substring_index ("reverse_proxy", 1) + 1) = 0
 			loopback_only: not Result.has_substring ("0.0.0.0") and not Result.has_substring ("[::]")
 			streams_pass: Result.has_substring ("flush_interval -1")
+		end
+
+	caddy_log_token: STRING_8
+			-- `caddy_log_path' as one quoted Caddyfile token: UTF-8, every
+			-- backslash a forward slash. Go opens a forward-slash path on
+			-- Windows without complaint, and a backslash inside a quoted
+			-- Caddyfile token is an escape character, which is the one thing a
+			-- Windows path must not be read as.
+		local
+			l_utf8: UTF_CONVERTER
+			l_slashed: STRING_32
+		do
+			l_slashed := caddy_log_path.twin
+			l_slashed.replace_substring_all ({STRING_32} "\", {STRING_32} "/")
+			create Result.make (l_slashed.count + 2)
+			Result.append_character ('%"')
+			Result.append (l_utf8.utf_32_string_to_utf_8_string_8 (l_slashed))
+			Result.append_character ('%"')
+		ensure
+			quoted: Result.count >= 2 and Result [1] = '%"' and Result [Result.count] = '%"'
+			no_backslash: not Result.has ('\')
+			named: Result.has_substring ("/caddy.log")
 		end
 
 feature -- Status report
