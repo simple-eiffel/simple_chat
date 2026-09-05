@@ -160,7 +160,10 @@ that address is kept. A wrong password is a different thing entirely and still c
 in the server's own words.
 
 **Uninstalling never deletes the room.** The data folder, `server.toml`, the backups and
-each member's `client.toml` all survive, so reinstalling picks up where it left off.
+each member's `client.toml` all survive, so reinstalling picks up where it left off. That is
+the product's own uninstaller; a third-party cleaner (Revo and its kind) sweeps
+`C:\ProgramData\SimpleChat` away as "leftovers" and takes the room with it - found the hard
+way on 2026-09-05. Uninstall from Settings or the Start Menu, and back up first.
 
 To rebuild the installer, see `installer/README.md`. Two rules that bite: drive Inno
 Setup from **PowerShell, never Git Bash** (MSYS silently rewrites `/VERYSILENT` into a
