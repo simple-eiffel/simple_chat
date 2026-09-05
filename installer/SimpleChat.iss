@@ -45,7 +45,7 @@
 ;   elevation and survives uninstall, which is exactly what the room needs.
 ; ===========================================================================
 
-#define AppVersion     "0.2.4"
+#define AppVersion     "0.3.0"
 #define AppPublisher   "Larry Rix"
 #define AppExe         "SimpleChat.exe"
 #define ServerExe      "SimpleChatServer.exe"

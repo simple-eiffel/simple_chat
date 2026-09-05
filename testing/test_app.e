@@ -209,6 +209,14 @@ feature {NONE} -- Initialization
 			print ("=== THE LISTENER (fix/bind-loopback-only) ===%N")
 			run_test (agent (create {BIND_ASSAULT}).test_the_server_listens_on_loopback_and_not_on_every_interface, "the_server_listens_on_loopback_and_not_on_every_interface")
 
+			print ("=== A PASTED PICTURE (feature/paste-image) ===%N")
+			run_test (agent (create {WINDOW_ASSAULT}).test_pasting_a_picture_holds_it_for_return_and_posts_it_with_the_caption, "pasting_a_picture_holds_it_for_return_and_posts_it_with_the_caption")
+			run_test (agent (create {WINDOW_ASSAULT}).test_text_beside_a_picture_pastes_the_text_and_holds_no_picture, "text_beside_a_picture_pastes_the_text_and_holds_no_picture")
+			run_test (agent (create {WINDOW_ASSAULT}).test_escape_discards_a_held_picture_and_a_bare_return_then_sends_nothing, "escape_discards_a_held_picture_and_a_bare_return_then_sends_nothing")
+			run_test (agent (create {WINDOW_ASSAULT}).test_a_refused_picture_reports_the_servers_reason_and_gives_the_caption_back, "a_refused_picture_reports_the_servers_reason_and_gives_the_caption_back")
+			run_test (agent (create {WINDOW_ASSAULT}).test_an_unreadable_picture_says_so_and_holds_nothing, "an_unreadable_picture_says_so_and_holds_nothing")
+			run_test (agent (create {WINDOW_ASSAULT}).test_the_real_clipboard_bitmap_comes_back_as_a_png_of_its_own_size, "the_real_clipboard_bitmap_comes_back_as_a_png_of_its_own_size")
+
 			print ("=== THE PER-MESSAGE MENU (phase4/message-menu) ===%N")
 			run_test (agent (create {CLIENT_ASSAULT}).test_a_fold_event_changes_a_bubble_and_never_draws_one, "a_fold_event_changes_a_bubble_and_never_draws_one")
 			run_test (agent (create {CLIENT_ASSAULT}).test_a_delete_is_final_even_against_a_later_edit, "a_delete_is_final_even_against_a_later_edit")

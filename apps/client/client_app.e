@@ -164,6 +164,7 @@ feature {NONE} -- Initialization
 			create notifier.make (l_tray)
 			create presenter.make (client, view, notifier)
 			view.set_on_send (agent send_text)
+			view.set_on_paste_image (agent take_pasted_image)
 			view.window.set_on_tick (agent tick)
 		ensure
 			logged_out: not client.is_logged_in
@@ -171,6 +172,17 @@ feature {NONE} -- Initialization
 		end
 
 feature -- Access
+
+	pending_image: detachable SPECIAL [NATURAL_8]
+			-- The pasted picture Return will post, as PNG bytes; Void when none.
+			-- One composer, one thing Return means: a paste ends a reply or an
+			-- edit, exactly as beginning either of those ends the other.
+
+	pending_image_width: INTEGER
+			-- Its width, for the strip that says what Return will do.
+
+	pending_image_height: INTEGER
+			-- Its height, for the same strip.
 
 	client: CHAT_CLIENT
 			-- The GUI's own client: login and posting on the root processor.
@@ -416,9 +428,14 @@ feature -- Basic operations
 			-- straight to the summary endpoint and comes back as a hint bubble
 			-- in this window. Nothing of it reaches the room, because the room's
 			-- events are never per-person.
+			--
+			-- A HELD PICTURE goes first: while one is pending, Return posts it
+			-- with the composer's text - empty or not - as its caption.
 		do
-			if presenter.is_room_open and then client.is_logged_in and then not a_text.is_empty then
-				if is_summary_line (a_text) then
+			if presenter.is_room_open and then client.is_logged_in and then (not a_text.is_empty or attached pending_image) then
+				if attached pending_image as l_image then
+					send_image (l_image, a_text)
+				elseif is_summary_line (a_text) then
 					ask_summary (0, 0, summary_ask.minutes_of (a_text))
 				elseif editing_id > 0 then
 					send_edit (a_text)
@@ -430,6 +447,35 @@ feature -- Basic operations
 			end
 		ensure
 			nothing_shown_here: view.shown_model |=| old view.shown_model
+		end
+
+	take_pasted_image (a_bytes: SPECIAL [NATURAL_8]; a_width, a_height: INTEGER)
+			-- A picture from the composer's paste: held for Return, and said so
+			-- above the composer. Outside a room there is nothing to post it to,
+			-- and the status line says that rather than swallowing the paste.
+		require
+			has_bytes: a_bytes.count > 0
+			positive: a_width > 0 and a_height > 0
+		do
+			if not presenter.is_room_open or else not client.is_logged_in then
+				view.show_status (Text_no_room)
+			else
+				if editing_id > 0 then
+					view.set_compose_text ({STRING_32} "")
+				end
+				replying_to := 0
+				editing_id := 0
+				pending_delete := 0
+				pending_image := a_bytes
+				pending_image_width := a_width
+				pending_image_height := a_height
+				view.arm_empty_send (True)
+				view.show_compose_strip (pasted_image_strip (a_width, a_height, a_bytes.count))
+			end
+		ensure
+			held_in_a_room: (presenter.is_room_open and client.is_logged_in) implies (pending_image = a_bytes and view.empty_send_armed)
+			nothing_else_pending: (presenter.is_room_open and client.is_logged_in) implies (replying_to = 0 and editing_id = 0)
+			refused_outside: not (presenter.is_room_open and client.is_logged_in) implies pending_image = old pending_image
 		end
 
 feature {NONE} -- The per-message menu
@@ -524,7 +570,7 @@ feature {NONE} -- The per-message menu
 		end
 
 	cancel_compose
-			-- Out of reply or edit mode, composer cleared of an edit's text.
+			-- Out of reply, edit or picture mode, composer cleared of an edit's text.
 		do
 			if editing_id > 0 then
 				view.set_compose_text ({STRING_32} "")
@@ -532,9 +578,14 @@ feature {NONE} -- The per-message menu
 			replying_to := 0
 			editing_id := 0
 			pending_delete := 0
+			pending_image := Void
+			pending_image_width := 0
+			pending_image_height := 0
+			view.arm_empty_send (False)
 			view.show_compose_strip ({STRING_32} "")
 		ensure
 			plain: replying_to = 0 and editing_id = 0
+			no_picture: pending_image = Void and not view.empty_send_armed
 		end
 
 	confirm_delete (a_bubble: INTEGER)
@@ -674,6 +725,81 @@ feature {NONE} -- The per-message menu: the wire
 	Text_not_yours_to_delete: STRING_32 = "Only the author or an administrator may delete a message."
 	Text_no_emoji: STRING_32 = "No emoji was chosen."
 	Text_no_room: STRING_32 = "Not signed in to a room - nothing can be sent."
+
+feature {NONE} -- A pasted picture: the wire
+
+	send_image (a_bytes: SPECIAL [NATURAL_8]; a_caption: READABLE_STRING_GENERAL)
+			-- Post the held picture with `a_caption'. On a refusal, say the
+			-- server's reason and give the caption back to the composer, which
+			-- `submit' had already emptied; the picture itself is not kept -
+			-- a paste is cheap to do again, a stale one is a surprise.
+		require
+			held: pending_image = a_bytes
+		local
+			l_result: CHAT_RESULT [CHAT_EVENT]
+		do
+			cancel_compose
+			if client.is_logged_in and room_id > 0 then
+				l_result := client.post_image (room_id, a_bytes, pasted_file_name, a_caption)
+				if not l_result.is_success and then attached l_result.error as e then
+					view.show_error (e.message)
+					view.set_compose_text (a_caption)
+				end
+			end
+		ensure
+			plain_again: pending_image = Void and not view.empty_send_armed
+		end
+
+	pasted_file_name: STRING_32
+			-- pasted-YYYYMMDD-HHMMSS.png: the name a paste travels under, the
+			-- clipboard having none to offer.
+		local
+			l_now: SIMPLE_DATE_TIME
+		do
+			create l_now.make_now
+			create Result.make (26)
+			Result.append ({STRING_32} "pasted-")
+			Result.append (compact_stamp (l_now))
+			Result.append ({STRING_32} ".png")
+		ensure
+			shaped: Result.count = 26 and Result.ends_with ({STRING_32} ".png")
+		end
+
+	compact_stamp (a_when: SIMPLE_DATE_TIME): STRING_32
+			-- `a_when' as YYYYMMDD-HHMMSS, as CHAT_SERVICE names its backups:
+			-- ISO 8601's colons are not legal in a Windows file name.
+		local
+			l_iso: STRING_8
+		do
+			l_iso := a_when.to_iso8601
+			create Result.make (15)
+			Result.append_string_general (l_iso.substring (1, 4))
+			Result.append_string_general (l_iso.substring (6, 7))
+			Result.append_string_general (l_iso.substring (9, 10))
+			Result.append_string_general ("-")
+			Result.append_string_general (l_iso.substring (12, 13))
+			Result.append_string_general (l_iso.substring (15, 16))
+			Result.append_string_general (l_iso.substring (18, 19))
+		ensure
+			shaped: Result.count = 15
+		end
+
+	pasted_image_strip (a_width, a_height, a_bytes: INTEGER): STRING_32
+			-- What the strip says while a picture is held.
+		require
+			positive: a_width > 0 and a_height > 0 and a_bytes > 0
+		do
+			create Result.make (120)
+			Result.append ({STRING_32} "Pasted picture, ")
+			Result.append_string_general (a_width.out)
+			Result.append ({STRING_32} " x ")
+			Result.append_string_general (a_height.out)
+			Result.append ({STRING_32} " (")
+			Result.append_string_general (((a_bytes + 1023) // 1024).out)
+			Result.append ({STRING_32} " KB) - Return sends it, with whatever is typed as its caption; Escape discards it.")
+		ensure
+			sized: Result.has_substring (a_width.out) and Result.has_substring (a_height.out)
+		end
 
 feature {NONE} -- Summary and catch-up
 

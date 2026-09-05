@@ -109,7 +109,7 @@ bar (simple_shell publishes no `SetWindowText`).
 | Web | `src/web/` | `CHAT_WEB_APP`, `CHAT_API` over `simple_web` — no EWF type appears in this project |
 | Client stack | `src/client/` | UI-free and assaulted headless: `CHAT_CLIENT`, `EVENT_POLLER`, `CHAT_PRESENTER`, `SERVICE_LOCATOR`, `HTTP_TRANSPORT` (deferred; `MEMORY_HTTP_TRANSPORT` is scripted), `CHAT_VIEW` / `NOTIFIER` (deferred) |
 | Front door, DNS | `src/door/`, `apps/server/ops/` | `FRONT_DOOR` deferred → `CADDY_FRONT_DOOR`, `NO_FRONT_DOOR`, `EIFFEL_FRONT_DOOR`; `DUCKDNS_UPDATER` |
-| Window | `apps/client/` | `SW_CHAT_VIEW` (CHAT_VIEW over simple_widgets, shaped text), `LOGIN_WINDOW`, `CHAT_INPUT_BOX` (Enter submits) |
+| Window | `apps/client/` | `SW_CHAT_VIEW` (CHAT_VIEW over simple_widgets, shaped text), `LOGIN_WINDOW`, `CHAT_INPUT_BOX` (Enter submits), `SHELL_CLIPBOARD_IMAGE` (Ctrl+V with a picture alone on the clipboard holds it for Return; `CLIPBOARD_IMAGE_SOURCE` is the seam the assault scripts) |
 | Apps | `apps/server/`, `apps/client/` | `SERVER_APP` (`--create-admin`, `--create-user`, `--reset-password`), `CLIENT_APP`, `TRAY_NOTIFIER`, `WINHTTP_TRANSPORT`, `POLLER_HOST` |
 
 Lock order, never inverted: store < limiter < bus, and no lock is held while calling out to a subscriber.

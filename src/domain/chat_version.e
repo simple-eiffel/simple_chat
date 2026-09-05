@@ -20,12 +20,12 @@ class
 
 feature -- Access
 
-	Product: STRING_32 = "0.2.4"
+	Product: STRING_32 = "0.3.0"
 			-- Keep in step with installer\SimpleChat.iss #define AppVersion.
 
 	Built_on: STRING_32 = "2026-09-05"
 
-	Libraries: STRING_32 = "simple_web 0.4.0, simple_widgets 0.7.2, simple_console 1.2.0, simple_ai_client (UTF-8 fix), simple_winhttp 0.1.1, simple_process 1.0.1, simple_encryption 2.1.1, simple_shell 1.9.3"
+	Libraries: STRING_32 = "simple_web 0.4.0, simple_widgets 0.7.2, simple_console 1.2.0, simple_ai_client (UTF-8 fix), simple_winhttp 0.1.1, simple_process 1.0.1, simple_encryption 2.1.1, simple_shell 1.10.0"
 
 	About_text: STRING_32
 			-- What Help > About says, in one readable block.
