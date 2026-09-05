@@ -31,7 +31,7 @@ feature {NONE} -- Initialization
 		do
 			read_selection
 			print ("simple_chat assault (Phase 1: contracts + skeletal tests)%N%N")
-			if attached only as l_only then
+			if attached selected_text as l_only then
 				print ("-only " + l_only + ": running just the tests whose name contains it%N%N")
 			end
 			passed := 0
@@ -346,7 +346,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_sw_view_renders_hebrew_and_marker, "sw_view_renders_hebrew_and_marker (skeletal)")
 
 			print ("%N========================%N")
-			if attached only as l_held and then deselected > 0 then
+			if attached selected_text as l_held and then deselected > 0 then
 				print (deselected.out + " tests were not named by -only " + l_held + ", so they were not run%N")
 			end
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")
@@ -381,7 +381,7 @@ feature {NONE} -- Initialization
 
 feature {NONE} -- Selection
 
-	only: detachable STRING_8
+	selected_text: detachable STRING_8
 			-- The text a test's name must contain for it to run, from
 			-- `-only <text>' on the command line; Void when every test runs.
 
@@ -401,7 +401,7 @@ feature {NONE} -- Selection
 				i >= l_arguments.argument_count
 			loop
 				if l_arguments.argument (i).same_string ({STRING_32} "-only") then
-					only := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (l_arguments.argument (i + 1))
+					selected_text := {UTF_CONVERTER}.utf_32_string_to_utf_8_string_8 (l_arguments.argument (i + 1))
 				end
 				i := i + 1
 			variant
@@ -414,9 +414,9 @@ feature {NONE} -- Selection
 	is_selected (a_name: STRING): BOOLEAN
 			-- Is `a_name' a test this run was asked for?
 		do
-			Result := not attached only as l_only or else a_name.has_substring (l_only)
+			Result := not attached selected_text as l_only or else a_name.has_substring (l_only)
 		ensure
-			everything_when_unasked: only = Void implies Result
+			everything_when_unasked: selected_text = Void implies Result
 		end
 
 feature {NONE} -- Harness
