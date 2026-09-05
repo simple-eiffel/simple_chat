@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-09-05
+
+The listener release: the server is bound to 127.0.0.1 at the socket, not merely in a configuration class.
+
+### Fixed
+
+- **The server listened on every interface. It had said 127.0.0.1 since the day
+  it was written.** `SERVER_CONFIG` pins `bind_address` to `127.0.0.1`, refuses
+  the key in `server.toml` (*"not configurable; the server always binds
+  127.0.0.1"*) and asserts it in two invariants; the server's boot line prints
+  `serving on http://127.0.0.1:<port>/`; the README, the hosting guide and the
+  `server.toml` template all say the same. And on 2026-09-05 the live room was
+  observed at `0.0.0.0:8090` — every interface on the host's PC, reachable by
+  anything on the LAN that could type the address.
+
+  The value never reached a socket. `CHAT_WEB_APP.start` built the simple_web
+  server with `make (port)` and nothing else, because until simple_web 0.4.0
+  there was nothing else to call: EWF's standalone launcher was handed no
+  address, and `HTTPD_SERVER_I.new_listening_socket` took its
+  `make_server_by_port` branch. A contract on a configuration value is not
+  enforcement at the socket, and every one of those documents was describing an
+  intent.
+
+  `start` now calls `set_bind_address (config.bind_address)` on the server it
+  builds (simple_web 0.4.0, which sets EWF's `server_name` so the connector
+  takes `make_server_by_address_and_port`). The socket itself is bound to
+  `127.0.0.1`; the front door (Caddy) remains the only way in from anywhere
+  else, exactly as the hosting guide has always described it.
+
+  **If anyone was reaching a room directly on its port from another machine,
+  that stops working with this release.** It only ever worked by accident; a
+  host who wants the room reachable from outside turns the front door on
+  (`front_door = "caddy"`, hosting guide §3) — the design, now enforced.
+
+### Added (tests)
+
+- `BIND_ASSAULT.test_the_server_listens_on_loopback_and_not_on_every_interface`
+  refuses to read a value. It boots the real finalized server executable on a
+  scratch port (18214, as `sc_bind_server.exe`, stdout to a file) and asks
+  **Windows** what the socket is bound to: `Get-NetTCPConnection -State Listen`
+  must report `127.0.0.1` and must NOT report `0.0.0.0` — both asserted, since
+  one is not the negation of the other — and a real HTTP request to this
+  machine's own LAN address on that port must be refused. A machine with no
+  non-loopback IPv4 address FAILS the assault rather than quietly proving half
+  of it. Verified: `LocalAddress 127.0.0.1`; `GET http://192.168.1.145:18214/health`
+  -> `cannot connect (Win32 12029)`. Suite: **266 passed, 0 failed, zero SKIP**.
+
+### Changed
+
+- `CHAT_VERSION`: 0.2.4, built 2026-09-05, against simple_web 0.4.0.
+
 ## [0.2.3] — 2026-09-04
 
 The uninstaller release: every stop is scoped to its own install folder, a silent upgrade restarts the server it stopped, the Room menu answers to Alt+M, and a summary is a private ask that never touches the room's engine session.

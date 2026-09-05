@@ -206,6 +206,9 @@ feature {NONE} -- Initialization
 			run_test (agent (create {WIRING_ASSAULT}).test_live_client_app_shows_an_event_in_the_real_pane, "live_client_app_shows_an_event_in_the_real_pane")
 			run_test (agent (create {WIRING_ASSAULT}).test_live_gui_latency_through_a_quiet_poll, "live_gui_latency_through_a_quiet_poll")
 
+			print ("=== THE LISTENER (fix/bind-loopback-only) ===%N")
+			run_test (agent (create {BIND_ASSAULT}).test_the_server_listens_on_loopback_and_not_on_every_interface, "the_server_listens_on_loopback_and_not_on_every_interface")
+
 			print ("=== THE PER-MESSAGE MENU (phase4/message-menu) ===%N")
 			run_test (agent (create {CLIENT_ASSAULT}).test_a_fold_event_changes_a_bubble_and_never_draws_one, "a_fold_event_changes_a_bubble_and_never_draws_one")
 			run_test (agent (create {CLIENT_ASSAULT}).test_a_delete_is_final_even_against_a_later_edit, "a_delete_is_final_even_against_a_later_edit")
