@@ -721,3 +721,7 @@ Not installed. The installer is on disk for Larry to run when he chooses; an int
 ### Same evening — the runner's own switch was a keyword
 
 Turning obsolete-call reporting on found nothing of ours, but the build also named six "obsolete syntax" warnings from the day's `-only` runner switch: its attribute was called `only`, which the language now reserves. Renamed to `selected_text`; the command-line flag keeps its name. One of the six was a postcondition tag, so the rename touched an ensure clause's text without changing what it asserts. Rebuilt and rerun from the project root after building the server test target: 265 passed, none failed, none skipped, and the shell returned in 144 seconds.
+
+### Same evening — the suppression that had outlived its reason
+
+simple_chat's project file had wrapped the TOML library in a warning-off option, with a comment saying the library's own writers still called an obsolete conversion. Turning reporting on found those four calls, a fleet agent fixed them in simple_toml (one of the four had shipped a real bug: a literal string with non-ASCII content was written back with nulls, a path the chat client never used), six dependents were rebuilt and tested clean, and the suppression came out. Server target: no obsolete call at all now. Tests target: 265 passed, none failed, none skipped, shell returned in 146 seconds. One obsolete call still hides in a library reached through another library's project file; naming it needs an edit in that library, which is a fleet sweep for Larry to schedule.
