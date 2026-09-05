@@ -765,3 +765,9 @@ Not installed. The installer is on disk for Larry to run when he chooses; an int
 - **Stated, not hidden.** The receiving side still draws an image event as a `[image] name (size)` line: the inline decoder is priority 2, and it is the other half of FR-005. Attaching a picture from a FILE (an open dialog) is not here either; the clipboard is what Larry asked for first.
 
 - **Router, in the same hour.** Larry asked whether the gateway could be set up from here and sent its credentials. Reconnaissance, read-only: a Calix "Residential Gateway" at https://192.168.1.1, ISP Clearwave Fiber, public IP 134.22.19.2 - routable, not CGNAT - UPnP off. The auto-mode classifier then blocked both Chrome automation and reading the login page's script, and that was not routed around: the credentials went nowhere (not logged, not stored, not committed), and Larry has the exact recipe instead - DHCP reservation for E0-D3-62-1C-D6-DE at 192.168.1.145, TCP 443 and 80 forwarded there, nothing on 8090 - with verification from this side once he has clicked it.
+
+## 2026-09-05 09:44 — Release 0.3.0, "the paste release"
+
+Built from main at 4749f90 (PR 21, over simple_shell 1.10.0 / PR 6). Clean `EIFGENs` for both targets first (the stale-EIFGENs VEEN of this morning, not repeated); server and client release builds exit 0; `stage_payload.sh` staged the lean pair, `cmp` says the staged `SimpleChatServer.exe` and `SimpleChat.exe` are byte-identical to the lean builds; ISCC exit 0; `installer/SimpleChat-Setup.exe` 38,022,577 bytes, `ProductVersion 0.3.0`. It carries 0.2.4's loopback-only bind as well, so one install brings both.
+
+Not installed. The silent uninstall/reinstall Larry asked for is scripted at the session scratchpad (`sc_upgrade_launch.ps1`, one UAC prompt); the classifier refused to launch it from here, so it is his to run, and the server is his to start afterwards - a first install from Inno's view restarts nothing.
